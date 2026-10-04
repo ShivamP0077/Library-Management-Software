@@ -1,0 +1,1 @@
+import globals from "globals"; export default [{files: ["**/*.jsx"], languageOptions: {globals: globals.browser, parserOptions: {ecmaFeatures: {jsx: true}, ecmaVersion: 2021, sourceType: "module"}}, rules: {"no-undef": "error"}}];

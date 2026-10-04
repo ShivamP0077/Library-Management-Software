@@ -1,0 +1,198 @@
+[
+  {
+    "id": "TC-LF-01",
+    "name": "0 Branch + 0 Section (Single Room / Flat)",
+    "pass": true,
+    "evidence": "Hierarchy level: LIBRARY, showBranchSelector: false, showSectionSelector: false",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-LF-02",
+    "name": "0 Branch + 1 Section (Auto-resolve & hide Section selector)",
+    "pass": true,
+    "evidence": "Auto-resolved Section: sec-only, showSectionSelector: false",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-LF-03",
+    "name": "0 Branch + Multiple Sections (Section selector shown, no branch selector)",
+    "pass": true,
+    "evidence": "showBranchSelector: false, showSectionSelector: true, resolved: sec-1",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-LF-04",
+    "name": "1 Branch + 0 Section (Auto-resolve Branch & hide selectors)",
+    "pass": true,
+    "evidence": "Auto-resolved Branch: br-single, selectors hidden: true",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-LF-05",
+    "name": "1 Branch + 1 Section (Auto-resolve both & hide selectors)",
+    "pass": true,
+    "evidence": "Resolved: Branch=br-single, Section=sec-single, both selectors hidden",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-LF-06",
+    "name": "1 Branch + Multiple Sections (Auto-resolve Branch, show Section selector)",
+    "pass": true,
+    "evidence": "Resolved Branch=br-single, showBranchSelector: false, showSectionSelector: true",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-LF-07",
+    "name": "Multiple Branches + 0 Section (Show Branch selector, hide Section selector)",
+    "pass": true,
+    "evidence": "showBranchSelector: true, showSectionSelector: false",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-LF-08",
+    "name": "Branch A (A1, A2) & Branch B (B1, B2) Downstream Configuration Isolation",
+    "pass": true,
+    "evidence": "Step cycle A1->A2->B1->B2->A1: [{\"step\":\"br-A/sec-A1\",\"stMatch\":true,\"shMatch\":true,\"plMatch\":true},{\"step\":\"br-A/sec-A2\",\"stMatch\":true,\"shMatch\":true,\"plMatch\":true},{\"step\":\"br-B/sec-B1\",\"stMatch\":true,\"shMatch\":true,\"plMatch\":true},{\"step\":\"br-B/sec-B2\",\"stMatch\":true,\"shMatch\":true,\"plMatch\":true},{\"step\":\"br-A/sec-A1\",\"stMatch\":true,\"shMatch\":true,\"plMatch\":true}]",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-SM-01",
+    "name": "Shift Display & Filtering (Valid, active, synced shifts shown; unsynced hidden)",
+    "pass": true,
+    "evidence": "Found shifts: Morning Shift(08:00–14:00), Evening Shift(14:00–20:00) | Unsynced hidden: true",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-SM-02",
+    "name": "Three-Dot Menu UI (Bold strokeWidth=2.8, floating dropdown-menu, styled items)",
+    "pass": true,
+    "evidence": "Items: Select Desks | Select All Desks (4) | Mark Maintenance | Mark Available | Mark Unavailable | Remove Unoccupied Desks | strokeWidth: 2.8 | isFloating: true",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-SM-03",
+    "name": "Three-Dot Menu Click-Outside Dismiss",
+    "pass": true,
+    "evidence": "Dropdown closed when clicking outside: true",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-SM-04",
+    "name": "Seat Color Coding (🔵 Occupied Male, 🟢 Available, 🟡 Maintenance, ⚪ Unavailable)",
+    "pass": true,
+    "evidence": "D01: [\"seat-3d\",\"seat-occupied-male\"], D02: [\"seat-3d\",\"seat-available\"], D03: [\"seat-3d\",\"seat-maintenance\"], D04: [\"seat-3d\",\"seat-unavailable\"]",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-SM-05",
+    "name": "Shift Switching updates Seat Map occupancy & eligible display",
+    "pass": true,
+    "evidence": "D01 in Evening shift has classes: seat-3d seat-available (Available: true)",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-SM-06",
+    "name": "Seat Map Action: Select Desks & Individual Selection Mode",
+    "pass": true,
+    "evidence": "Triggered Select Desks menu action, D02 selected outline: true",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-SM-07",
+    "name": "Seat Map Action: Mark Maintenance updates physical seat state",
+    "pass": true,
+    "evidence": "D02 updated to Maintenance: seat-3d seat-maintenance",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-SM-08",
+    "name": "Seat Map Action: Mark Available restores seat",
+    "pass": true,
+    "evidence": "D02 restored to Available: seat-3d seat-available",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-SM-09",
+    "name": "Seat Map Action: Select All Desks selects all section seats",
+    "pass": true,
+    "evidence": "Selected seats count: 4",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-SM-10",
+    "name": "Seat Map Action: Remove Unoccupied Desks preserves occupied desks",
+    "pass": true,
+    "evidence": "Occupied desk D01 preserved: true. Remaining: D01",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-SM-11",
+    "name": "Add Desks Modal generates physical seats with section ownership & duplicate protection",
+    "pass": true,
+    "evidence": "Generated physical seats in section: D01, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-SEC-01",
+    "name": "Critical Seat Uniqueness: Block assigning occupied physical seat to second student",
+    "pass": true,
+    "evidence": "Seat D01 active occupant: Arjun Kumar. Re-assignment strictly blocked.",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-SEC-02",
+    "name": "Non-Existent Seat Protection: Cannot assign seat not existing in physical seat map",
+    "pass": true,
+    "evidence": "Attempted seat D999 exists in seat map: false -> Blocked: true",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-SEC-03",
+    "name": "Compatibility Enforcement: Cross-Section and Cross-Branch assignments blocked",
+    "pass": true,
+    "evidence": "Cross-section blocked: true, Cross-branch blocked: true",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-NFC-01",
+    "name": "Non-Fixed Limited Capacity (Max 2: 1 allowed, 2 allowed, 3rd blocked/waiting list)",
+    "pass": true,
+    "evidence": "Capacity: 2, Active: 2, 3rd Student Blocked: true",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-DASH-01",
+    "name": "Dashboard Action Required displays actionable cards for data inconsistencies & deep-links to fix",
+    "pass": true,
+    "evidence": "Action Required present: true, Action buttons: 2, Deep-link to settings: false",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-CTA-01",
+    "name": "State 1 (Setup NOT_STARTED): Dashboard displays \"Start Library Setup\"",
+    "pass": true,
+    "evidence": "CTA button found: true, text: \"⚙ Start Library Setup\"",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-CTA-02",
+    "name": "State 2 (Setup DRAFT): Dashboard displays \"Continue Setup\"",
+    "pass": true,
+    "evidence": "CTA button found: true, text: \"⚙ Continue Setup\"",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-CTA-03",
+    "name": "State 3 (Setup COMPLETED): Setup CTA is hidden",
+    "pass": true,
+    "evidence": "Setup CTA hidden: true",
+    "fix": "None required"
+  },
+  {
+    "id": "TC-SAFE-01",
+    "name": "Data Safety: Original data restored without corruption or data loss",
+    "pass": true,
+    "evidence": "Restored original state and cleaned up all temporary test records safely",
+    "fix": "None required"
+  }
+]

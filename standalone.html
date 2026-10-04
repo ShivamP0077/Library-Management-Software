@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reading Library Management System</title>
+
+  <!-- React & Babel CDNs for instant standalone execution -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Fonts & Icons -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <style>
+    /* Premium Slate & Indigo Dark Hybrid Styling */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap');
+
+    :root {
+      --font-primary: 'Inter', system-ui, sans-serif;
+      --font-heading: 'Outfit', system-ui, sans-serif;
+      --bg-main: #0f172a;
+      --bg-card: #1e293b;
+      --bg-card-hover: #334155;
+      --bg-sidebar: #0b1329;
+      --border-color: #334155;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent-primary: #6366f1;
+      --accent-primary-hover: #4f46e5;
+      --accent-success: #10b981;
+      --accent-warning: #f59e0b;
+      --accent-danger: #ef4444;
+      --accent-purple: #a855f7;
+      --radius-md: 10px;
+      --radius-lg: 16px;
+      --radius-full: 9999px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font-primary); background-color: var(--bg-main); color: var(--text-main); min-height: 100vh; }
+    h1, h2, h3, h4 { font-family: var(--font-heading); }
+
+    .app-header { background: var(--bg-sidebar); border-bottom: 1px solid var(--border-color); position: sticky; top: 0; z-index: 100; }
+    .top-bar { display: flex; align-items: center; justify-content: space-between; padding: 0.875rem 1.5rem; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    .nav-bar { display: flex; gap: 0.5rem; padding: 0 1.5rem; overflow-x: auto; }
+    
+    .nav-btn { padding: 0.75rem 1rem; background: transparent; border: none; border-bottom: 3px solid transparent; color: var(--text-muted); font-weight: 500; cursor: pointer; font-size: 0.875rem; white-space: nowrap; }
+    .nav-btn.active { border-bottom-color: var(--accent-primary); color: var(--accent-primary); font-weight: 700; }
+
+    .main-content { padding: 1.5rem; max-width: 1600px; margin: 0 auto; }
+    .card { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 1.25rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.4); margin-bottom: 1.25rem; }
+    
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.625rem 1.25rem; font-size: 0.875rem; font-weight: 600; border-radius: var(--radius-md); border: none; cursor: pointer; transition: all 0.15s; }
+    .btn-primary { background: var(--accent-primary); color: #fff; }
+    .btn-primary:hover { background: var(--accent-primary-hover); }
+    .btn-secondary { background: var(--bg-card-hover); color: var(--text-main); border: 1px solid var(--border-color); }
+    .btn-outline { background: transparent; color: var(--text-main); border: 1px solid var(--border-color); }
+    .btn-sm { padding: 0.375rem 0.75rem; font-size: 0.75rem; }
+
+    .badge { display: inline-flex; align-items: center; padding: 0.25rem 0.625rem; border-radius: var(--radius-full); font-size: 0.75rem; font-weight: 700; text-transform: uppercase; }
+    .badge-active { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+    .badge-expiring { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+    .badge-expired { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+
+    .table-container { width: 100%; overflow-x: auto; border-radius: var(--radius-md); border: 1px solid var(--border-color); }
+    table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.875rem; }
+    th { background: #0f172a; color: var(--text-muted); padding: 0.875rem 1rem; border-bottom: 1px solid var(--border-color); font-size: 0.75rem; text-transform: uppercase; }
+    td { padding: 1rem; border-bottom: 1px solid var(--border-color); }
+
+    .seat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(65px, 1fr)); gap: 0.75rem; }
+    .seat-box { aspect-ratio: 1; border-radius: var(--radius-md); border: 2px solid var(--border-color); display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s; }
+    .seat-box.available { background: rgba(16, 185, 129, 0.1); border-color: rgba(16, 185, 129, 0.4); color: #34d399; }
+    .seat-box.occupied { background: rgba(99, 102, 241, 0.15); border-color: rgba(99, 102, 241, 0.5); color: #a5b4fc; }
+
+    .form-group { display: flex; flex-direction: column; gap: 0.375rem; margin-bottom: 1rem; }
+    .form-label { font-size: 0.8125rem; font-weight: 600; color: var(--text-muted); }
+    .form-input, .form-select { width: 100%; padding: 0.625rem; background: #0f172a; border: 1px solid var(--border-color); border-radius: var(--radius-md); color: var(--text-main); font-size: 0.875rem; outline: none; }
+
+    .modal-backdrop { position: fixed; top:0; left:0; right:0; bottom:0; background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem; }
+    .modal-content { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-lg); width: 100%; max-width: 650px; max-height: 90vh; overflow-y: auto; }
+    .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 1.25rem; border-bottom: 1px solid var(--border-color); }
+    .modal-body { padding: 1.5rem; }
+    .modal-footer { padding: 1rem 1.5rem; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; gap: 0.75rem; background: #0f172a; }
+
+    @media print {
+      body * { visibility: hidden; }
+      .printable-receipt, .printable-receipt * { visibility: visible; }
+      .printable-receipt { position: absolute; left: 0; top: 0; width: 100%; background: #fff !important; color: #000 !important; }
+      .no-print { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, createContext, useContext } = React;
+
+    // Direct Browser Application Engine
+    const App = () => {
+      const [activeTab, setActiveTab] = useState('dashboard');
+      const [activeBranch, setActiveBranch] = useState('all');
+
+      return (
+        <div>
+          <header className="app-header">
+            <div className="top-bar">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <span style={{ fontSize: '1.75rem' }}>📖</span>
+                <div>
+                  <h1 style={{ fontSize: '1.125rem', fontWeight: 700 }}>Mindspace Reading Library</h1>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Multi-Branch Internal Management System</p>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                <select className="form-select" value={activeBranch} onChange={e => setActiveBranch(e.target.value)} style={{ width: 'auto' }}>
+                  <option value="all">All Branches (Consolidated)</option>
+                  <option value="b1">Downtown Central Study Hub (DT)</option>
+                  <option value="b2">University Campus Branch (UN)</option>
+                </select>
+                <button className="btn btn-primary btn-sm">+ New Admission</button>
+              </div>
+            </div>
+
+            <nav className="nav-bar">
+              {['dashboard', 'students', 'seats', 'payments', 'expenses', 'reports', 'settings'].map(tab => (
+                <button
+                  key={tab}
+                  className={`nav-btn ${activeTab === tab ? 'active' : ''}`}
+                  onClick={() => setActiveTab(tab)}
+                >
+                  {tab.toUpperCase()}
+                </button>
+              ))}
+            </nav>
+          </header>
+
+          <main className="main-content">
+            {activeTab === 'dashboard' && (
+              <div>
+                <div style={{ background: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 100%)', padding: '1.5rem', borderRadius: 'var(--radius-lg)', marginBottom: '1.5rem' }}>
+                  <h2 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '1rem' }}>Today's Live Operational Summary</h2>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
+                    <div style={{ background: 'rgba(255,255,255,0.08)', padding: '1rem', borderRadius: 'var(--radius-md)' }}>
+                      <div style={{ fontSize: '0.75rem', color: '#818cf8', fontWeight: 700 }}>TODAY'S ADMISSIONS</div>
+                      <div style={{ fontSize: '1.75rem', fontWeight: 800, margin: '0.25rem 0' }}>1</div>
+                      <div style={{ fontSize: '0.75rem', color: '#c7d2fe' }}>Diya Kapoor (STU-UN-1001)</div>
+                    </div>
+                    <div style={{ background: 'rgba(255,255,255,0.08)', padding: '1rem', borderRadius: 'var(--radius-md)' }}>
+                      <div style={{ fontSize: '0.75rem', color: '#34d399', fontWeight: 700 }}>TODAY'S COLLECTIONS</div>
+                      <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#34d399', margin: '0.25rem 0' }}>₹2,200</div>
+                      <div style={{ fontSize: '0.75rem', color: '#c7d2fe' }}>1 transaction today</div>
+                    </div>
+                    <div style={{ background: 'rgba(255,255,255,0.08)', padding: '1rem', borderRadius: 'var(--radius-md)' }}>
+                      <div style={{ fontSize: '0.75rem', color: '#fbbf24', fontWeight: 700 }}>TODAY'S RENEWALS</div>
+                      <div style={{ fontSize: '1.75rem', fontWeight: 800, margin: '0.25rem 0' }}>0</div>
+                      <div style={{ fontSize: '0.75rem', color: '#c7d2fe' }}>All active members up to date</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.25rem', marginBottom: '1.5rem' }}>
+                  <div className="card">
+                    <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', fontWeight: 600 }}>ACTIVE STUDENTS</div>
+                    <div style={{ fontSize: '2rem', fontWeight: 800, margin: '0.5rem 0' }}>4</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--accent-success)' }}>Enrolled & Studying</div>
+                  </div>
+                  <div className="card">
+                    <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', fontWeight: 600 }}>EXPIRING / EXPIRED</div>
+                    <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--accent-warning)', margin: '0.5rem 0' }}>2</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>1 Expiring | 1 Expired</div>
+                  </div>
+                  <div className="card">
+                    <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', fontWeight: 600 }}>MONTHLY NET PROFIT</div>
+                    <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--accent-success)', margin: '0.5rem 0' }}>₹35,000</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Income ₹68,000 - Exp ₹33,000</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'students' && (
+              <div className="card">
+                <h3 style={{ marginBottom: '1rem' }}>Student Profiles & History Logs</h3>
+                <div className="table-container">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>STUDENT ID & NAME</th>
+                        <th>DESK NO</th>
+                        <th>SHIFT</th>
+                        <th>VALIDITY EXPIRY</th>
+                        <th>STATUS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>
+                          <strong>Aarav Sharma</strong>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--accent-primary)' }}>STU-DT-1001</div>
+                        </td>
+                        <td><span style={{ fontWeight: 700, color: 'var(--accent-purple)' }}>A-05</span></td>
+                        <td>Full Day</td>
+                        <td>2026-08-01</td>
+                        <td><span className="badge badge-active">ACTIVE</span></td>
+                      </tr>
+                      <tr>
+                        <td>
+                          <strong>Ananya Verma</strong>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--accent-primary)' }}>STU-DT-1002</div>
+                        </td>
+                        <td><span style={{ fontWeight: 700, color: 'var(--accent-purple)' }}>B-12</span></td>
+                        <td>Morning</td>
+                        <td>2026-08-05</td>
+                        <td><span className="badge badge-expiring">EXPIRING SOON</span></td>
+                      </tr>
+                      <tr>
+                        <td>
+                          <strong>Vikramaditya Singh</strong>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--accent-primary)' }}>STU-DT-1003</div>
+                        </td>
+                        <td><span style={{ fontWeight: 700, color: 'var(--accent-purple)' }}>C-02</span></td>
+                        <td>Evening</td>
+                        <td>2026-07-25</td>
+                        <td><span className="badge badge-expired">EXPIRED</span></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </main>
+        </div>
+      );
+    };
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

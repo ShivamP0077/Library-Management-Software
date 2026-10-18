@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { scroll-behavior: smooth; -webkit-tap-highlight-color: transparent; }
+  body { font-family: 'General Sans', ui-sans-serif, system-ui, sans-serif; }
+  h1, h2, h3, h4 { font-family: 'Satoshi', ui-sans-serif, system-ui, sans-serif; letter-spacing: -0.02em; }
+  :focus-visible { outline: 2px solid #E8B54A; outline-offset: 3px; border-radius: 8px; }
+  ::selection { background: #E8B54A; color: #0C0A09; }
+  section[id] { scroll-margin-top: 84px; }
+}
+
+@layer components {
+  .container-x { @apply mx-auto w-full max-w-7xl px-5 sm:px-8; }
+  .btn { @apply inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl px-5 py-3 text-[15px] font-semibold transition-all duration-200 ease-out; }
+  .btn-gold { @apply btn bg-gradient-to-b from-gold-400 to-gold-500 text-ink-950 shadow-glow hover:-translate-y-0.5 hover:from-gold-300 hover:to-gold-400; }
+  .btn-ghost-dark { @apply btn border border-white/15 bg-white/5 text-stone-100 backdrop-blur hover:border-white/30 hover:bg-white/10; }
+  .btn-dark { @apply btn bg-ink text-white hover:-translate-y-0.5 hover:bg-ink-700; }
+  .btn-outline { @apply btn border-2 border-ink text-ink hover:bg-ink hover:text-white; }
+  .eyebrow { @apply inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em]; }
+  .glass { @apply border border-white/10 bg-white/[0.04] backdrop-blur-xl; }
+  .text-gold-grad { @apply bg-gradient-to-r from-gold-300 via-gold-400 to-gold-500 bg-clip-text text-transparent; }
+}
+
+.grain::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none; opacity: .05; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+.grid-lines {
+  background-image: linear-gradient(rgba(255,255,255,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.045) 1px, transparent 1px);
+  background-size: 56px 56px;
+}
+.grid-lines-light {
+  background-image: linear-gradient(rgba(28,25,23,.05) 1px, transparent 1px), linear-gradient(90deg, rgba(28,25,23,.05) 1px, transparent 1px);
+  background-size: 56px 56px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}

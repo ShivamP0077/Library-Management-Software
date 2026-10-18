@@ -11,19 +11,28 @@ const writeSecret = (file, content) => {
 
 /**
  * Ensures the super admin exists (idempotent).
- * - Email from SUPERADMIN_EMAIL (required for seeding).
+ * - Email from SUPERADMIN_EMAIL (defaults to DEFAULT_SUPERADMIN_EMAIL).
  * - Password from SUPERADMIN_PASSWORD; if unset, one is generated and written to
  *   SUPERADMIN_CREDENTIALS_FILE (never logged). Without either, the account is Google-only.
  */
+export const DEFAULT_SUPERADMIN_EMAIL = 'omdevsinhmakwana9898@gmail.com';
+
+const readCredentialFile = (file) => {
+  try {
+    return Object.fromEntries(fs.readFileSync(file, 'utf8').trim().split('\n').map(l => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
+  } catch { return null; }
+};
+
 export async function ensureSuperAdmin(env = process.env) {
-  const email = (env.SUPERADMIN_EMAIL || '').toLowerCase().trim();
-  if (!email) { console.warn('[seed] SUPERADMIN_EMAIL not set; skipping super admin seed'); return null; }
+  const email = (env.SUPERADMIN_EMAIL || DEFAULT_SUPERADMIN_EMAIL).toLowerCase().trim();
   const existing = await User.findOne({ email });
   if (existing) {
     if (existing.role !== 'superadmin') console.warn(`[seed] ${email} exists but is not superadmin; leaving unchanged`);
     return existing;
   }
   let password = env.SUPERADMIN_PASSWORD || null;
+  // Reuse a previously generated password rather than overwriting the credentials file
+  if (!password && env.SUPERADMIN_CREDENTIALS_FILE) password = readCredentialFile(env.SUPERADMIN_CREDENTIALS_FILE)?.SUPERADMIN_PASSWORD || null;
   if (!password && env.SUPERADMIN_CREDENTIALS_FILE) {
     password = generatePassword(24);
     writeSecret(env.SUPERADMIN_CREDENTIALS_FILE, `SUPERADMIN_EMAIL=${email}\nSUPERADMIN_PASSWORD=${password}\n`);

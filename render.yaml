@@ -24,7 +24,7 @@ services:
       - key: CORS_ORIGIN
         sync: false # e.g. https://your-app.vercel.app
       - key: SUPERADMIN_EMAIL
-        sync: false
+        value: omdevsinhmakwana9898@gmail.com
       - key: SUPERADMIN_PASSWORD
         sync: false # optional password fallback
       - key: GOOGLE_CLIENT_ID

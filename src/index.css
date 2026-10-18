@@ -491,3 +491,8 @@ body {
     font-size: 14px !important;
   }
 }
+
+/* Library workspace below the session bar fills the remaining height */
+.lib-workspace .app-container {
+  height: 100%;
+}

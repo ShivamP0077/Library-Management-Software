@@ -1,7 +1,10 @@
 /**
  * Lightweight IndexedDB wrapper to store large binary/file blobs (e.g., student documents)
  * safely outside localStorage to prevent QuotaExceededError.
+ * Documents are also saved to the backend so they are available on other devices;
+ * IndexedDB acts as a local cache.
  */
+import { api } from './api';
 
 const DB_NAME = 'LibraryManagementDB';
 const DB_VERSION = 1;
@@ -28,6 +31,9 @@ function openDB() {
 }
 
 export async function saveDocumentBlob(key, dataUrlOrBlob) {
+  if (typeof dataUrlOrBlob === 'string') {
+    api.saveDocument(key, dataUrlOrBlob).catch(err => console.warn(`[API] Could not upload document "${key}":`, err.message));
+  }
   try {
     const db = await openDB();
     return new Promise((resolve, reject) => {
@@ -44,6 +50,16 @@ export async function saveDocumentBlob(key, dataUrlOrBlob) {
 }
 
 export async function getDocumentBlob(key) {
+  const local = await getLocalDocumentBlob(key);
+  if (local) return local;
+  try {
+    return await api.getDocument(key);
+  } catch {
+    return null;
+  }
+}
+
+async function getLocalDocumentBlob(key) {
   try {
     const db = await openDB();
     return new Promise((resolve, reject) => {
@@ -60,6 +76,7 @@ export async function getDocumentBlob(key) {
 }
 
 export async function deleteDocumentBlob(key) {
+  api.deleteDocument(key).catch(() => {});
   try {
     const db = await openDB();
     return new Promise((resolve, reject) => {

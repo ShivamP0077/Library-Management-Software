@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import toast from 'react-hot-toast';
+import { api, createSyncQueue, SYNCED_COLLECTIONS } from '../utils/api';
 import { getDefaultPermissionsForRole, syncLegacyPermissions } from '../utils/staffPermissions';
 
 const LibraryContext = createContext();
@@ -431,7 +432,7 @@ export const reconcileSeats = ({ savedSeats, students = [], sections = [], branc
   return dedupedSeats.length > 0 ? dedupedSeats : [];
 };
 
-export const LibraryProvider = ({ children }) => {
+export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = null }) => {
   const [settings, setSettings] = useState(() => {
     const saved = localStorage.getItem('library_settings');
     return saved ? JSON.parse(saved) : INITIAL_SETTINGS;
@@ -620,6 +621,94 @@ export const LibraryProvider = ({ children }) => {
     }
   }, [students]);
   useEffect(() => { console.log('[EFFECT] waitingList'); localStorage.setItem('library_waiting_list', JSON.stringify(waitingList)); }, [waitingList]);
+
+  // ---------- Backend (MongoDB) persistence ----------
+  // localStorage stays as an offline cache; the backend is the source of truth once loaded.
+  const [backendStatus, setBackendStatus] = useState('connecting'); // 'connecting' | 'online' | 'offline'
+  const syncRef = useRef(null);
+  if (!syncRef.current) {
+    let warned = false;
+    syncRef.current = createSyncQueue({
+      onError: (key, e) => {
+        console.warn(`[API] Failed to sync "${key}":`, e.message);
+        setBackendStatus('offline');
+        if (!warned) { warned = true; toast.error('Could not save to the server. Changes are kept locally.'); }
+      }
+    });
+  }
+  const latestStateRef = useRef({});
+  latestStateRef.current = {
+    settings, branches, sections, seatTypes, seats, shifts, plans, staffMembers,
+    students, archivedStudents, expenses, payments, waitingList
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const setters = {
+      branches: setBranches, sections: setSections, seatTypes: setSeatTypes, seats: setSeats,
+      shifts: setShifts, plans: setPlans, staffMembers: setStaffMembers, students: setStudents,
+      archivedStudents: setArchivedStudents, expenses: setExpenses, payments: setPayments, waitingList: setWaitingList
+    };
+    const sync = syncRef.current;
+    (async () => {
+      try {
+        const remote = await api.getState();
+        if (cancelled) return;
+        const hasRemoteData = !!remote.settings || SYNCED_COLLECTIONS.some(c => (remote[c] || []).length > 0);
+        if (hasRemoteData) {
+          // Server wins: load its data into state (and the localStorage cache via the effects above)
+          if (remote.settings) { sync.markSynced('settings', remote.settings); setSettings(remote.settings); }
+          SYNCED_COLLECTIONS.forEach(c => {
+            const items = remote[c] || [];
+            if (c === 'staffMembers' && items.length === 0) return; // never leave the app without a staff user
+            sync.markSynced(c, items);
+            setters[c](items);
+          });
+          if (!readOnly) sync.enable();
+        } else if (!readOnly) {
+          // Empty library: seed it with this session's initial state (the server tags everything
+          // with the tenant's libraryId), then reload so local ids match the server.
+          sync.enable();
+          const local = latestStateRef.current;
+          const seededSettings = { ...local.settings, libraryId: remote.libraryId || local.settings.libraryId };
+          await sync.push('settings', seededSettings);
+          await Promise.all(SYNCED_COLLECTIONS.map(k => sync.push(k, local[k])));
+          const fresh = await api.getState();
+          if (cancelled) return;
+          if (fresh.settings) { sync.markSynced('settings', fresh.settings); setSettings(fresh.settings); }
+          SYNCED_COLLECTIONS.forEach(c => { const items = fresh[c] || []; if (c === 'staffMembers' && !items.length) return; sync.markSynced(c, items); setters[c](items); });
+        }
+        setBackendStatus('online');
+      } catch (e) {
+        if (cancelled) return;
+        console.warn('[API] Backend unavailable, running from local storage only:', e.message);
+        setBackendStatus('offline');
+      }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!lockedStaffId) return;
+    const mine = staffMembers.find(st => st.id === lockedStaffId);
+    if (mine && currentStaff?.id !== mine.id) setCurrentStaff(mine);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lockedStaffId, staffMembers, currentStaff]);
+
+  useEffect(() => { syncRef.current.queue('settings', settings); }, [settings]);
+  useEffect(() => { syncRef.current.queue('branches', branches); }, [branches]);
+  useEffect(() => { syncRef.current.queue('sections', sections); }, [sections]);
+  useEffect(() => { syncRef.current.queue('seatTypes', seatTypes); }, [seatTypes]);
+  useEffect(() => { syncRef.current.queue('seats', seats); }, [seats]);
+  useEffect(() => { syncRef.current.queue('shifts', shifts); }, [shifts]);
+  useEffect(() => { syncRef.current.queue('plans', plans); }, [plans]);
+  useEffect(() => { syncRef.current.queue('staffMembers', staffMembers); }, [staffMembers]);
+  useEffect(() => { syncRef.current.queue('students', students); }, [students]);
+  useEffect(() => { syncRef.current.queue('archivedStudents', archivedStudents); }, [archivedStudents]);
+  useEffect(() => { syncRef.current.queue('expenses', expenses); }, [expenses]);
+  useEffect(() => { syncRef.current.queue('payments', payments); }, [payments]);
+  useEffect(() => { syncRef.current.queue('waitingList', waitingList); }, [waitingList]);
 
   // Safe Non-Destructive Data Migration (v3)
   useEffect(() => {
@@ -1830,6 +1919,8 @@ export const LibraryProvider = ({ children }) => {
   // Central Staff & Action Authorization Checker
   const hasPermission = (moduleName, actionName = 'view', staff = currentStaff) => {
     if (!staff) return false;
+    // Super admin read-only drill-in: view only
+    if (readOnly && actionName !== 'view') return false;
     // Inactive staff members cannot perform any actions
     if (staff.status === 'Inactive') return false;
     // Admins have full access
@@ -2431,7 +2522,10 @@ export const LibraryProvider = ({ children }) => {
     setPayments(INITIAL_PAYMENTS);
     setArchivedStudents(INITIAL_ARCHIVED_STUDENTS);
     setWaitingList(INITIAL_WAITING_LIST);
-    localStorage.clear();
+    // Clear only this library's cached data (keep the login session)
+    Object.keys(localStorage).forEach(k => {
+      if ((k.startsWith('library_') || k === 'wizardDraft') && k !== 'library_api_token' && k !== 'library_cache_owner') localStorage.removeItem(k);
+    });
   };
 
   localStorage.setItem('DEBUG_DID_RENDER', 'YES_RENDERED_WITH_' + seatTypes.length);
@@ -2454,6 +2548,9 @@ export const LibraryProvider = ({ children }) => {
       archivedStudents, setArchivedStudents,
       waitingList, setWaitingList,
       todayStr,
+      backendStatus,
+      readOnly,
+      lockedStaffId,
       // Central helpers
       getSetupStatus,
       resolveScope,

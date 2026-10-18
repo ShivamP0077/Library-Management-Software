@@ -16,6 +16,11 @@ import { ShieldAlert } from 'lucide-react';
 import { PreviousStudentRecords } from './components/PreviousStudentRecords';
 import { SetupWizard } from './components/SetupWizard';
 import { useLibrary } from './context/LibraryContext';
+import { AuthProvider, useAuth, prepareLocalCacheFor } from './auth/AuthContext';
+import { LoginScreen } from './auth/LoginScreen';
+import { SuperAdminDashboard } from './auth/SuperAdminDashboard';
+import { setTenantContext } from './utils/api';
+import { ArrowLeft, LogOut, Eye } from 'lucide-react';
 
 const pageVariants = {
   initial: { opacity: 0 },
@@ -202,10 +207,79 @@ export const AppContent = () => {
   );
 };
 
+/** Thin bar above the app showing who is signed in, read-only state and navigation. */
+const SessionBar = ({ libraryName, readOnly, onBack }) => {
+  const { user, logout } = useAuth();
+  return (
+    <div id="session-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '6px 16px', fontSize: 12, background: readOnly ? '#fef3c7' : '#111827', color: readOnly ? '#92400e' : '#e5e7eb' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        {onBack && <button className="btn btn-ghost btn-sm" onClick={onBack} style={{ color: 'inherit' }}><ArrowLeft size={14} /> <span>All libraries</span></button>}
+        <span>{libraryName}</span>
+        {readOnly && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 600 }}><Eye size={12} /> Read-only view</span>}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span>{user?.email} · {user?.role === 'superadmin' ? 'Super Admin' : user?.role === 'client_admin' ? 'Client Admin' : 'Staff'}</span>
+        <button className="btn btn-ghost btn-sm" onClick={logout} style={{ color: 'inherit' }}><LogOut size={14} /> <span>Sign out</span></button>
+      </div>
+    </div>
+  );
+};
+
+const LibraryWorkspace = ({ libraryId, libraryName, readOnly = false, lockedStaffId = null, onBack }) => {
+  // Configure tenant headers and the per-library local cache BEFORE the provider reads localStorage
+  const [ready, setReady] = useState(false);
+  React.useLayoutEffect(() => {
+    setTenantContext(onBack ? { libraryId, readOnly } : {});
+    prepareLocalCacheFor(`${libraryId}${readOnly ? ':ro' : ''}`);
+    setReady(true);
+  }, [libraryId, readOnly, onBack]);
+  if (!ready) return null;
+  return (
+    <div className="lib-workspace" style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+      <SessionBar libraryName={libraryName} readOnly={readOnly} onBack={onBack} />
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <LibraryProvider key={`${libraryId}-${readOnly}`} readOnly={readOnly} lockedStaffId={lockedStaffId}>
+          <AppContent />
+        </LibraryProvider>
+      </div>
+    </div>
+  );
+};
+
+const RoleRouter = () => {
+  const { status, user, library } = useAuth();
+  const [drill, setDrill] = useState(null); // super admin: { library, readOnly }
+
+  if (status === 'loading') return <div style={{ padding: 48, textAlign: 'center' }}>Loading…</div>;
+  if (status !== 'authenticated' || !user) return <LoginScreen />;
+
+  if (user.role === 'superadmin') {
+    if (drill) {
+      return (
+        <LibraryWorkspace
+          libraryId={drill.library.libraryId}
+          libraryName={drill.library.name}
+          readOnly={drill.readOnly}
+          onBack={() => { setTenantContext({}); setDrill(null); }}
+        />
+      );
+    }
+    return <SuperAdminDashboard onOpenLibrary={(lib, readOnly) => setDrill({ library: lib, readOnly })} />;
+  }
+
+  return (
+    <LibraryWorkspace
+      libraryId={user.libraryId}
+      libraryName={library?.name || user.libraryId}
+      lockedStaffId={user.role === 'staff' ? user.staffId : null}
+    />
+  );
+};
+
 export default function App() {
   return (
-    <LibraryProvider>
-      <AppContent />
-    </LibraryProvider>
+    <AuthProvider>
+      <RoleRouter />
+    </AuthProvider>
   );
 }

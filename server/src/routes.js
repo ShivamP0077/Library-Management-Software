@@ -12,12 +12,14 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 const stripMeta = (body) => { const o = { ...(body || {}) }; for (const f of ['_id', '_key', '_order', '__v', 'createdAt', 'updatedAt', 'libraryId']) delete o[f]; return o; };
 
 // ---------------------------------------------------------------- Health
-export const healthHandler = wrap(async (_req, res) => {
+export const healthHandler = wrap(async (req, res) => {
   const state = ['disconnected', 'connected', 'connecting', 'disconnecting'][mongoose.connection.readyState] || 'unknown';
   let ping = false;
   if (state === 'connected') { await mongoose.connection.db.admin().ping(); ping = true; }
   const collections = ping ? (await mongoose.connection.db.listCollections().toArray()).map(c => c.name).sort() : [];
-  res.status(ping ? 200 : 503).json({ ok: ping, db: { state, name: mongoose.connection.name, collections }, googleAuth: googleEnabled() });
+  // Root /health is a liveness probe (always 200, reports DB state); /api/health is readiness (503 when DB is down)
+  const liveness = req.baseUrl !== '/api';
+  res.status(ping || liveness ? 200 : 503).json({ ok: ping, db: { state, name: mongoose.connection.name, collections }, googleAuth: googleEnabled() });
 });
 router.get('/health', healthHandler);
 

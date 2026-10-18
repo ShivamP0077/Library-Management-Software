@@ -218,7 +218,7 @@ const SessionBar = ({ libraryName, readOnly, onBack }) => {
         {readOnly && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 600 }}><Eye size={12} /> Read-only view</span>}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span>{user?.email} · {user?.role === 'superadmin' ? 'Super Admin' : user?.role === 'client_admin' ? 'Client Admin' : 'Staff'}</span>
+        <span><span className="session-email">{user?.email} · </span>{user?.role === 'superadmin' ? 'Super Admin' : user?.role === 'client_admin' ? 'Client Admin' : 'Staff'}</span>
         <button className="btn btn-ghost btn-sm" onClick={logout} style={{ color: 'inherit' }}><LogOut size={14} /> <span>Sign out</span></button>
       </div>
     </div>

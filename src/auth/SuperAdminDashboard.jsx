@@ -59,7 +59,7 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
 
   return (
     <div style={{ minHeight: '100vh', overflowY: 'auto' }}>
-      <header className="glass-panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 24px', position: 'sticky', top: 0, zIndex: 10 }}>
+      <header className="glass-panel sa-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 24px', position: 'sticky', top: 0, zIndex: 10 }}>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <Shield size={22} />
           <div>
@@ -73,7 +73,7 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
         </div>
       </header>
 
-      <main style={{ padding: 24, maxWidth: 1200, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 24 }}>
+      <main className="sa-main" style={{ padding: 24, maxWidth: 1200, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 24 }}>
         {totals && (
           <div id="sa-totals" style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
             <Stat label="Libraries" value={totals.libraries} />
@@ -85,7 +85,7 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
           </div>
         )}
 
-        <div className="premium-card" style={{ padding: 0 }}>
+        <div className="premium-card sa-table-card" style={{ padding: 0 }}>
           <div className="table-container">
             <table className="data-grid" style={{ width: '100%' }}>
               <thead>

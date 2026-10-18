@@ -17,6 +17,7 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
 
   // Track user-selected section for progressive selection (when 2+ sections exist)
   const [selectedSectionId, setSelectedSectionId] = useState(null);
+  const [seatZoom, setSeatZoom] = useState(1); // seat grid zoom (useful on phones)
 
   // Progressive Scope Resolution following the Master Library Flow
   const scope = resolveConfigurationScope({
@@ -557,9 +558,16 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
                     </div>
                   )}
 
+                  {/* Zoom controls */}
+                  <div className="seat-zoom-controls" style={{ alignSelf: 'flex-end' }} aria-label="Seat map zoom">
+                    <button type="button" aria-label="Zoom out" onClick={() => setSeatZoom(z => Math.max(0.6, +(z - 0.2).toFixed(2)))}>−</button>
+                    <button type="button" aria-label="Reset zoom" style={{ width: 'auto', padding: '0 8px', fontSize: '12px' }} onClick={() => setSeatZoom(1)}>{Math.round(seatZoom * 100)}%</button>
+                    <button type="button" aria-label="Zoom in" onClick={() => setSeatZoom(z => Math.min(2, +(z + 0.2).toFixed(2)))}>+</button>
+                  </div>
+
                   {/* 3D Seat Grid Layout */}
                   <div className="seat-map-container" style={{ minHeight: '120px' }}>
-                    <div className="seat-grid-3d">
+                    <div className="seat-grid-3d" style={{ zoom: seatZoom, minWidth: seatZoom > 1 ? `${Math.round(100 / seatZoom)}%` : undefined }}>
                       {sectionSeats.map((seat, idx) => {
                         const occupant = seatOccupancyMap[seat.name];
                         const isOccupied = Boolean(occupant);

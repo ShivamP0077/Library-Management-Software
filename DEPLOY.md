@@ -29,3 +29,10 @@ Only pre-provisioned emails can sign in (no self-signup).
 
 ## MongoDB Atlas
 Atlas → Network Access must allow Render's outbound IPs (or `0.0.0.0/0`).
+
+## Current deployment
+- App (Vercel project `library-os-app`): https://library-os-app.vercel.app — env `VITE_API_URL`
+- Landing (Vercel project `library-os`, from `landing/`): https://library-os-ashy.vercel.app — env `VITE_APP_URL`, `VITE_SITE_URL`
+- API (Render `lms-api`, Singapore, free): https://lms-api-sz2z.onrender.com — `GET /health`
+- Vercel projects are deployed with the CLI (not Git-linked yet: the Vercel account needs a GitHub login connection first).
+- The free Render instance sleeps when idle; the first request after a while can take ~30-60 s.

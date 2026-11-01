@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useLibrary } from '../../context/LibraryContext';
 import { X, UserPlus, ShieldAlert, AlertCircle, Clock, Check, RefreshCw } from 'lucide-react';
 import { NumericInput } from '../NumericInput';
@@ -6,7 +6,15 @@ import toast from 'react-hot-toast';
 import { calculatePricing } from '../../utils/pricingCalculator';
 import { handleSplitAmountChange, handleAddSplitComponent, handleRemoveSplitComponent, validateSplitPayment } from '../../utils/splitPaymentUtils';
 import { calculateSubscriptionExpiry, formatDate } from '../../utils/dateUtils';
-import { saveDocumentBlob } from '../../utils/idbStorage';
+import { saveDocumentBlob, deleteDocumentBlob } from '../../utils/idbStorage';
+
+const formatFileSize = (bytes) => {
+  const size = Number(bytes);
+  if (!Number.isFinite(size) || size < 0) return '';
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+};
 
 export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPayload }) => {
   const { 
@@ -30,12 +38,28 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
   const [selectedDocType, setSelectedDocType] = useState(settings.allowedDocuments?.[0] || 'Aadhaar Card');
   const [docFileAttached, setDocFileAttached] = useState(false);
   const [docFileMeta, setDocFileMeta] = useState(null);
+  const [docFile, setDocFile] = useState(null);
   const [isUploadingDoc, setIsUploadingDoc] = useState(false);
   const [submitDocLater, setSubmitDocLater] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const selectedDocTypeObj = settings.documentTypes?.find(d => d.name === selectedDocType);
+  const effectiveDocRequirement = selectedDocTypeObj?.requirement || settings.idProofRequirement || 'Required';
+  const canSkipDocument = effectiveDocRequirement === 'Can Be Submitted Later';
+
+  const resetFileInput = () => {
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
   const handleFileChange = (e) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+
+    // Cancelling the picker (or selecting nothing) must never mark a document as attached.
+    if (!file) {
+      resetFileInput();
+      return;
+    }
+
     setIsUploadingDoc(true);
     const reader = new FileReader();
     reader.onload = async (ev) => {
@@ -47,24 +71,40 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
           id: storageKey,
           name: selectedDocType,
           fileName: file.name,
+          fileSize: file.size,
           fileType: file.type,
           storageKey,
           uploadedAt: new Date().toISOString()
         });
+        setDocFile(file);
         setDocFileAttached(true);
+        setSubmitDocLater(false);
         toast.success(`Attached ${file.name}`);
       } catch (err) {
         console.error('IDB document save failed:', err);
         toast.error('Failed to attach document.');
       } finally {
         setIsUploadingDoc(false);
+        resetFileInput();
       }
     };
     reader.onerror = () => {
       setIsUploadingDoc(false);
+      resetFileInput();
       toast.error('Could not read file.');
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleRemoveDoc = () => {
+    const storageKey = docFileMeta?.storageKey;
+    setDocFile(null);
+    setDocFileMeta(null);
+    setDocFileAttached(false);
+    resetFileInput();
+    if (storageKey) {
+      deleteDocumentBlob(storageKey).catch(() => {});
+    }
   };
 
   // Hierarchy Selection
@@ -143,7 +183,9 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
     if (isOpen) {
       setName(''); setPhone(''); setEmergencyPhone(''); setGender('Male');
       setInternalNotes(''); setSubmitError(''); setIsCapacityFull(false);
-      setDocFileAttached(false); setSubmitDocLater(false);
+      setDocFileAttached(false); setDocFileMeta(null); setDocFile(null);
+      setIsUploadingDoc(false); setSubmitDocLater(false);
+      resetFileInput();
       
       const defaultB = branches[0]?.id || '';
       const defaultS = sections.find(s => !defaultB || s.branchId === defaultB)?.id || '';
@@ -338,10 +380,7 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
     }
 
     // Document requirement validation
-    const currentDocTypeObj = settings.documentTypes?.find(d => d.name === selectedDocType);
-    const effectiveRequirement = currentDocTypeObj ? currentDocTypeObj.requirement : (settings.idProofRequirement || 'Required');
-
-    if (effectiveRequirement === 'Required' && !docFileAttached && !submitDocLater) {
+    if (effectiveDocRequirement === 'Required' && !docFileAttached && !submitDocLater) {
       errs.document = `Admission document (${selectedDocType}) is required.`;
     }
 
@@ -421,6 +460,9 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
     }
   };
 
+  const docFileName = docFile?.name || docFileMeta?.fileName || '';
+  const docFileSize = formatFileSize(docFile?.size ?? docFileMeta?.fileSize);
+
   if (!isOpen) return null;
 
   return (
@@ -496,10 +538,10 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
 
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="form-label" style={{ fontSize: '12px' }}>Gender *</label>
-                <div style={{ display: 'flex', gap: '16px' }}>
+                <div className="radio-group" role="radiogroup" aria-label="Gender">
                   {['Male', 'Female', 'Other'].map(g => (
-                    <label key={g} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer' }}>
-                      <input type="radio" name="gnd" checked={gender === g} onChange={() => setGender(g)} />
+                    <label key={g}>
+                      <input type="radio" name="gnd" value={g} checked={gender === g} onChange={() => setGender(g)} />
                       <span>{g}</span>
                     </label>
                   ))}
@@ -511,27 +553,63 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                   <span style={{ fontSize: '12px', fontWeight: 600 }}>ID Document Verification</span>
                   <span style={{ fontSize: '10px', background: '#e0f2fe', color: '#0369a1', padding: '2px 6px', borderRadius: '4px' }}>
-                    {settings.documentTypes?.find(d => d.name === selectedDocType)?.requirement || settings.idProofRequirement || 'Required'}
+                    {effectiveDocRequirement}
                   </span>
                 </div>
 
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <select className="form-select" style={{ fontSize: '12px' }} value={selectedDocType} onChange={e => setSelectedDocType(e.target.value)}>
+                  <select className="form-select" style={{ fontSize: '12px', flex: 1 }} value={selectedDocType} onChange={e => setSelectedDocType(e.target.value)}>
                     {(settings.allowedDocuments || ["Aadhaar Card", "Student ID", "Address Proof"]).map(d => (
                       <option key={d} value={d}>{d}</option>
                     ))}
                   </select>
 
-                  <label className="btn btn-ghost" style={{ fontSize: '12px', border: '1px solid var(--border-light)', cursor: 'pointer', margin: 0, opacity: isUploadingDoc ? 0.6 : 1 }}>
-                    {isUploadingDoc ? 'Attaching...' : (docFileAttached ? '✓ Attached' : 'Attach')}
-                    <input type="file" style={{ display: 'none' }} accept="image/*,.pdf" onChange={handleFileChange} disabled={isUploadingDoc} />
-                  </label>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ fontSize: '12px', border: '1px solid var(--border-light)', cursor: isUploadingDoc ? 'not-allowed' : 'pointer', opacity: isUploadingDoc ? 0.6 : 1, flexShrink: 0 }}
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isUploadingDoc}
+                  >
+                    {isUploadingDoc ? 'Attaching...' : (docFileAttached ? 'Replace' : 'Attach')}
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    style={{ display: 'none' }}
+                    accept="image/*,.pdf"
+                    onChange={handleFileChange}
+                    disabled={isUploadingDoc}
+                  />
                 </div>
 
-                {(settings.documentTypes?.find(d => d.name === selectedDocType)?.requirement === 'Can Be Submitted Later' || settings.idProofRequirement === 'Can Be Submitted Later') && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginTop: '8px', minHeight: '18px' }}>
+                  <span
+                    style={{ fontSize: '11px', color: docFileAttached ? 'var(--text-primary)' : 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    title={docFileAttached ? `${docFileName}${docFileSize ? ` (${docFileSize})` : ''}` : 'No file selected'}
+                  >
+                    {isUploadingDoc
+                      ? 'Reading file…'
+                      : docFileAttached
+                        ? `${docFileName}${docFileSize ? ` (${docFileSize})` : ''}`
+                        : 'No file selected'}
+                  </span>
+                  {docFileAttached && !isUploadingDoc && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      style={{ fontSize: '11px', padding: '2px 8px', color: 'var(--status-error)', flexShrink: 0 }}
+                      onClick={handleRemoveDoc}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+
+                {canSkipDocument && !docFileAttached && (
                   <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', marginTop: '8px', cursor: 'pointer', color: 'var(--text-secondary)' }}>
                     <input type="checkbox" checked={submitDocLater} onChange={e => setSubmitDocLater(e.target.checked)} />
-                    <span>Submit Later (Mark Document Pending)</span>
+                    <span>Skip for now (mark document pending)</span>
                   </label>
                 )}
                 {errors.document && <span style={{ color: '#ef4444', fontSize: '11px', display: 'block', marginTop: '4px' }}>{errors.document}</span>}

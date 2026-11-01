@@ -5,6 +5,7 @@ import { Building2, Plus, Trash2, CheckCircle, Clock, Copy, Eye, FileText, Check
 import toast from 'react-hot-toast';
 import { NumericInput } from './NumericInput';
 import { resolveConfigurationScope, matchesScope } from '../utils/scopeResolver';
+import { buildDurationPricing } from '../utils/pricingCalculator';
 
 const INITIAL_SHIFT_TEMPLATES = [
   { name: "Full Day", startTime: "06:00", endTime: "20:00", daysOfWeek: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] },
@@ -20,7 +21,36 @@ const INITIAL_PLAN_TEMPLATES = [
 ];
 
 const STANDARD_DURATIONS = [1, 2, 3, 6, 12];
+const DEFAULT_DURATION_DISCOUNTS = { 1: 0, 2: 0, 3: 5, 6: 10, 12: 15 };
+const DEFAULT_MONTHLY_PRICE = 1500;
+const DEFAULT_DURATION_PRICING = STANDARD_DURATIONS.map(months => ({
+  months,
+  discountPercent: DEFAULT_DURATION_DISCOUNTS[months] || 0
+}));
 const ALL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+const getPlanMonthlyPrice = (plan) => {
+  const stored = Number(plan?.monthlyPrice);
+  if (Number.isFinite(stored) && stored >= 0) return stored;
+
+  const oneMonth = (plan?.durationPricing || []).find(dp => dp.durationMonths === 1);
+  const inferred = Number(oneMonth?.basePrice);
+  return Number.isFinite(inferred) && inferred > 0 ? inferred : DEFAULT_MONTHLY_PRICE;
+};
+
+const getPlanDurations = (plan) => (plan?.durationPricing || [])
+  .filter(dp => Number(dp.durationMonths) > 0)
+  .map(dp => ({
+    months: Number(dp.durationMonths),
+    discountPercent: dp.discountType === 'Percentage' ? Number(dp.discountValue) || 0 : 0
+  }))
+  .sort((a, b) => a.months - b.months);
+
+const withRecomputedPricing = (plan, monthlyPrice, durations) => ({
+  ...plan,
+  monthlyPrice,
+  durationPricing: buildDurationPricing(monthlyPrice, durations)
+});
 
 export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
   const { 
@@ -453,7 +483,7 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {tempBranches.map((b) => (
-              <div key={b.id} style={{ display: 'flex', gap: '10px', alignItems: 'center', background: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
+              <div key={b.id} style={{ display: 'flex', gap: '10px', alignItems: 'center', background: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-light)', flexWrap: 'wrap' }}>
                 <input 
                   className="form-input" 
                   placeholder="Branch Name (e.g. Branch A / Main Campus)" 
@@ -463,7 +493,7 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
                     const autoCode = (val.trim().slice(0, 3)).toUpperCase();
                     setTempBranches(tempBranches.map(tb => tb.id === b.id ? { ...tb, name: val, code: tb.code || autoCode } : tb));
                   }} 
-                  style={{ flex: 1 }}
+                  style={{ flex: '1 1 160px', minWidth: '120px', width: '100%', color: 'var(--text-primary)', background: 'var(--bg-surface, #fff)' }}
                 />
                 <input 
                   className="form-input" 
@@ -471,19 +501,19 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
                   value={b.code || ''} 
                   maxLength={4}
                   onChange={e => setTempBranches(tempBranches.map(tb => tb.id === b.id ? { ...tb, code: e.target.value.toUpperCase() } : tb))} 
-                  style={{ width: '80px' }}
+                  style={{ flex: '1 1 160px', minWidth: '120px', width: '100%', color: 'var(--text-primary)', background: 'var(--bg-surface, #fff)' }}
                 />
                 <input 
                   className="form-input" 
                   placeholder="Address / Area" 
                   value={b.address || ''} 
                   onChange={e => setTempBranches(tempBranches.map(tb => tb.id === b.id ? { ...tb, address: e.target.value } : tb))} 
-                  style={{ flex: 1.5 }}
+                  style={{ flex: '1 1 180px', minWidth: '120px', width: '100%', color: 'var(--text-primary)', background: 'var(--bg-surface, #fff)' }}
                 />
                 <button 
                   type="button" 
                   className="btn btn-ghost" 
-                  style={{ color: '#ef4444', padding: '6px' }}
+                  style={{ color: '#ef4444', padding: '6px', flexShrink: 0, marginLeft: 'auto' }}
                   onClick={() => {
                     const remaining = tempBranches.filter(tb => tb.id !== b.id);
                     setTempBranches(remaining);
@@ -532,13 +562,13 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {tempSections.map(sec => (
-              <div key={sec.id} style={{ display: 'flex', gap: '10px', alignItems: 'center', background: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
+              <div key={sec.id} style={{ display: 'flex', gap: '10px', alignItems: 'center', background: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-light)', flexWrap: 'wrap' }}>
                 <input 
                   className="form-input" 
                   placeholder="Section Name (e.g. Quiet Study Room, Section A1)" 
                   value={sec.name} 
                   onChange={e => setTempSections(tempSections.map(s => s.id === sec.id ? { ...s, name: e.target.value } : s))}
-                  style={{ flex: 1 }}
+                  style={{ flex: '1 1 160px', minWidth: '120px', width: '100%', color: 'var(--text-primary)', background: 'var(--bg-surface, #fff)' }}
                 />
                 
                 {/* Branch ownership selector for section (Shown when 2+ branches exist) */}
@@ -547,7 +577,7 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
                     className="form-select" 
                     value={sec.branchId || tempBranches[0]?.id} 
                     onChange={e => setTempSections(tempSections.map(s => s.id === sec.id ? { ...s, branchId: e.target.value } : s))}
-                    style={{ width: '200px' }}
+                    style={{ flex: '0 1 200px', minWidth: '120px', width: '100%', color: 'var(--text-primary)', background: 'var(--bg-surface, #fff)' }}
                   >
                     {tempBranches.map(b => (
                       <option key={b.id} value={b.id}>
@@ -560,7 +590,7 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
                 <button 
                   type="button" 
                   className="btn btn-ghost" 
-                  style={{ color: '#ef4444', padding: '6px' }}
+                  style={{ color: '#ef4444', padding: '6px', flexShrink: 0, marginLeft: 'auto' }}
                   onClick={() => setTempSections(tempSections.filter(s => s.id !== sec.id))}
                 >
                   <Trash2 size={16} />
@@ -978,10 +1008,8 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
                       shiftIds: currentScopeShifts.map(s => s.id),
                       branchId: scope.resolvedBranchId || undefined,
                       sectionId: scope.resolvedSectionId || undefined,
-                      durationPricing: [
-                        { durationMonths: 1, basePrice: 1500, discountType: 'None', discountValue: 0 },
-                        { durationMonths: 3, basePrice: 4500, discountType: 'Percentage', discountValue: 5 }
-                      ],
+                      monthlyPrice: DEFAULT_MONTHLY_PRICE,
+                      durationPricing: buildDurationPricing(DEFAULT_MONTHLY_PRICE, DEFAULT_DURATION_PRICING),
                       active: true
                     }]);
                   }
@@ -1000,7 +1028,10 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
               No Fee Plans configured for {scope.scopeDisplayName}. Click "+ Add Custom Plan" below.
             </div>
           ) : (
-            currentPlans.map(p => (
+            currentPlans.map(p => {
+              const monthlyPrice = getPlanMonthlyPrice(p);
+              const planDurations = getPlanDurations(p);
+              return (
               <div key={p.id} style={{ background: '#f8fafc', border: '1px solid var(--border-light)', borderRadius: '8px', padding: '16px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
                   <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '12px' }}>
@@ -1055,7 +1086,45 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
 
                 {/* Duration Pricing */}
                 <div>
-                  <label className="form-label" style={{ fontSize: '11px' }}>Pricing & Discounts per Duration</label>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                    <label className="form-label" style={{ fontSize: '11px', margin: 0 }}>Pricing & Discounts per Duration</label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                      Monthly Price (₹)
+                      <NumericInput 
+                        className="form-input" 
+                        style={{ width: '120px', padding: '4px 8px', fontSize: '12px' }} 
+                        value={monthlyPrice} 
+                        onChange={e => {
+                          const val = Number(e.target.value) || 0;
+                          setTempPlans(prev => prev.map(item => item.id === p.id ? withRecomputedPricing(item, val, getPlanDurations(item)) : item));
+                        }} 
+                      />
+                    </label>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                    {STANDARD_DURATIONS.map(months => {
+                      const active = planDurations.some(d => d.months === months);
+                      const discount = planDurations.find(d => d.months === months)?.discountPercent;
+                      return (
+                        <button
+                          type="button"
+                          key={months}
+                          className={active ? "btn btn-primary" : "btn btn-ghost"}
+                          style={{ fontSize: '11px', padding: '3px 10px', border: active ? '1px solid transparent' : '1px solid var(--border-light)' }}
+                          onClick={() => {
+                            const nextDurations = active
+                              ? planDurations.filter(d => d.months !== months)
+                              : [...planDurations, { months, discountPercent: DEFAULT_DURATION_DISCOUNTS[months] || 0 }].sort((a, b) => a.months - b.months);
+                            setTempPlans(prev => prev.map(item => item.id === p.id ? withRecomputedPricing(item, monthlyPrice, nextDurations) : item));
+                          }}
+                        >
+                          {months} Mo{active && Number(discount) > 0 ? ` · ${discount}% off` : ''}
+                        </button>
+                      );
+                    })}
+                  </div>
+
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                     {(p.durationPricing || []).map((dp, idx) => (
                       <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr 1.5fr 1.5fr auto', gap: '8px', alignItems: 'center', background: '#fff', padding: '6px 12px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
@@ -1076,7 +1145,19 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
                           value={dp.discountType || 'None'} 
                           onChange={e => {
                             const dType = e.target.value;
-                            const updated = p.durationPricing.map((item, i) => i === idx ? { ...item, discountType: dType } : item);
+                            const built = dType === 'Percentage'
+                              ? buildDurationPricing(monthlyPrice, [{ months: dp.durationMonths, discountPercent: dp.discountValue || 0 }])[0]
+                              : null;
+                            const updated = p.durationPricing.map((item, i) => i === idx ? {
+                              ...item,
+                              discountType: dType,
+                              ...(built ? {
+                                basePrice: built.basePrice,
+                                discountValue: built.discountValue,
+                                discountAmount: built.discountAmount,
+                                netPrice: built.netPrice
+                              } : {})
+                            } : item);
                             setTempPlans(tempPlans.map(item => item.id === p.id ? { ...item, durationPricing: updated } : item));
                           }} 
                         >
@@ -1090,7 +1171,19 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
                           value={dp.discountValue || 0} 
                           onChange={e => {
                             const val = Number(e.target.value);
-                            const updated = p.durationPricing.map((item, i) => i === idx ? { ...item, discountValue: val } : item);
+                            const isPercentage = (dp.discountType || 'None') === 'Percentage';
+                            const built = isPercentage
+                              ? buildDurationPricing(monthlyPrice, [{ months: dp.durationMonths, discountPercent: val }])[0]
+                              : null;
+                            const updated = p.durationPricing.map((item, i) => i === idx ? {
+                              ...item,
+                              discountValue: built ? built.discountValue : val,
+                              ...(built ? {
+                                basePrice: built.basePrice,
+                                discountAmount: built.discountAmount,
+                                netPrice: built.netPrice
+                              } : {})
+                            } : item);
                             setTempPlans(tempPlans.map(item => item.id === p.id ? { ...item, durationPricing: updated } : item));
                           }} 
                         />
@@ -1102,32 +1195,16 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
                         </button>
                       </div>
                     ))}
-                    <div style={{ display: 'flex', gap: '6px', marginTop: '6px', alignItems: 'center' }}>
-                      <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>+ Add Duration:</span>
-                      {STANDARD_DURATIONS.filter(dur => !p.durationPricing?.some(dp => dp.durationMonths === dur)).map(dur => (
-                        <button
-                          type="button"
-                          key={dur}
-                          className="btn btn-ghost"
-                          style={{ fontSize: '11px', padding: '2px 8px', border: '1px solid #cbd5e1' }}
-                          onClick={() => {
-                            const newPricing = [...(p.durationPricing || []), {
-                              durationMonths: dur,
-                              basePrice: dur * 1500,
-                              discountType: dur >= 3 ? 'Percentage' : 'None',
-                              discountValue: dur >= 3 ? 5 : 0
-                            }].sort((a, b) => a.durationMonths - b.durationMonths);
-                            setTempPlans(tempPlans.map(item => item.id === p.id ? { ...item, durationPricing: newPricing } : item));
-                          }}
-                        >
-                          +{dur} Mo
-                        </button>
-                      ))}
-                    </div>
+                    {(p.durationPricing || []).length === 0 && (
+                      <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>
+                        Select at least one duration above.
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
-            ))
+              );
+            })
           )}
 
           <button 
@@ -1142,7 +1219,8 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
                 shiftIds: currentScopeShifts.map(s => s.id),
                 branchId: scope.resolvedBranchId || undefined,
                 sectionId: scope.resolvedSectionId || undefined,
-                durationPricing: [{ durationMonths: 1, basePrice: 1500, discountType: 'None', discountValue: 0 }],
+                monthlyPrice: DEFAULT_MONTHLY_PRICE,
+                durationPricing: buildDurationPricing(DEFAULT_MONTHLY_PRICE, DEFAULT_DURATION_PRICING),
                 active: true
               }]);
             }}

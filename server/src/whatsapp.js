@@ -45,7 +45,7 @@ export async function canManageWhatsapp(user, libraryId, { Staff = models.staffM
   if (!user) return false;
   if (user.role === 'client_admin' || user.role === 'superadmin') return true;
   if (user.role !== 'staff' || !user.staffId) return false;
-  const s = await Staff.findOne({ libraryId, _key: String(user.staffId) }).lean();
+  const s = await Staff.findOne({ tenantId: libraryId, _key: String(user.staffId) }).lean();
   if (!s || (s.status && s.status !== 'Active')) return false;
   if (['Admin', 'Manager'].includes(s.role)) return true;
   const p = s.permissions?.settings || {};
@@ -158,9 +158,9 @@ export function createWhatsappRouter({ client = createEvolutionClient(), isConfi
 
   // Send the receipt for an existing payment to the student's phone (admission/renewal receipts).
   r.post('/receipts/:receiptNo', wrap(async (req, res) => {
-    const payment = await models.payments.findOne({ libraryId: req.libraryId, _key: req.params.receiptNo }).lean();
+    const payment = await models.payments.findOne({ tenantId: req.tenantId || req.libraryId, _key: req.params.receiptNo }).lean();
     if (!payment) return res.status(404).json({ error: 'Payment not found' });
-    const student = payment.studentId ? await models.students.findOne({ libraryId: req.libraryId, _key: String(payment.studentId) }).lean() : null;
+    const student = payment.studentId ? await models.students.findOne({ tenantId: req.tenantId || req.libraryId, _key: String(payment.studentId) }).lean() : null;
     if (!student?.phone) return res.status(400).json({ error: 'Student has no phone number' });
     const type = req.body?.type === 'renewal_receipt' ? 'renewal_receipt' : 'admission_receipt';
     const out = await sendWhatsappMessage({ libraryId: req.libraryId, type, to: student.phone, text: buildReceiptText(payment, student), dedupeKey: `receipt:${payment._key}`, consent: student.whatsappOptOut !== true }, { client });

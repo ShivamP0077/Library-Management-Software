@@ -18,7 +18,7 @@ function loadGoogleScript() {
   });
 }
 
-export function LoginScreen() {
+export function LoginScreen({ onContinueOffline }) {
   const { loginWithPassword, loginWithGoogle } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -81,6 +81,24 @@ export function LoginScreen() {
             <LogIn size={16} /> <span>{busy ? 'Signing in…' : 'Sign in'}</span>
           </button>
         </form>
+
+        {onContinueOffline && (
+          <div style={{ marginTop: 14, textAlign: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '14px 0 10px', color: 'var(--text-tertiary)', fontSize: 12 }}>
+              <div style={{ flex: 1, height: 1, background: 'var(--border-light, #e5e7eb)' }} /> or <div style={{ flex: 1, height: 1, background: 'var(--border-light, #e5e7eb)' }} />
+            </div>
+            <button
+              id="continue-offline-btn"
+              type="button"
+              className="btn btn-secondary"
+              onClick={onContinueOffline}
+              style={{ width: '100%', justifyContent: 'center', fontSize: 13 }}
+            >
+              ⚡ Continue in Local / Offline Mode
+            </button>
+          </div>
+        )}
+
         <p style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center', marginTop: 16, color: 'var(--text-tertiary)', fontSize: 12 }}>
           <ShieldCheck size={14} /> Accounts are created by your administrator.
         </p>

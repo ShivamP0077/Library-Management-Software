@@ -6,7 +6,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     server: {
-      port: 3001,
+      port: 3003,
       open: !env.CI && !env.NO_OPEN,
       // In dev, /api is proxied to the local backend unless VITE_API_URL points elsewhere
       proxy: {

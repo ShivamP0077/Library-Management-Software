@@ -6,6 +6,7 @@ import { COLLECTIONS, models, Settings, StudentDocument, Library, User, keyOf, c
 import { signToken, requireAuth, requireRole, tenantScope } from './auth.js';
 import { createLibrary, createUser, computeMetrics, hashPassword, validatePassword } from './services.js';
 import { verifyGoogleIdToken, googleEnabled, googleConfig, buildAuthUrl, exchangeCode } from './google.js';
+import { createWhatsappRouter } from './whatsapp.js';
 
 const router = express.Router();
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -383,5 +384,7 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
   res.json({ ok: true, upserted: ops.length, deleted: del.deletedCount });
 }));
 
+// WhatsApp (Evolution API) is proxied server-side; mounted before the generic /:col routes
+router.use('/whatsapp', tenantScope, createWhatsappRouter());
 router.use('/', tenant);
 export default router;

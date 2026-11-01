@@ -29,3 +29,9 @@ services:
         sync: false # optional password fallback
       - key: GOOGLE_CLIENT_ID
         sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_CALLBACK_URL
+        value: https://lms-api-sz2z.onrender.com/api/auth/google/callback
+      - key: FRONTEND_URL
+        value: https://library-os-app.vercel.app

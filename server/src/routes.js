@@ -11,6 +11,7 @@ import { createFinanceRouter, validatePaymentBatch } from './finance.js';
 import { createStudentRouter, recordStudentDiff, recordArchiveDiff, checkCapacity } from './students.js';
 import { audit } from './audit.js';
 import { createNotificationRouter } from './notifications.js';
+import { createInsightsRouter } from './insights.js';
 import { createReminderRouter, autoSendReceipts } from './reminders.js';
 
 // Auto-receipts never block or fail the save; in tests we await so results are observable.
@@ -218,6 +219,8 @@ router.post('/auth/change-password', wrap(async (req, res) => {
 const admin = express.Router();
 admin.use(requireRole('superadmin'));
 
+admin.use(createInsightsRouter());
+
 admin.get('/libraries', wrap(async (_req, res) => {
   const libs = await Library.find().sort({ createdAt: 1 }).lean();
   const { perLibrary } = await computeMetrics(libs.map(l => l.libraryId));
@@ -246,6 +249,7 @@ admin.patch('/libraries/:libraryId', wrap(async (req, res) => {
   if (req.body?.name) set.name = String(req.body.name).trim();
   if (req.body?.status) { if (!['Active', 'Disabled'].includes(req.body.status)) return res.status(400).json({ error: 'Invalid status' }); set.status = req.body.status; }
   if (req.body?.contactEmail !== undefined) set.contactEmail = req.body.contactEmail;
+  if (req.body?.city !== undefined) set.city = req.body.city ? String(req.body.city).trim().slice(0, 80) : null;
   if (req.body?.studentLimit !== undefined) { const n = req.body.studentLimit === null ? null : Number(req.body.studentLimit); if (n !== null && !(n >= 0)) return res.status(400).json({ error: 'Invalid studentLimit' }); set.studentLimit = n || null; }
   await audit(req, 'library.update', { tenantId: req.params.libraryId, target: req.params.libraryId, detail: set });
   const lib = await Library.findOneAndUpdate({ libraryId: req.params.libraryId }, { $set: set }, { new: true, lean: true });

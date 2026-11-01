@@ -3,8 +3,9 @@ import { Building2, Eye, LogOut, Plus, RefreshCw, Shield, UserPlus, Power } from
 import toast, { Toaster } from 'react-hot-toast';
 import { api } from '../utils/api';
 import { useAuth } from './AuthContext';
+import { LibraryInsights } from './LibraryInsights';
 
-const inr = (n) => `₹${Math.round(Number(n || 0)).toLocaleString('en-IN')}`;
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—');
 
 const Stat = ({ label, value, sub }) => (
   <div className="premium-card" style={{ padding: 16, minWidth: 150, flex: 1 }}>
@@ -17,7 +18,9 @@ const Stat = ({ label, value, sub }) => (
 export function SuperAdminDashboard({ onOpenLibrary }) {
   const { user, logout } = useAuth();
   const [libraries, setLibraries] = useState([]);
-  const [totals, setTotals] = useState(null);
+  const [summary, setSummary] = useState(null);
+  const [view, setView] = useState('business');
+  const [cityEdit, setCityEdit] = useState(null);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ name: '', adminEmail: '', adminName: '' });
   const [inviteFor, setInviteFor] = useState(null);
@@ -26,8 +29,10 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [libs, metrics] = await Promise.all([api.adminLibraries(), api.adminMetrics()]);
-      setLibraries(libs); setTotals(metrics.totals);
+      const [libs, sum] = await Promise.all([api.adminLibraries(), api.adminSaasSummary()]);
+      const extra = Object.fromEntries(sum.list.map(x => [x.libraryId, x]));
+      setLibraries(libs.map(l => ({ ...l, ...extra[l.libraryId] })));
+      setSummary(sum);
     } catch (e) { toast.error(e.message); } finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -63,7 +68,7 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <Shield size={22} />
           <div>
-            <h1 style={{ fontSize: 18, fontWeight: 700 }}>Super Admin — All Libraries</h1>
+            <h1 style={{ fontSize: 18, fontWeight: 700 }}>Super Admin — Library OS</h1>
             <p style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{user?.email}</p>
           </div>
         </div>
@@ -74,39 +79,57 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
       </header>
 
       <main className="sa-main" style={{ padding: 24, maxWidth: 1200, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 24 }}>
-        {totals && (
+        <div role="tablist" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <button role="tab" aria-selected={view === 'business'} className={`btn btn-sm ${view === 'business' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView('business')}>Business dashboard</button>
+          <button role="tab" aria-selected={view === 'insights'} className={`btn btn-sm ${view === 'insights' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView('insights')}>Library Insights &amp; Analytics</button>
+        </div>
+
+        {view === 'insights' && <LibraryInsights libraries={libraries} />}
+
+        {view === 'business' && summary && (
           <div id="sa-totals" style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <Stat label="Libraries" value={totals.libraries} />
-            <Stat label="Seats occupied" value={`${totals.seatsOccupied} / ${totals.seatsTotal}`} />
-            <Stat label="Active students" value={totals.studentsActive} sub={`${totals.studentsTotal} total`} />
-            <Stat label="Revenue collected" value={inr(totals.revenue)} sub={`${totals.paymentsCount} payments`} />
-            <Stat label="Expenses" value={inr(totals.expenses)} />
-            <Stat label="Net" value={inr(totals.net)} />
+            <Stat label="Customer libraries" value={summary.libraries.total} sub={`${summary.libraries.active} active • ${summary.libraries.disabled} disabled`} />
+            <Stat label="New this month" value={summary.libraries.newThisMonth} />
+            <Stat label="Active in last 7 days" value={summary.libraries.activeLast7Days} sub="libraries with a login" />
+            <Stat label="Owner / staff logins" value={`${summary.accounts.owners} / ${summary.accounts.staff}`} />
+            {Object.entries(summary.kpis || {}).map(([k, v]) => v && !v.error && <Stat key={k} label={v.label || k} value={v.value} sub={v.sub} />)}
           </div>
         )}
+        {view === 'business' && summary && (
+          <p style={{ fontSize: 12, color: 'var(--text-tertiary)', margin: 0 }}>
+            Subscriptions, trials, upcoming expiries, software revenue, WhatsApp add-on revenue and overdue invoices will appear here once billing is set up. Customer students, seats and fee collections are in Library Insights.
+          </p>
+        )}
 
+        {view === 'business' && (
         <div className="premium-card sa-table-card" style={{ padding: 0 }}>
           <div className="table-container">
             <table className="data-grid" style={{ width: '100%' }}>
               <thead>
-                <tr><th>Library</th><th>Status</th><th>Client admins</th><th>Seats</th><th>Active students</th><th>Revenue</th><th>Expenses</th><th>Net</th><th>Actions</th></tr>
+                <tr><th>Owner</th><th>Library</th><th>Subscription</th><th>Expiry</th><th>Payment</th><th>Partner</th><th>Status</th><th>Last active</th><th>Actions</th></tr>
               </thead>
               <tbody>
                 {loading && <tr><td colSpan={9}>Loading…</td></tr>}
                 {!loading && libraries.length === 0 && <tr><td colSpan={9}>No client libraries yet.</td></tr>}
                 {libraries.map(l => (
                   <tr key={l.libraryId}>
-                    <td><strong>{l.name}</strong><div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{l.libraryId}</div></td>
+                    <td style={{ fontSize: 12 }}>{l.owner ? <><strong>{l.owner.name || l.owner.email}</strong><div style={{ color: 'var(--text-tertiary)' }}>{l.owner.email}</div></> : (l.admins.map(a => a.email).join(', ') || '—')}</td>
+                    <td><strong>{l.name}</strong><div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{l.libraryId}{' • '}
+                      {cityEdit?.id === l.libraryId
+                        ? <input className="form-input" autoFocus style={{ display: 'inline-block', width: 110, padding: '2px 6px', fontSize: 11 }} value={cityEdit.v} onChange={e => setCityEdit({ id: l.libraryId, v: e.target.value })}
+                            onBlur={async () => { try { await api.adminUpdateLibrary(l.libraryId, { city: cityEdit.v }); } catch (e) { toast.error(e.message); } setCityEdit(null); load(); }}
+                            onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()} />
+                        : <button type="button" className="btn btn-ghost btn-sm" style={{ padding: 0, fontSize: 11, minHeight: 0 }} onClick={() => setCityEdit({ id: l.libraryId, v: l.city || '' })}>{l.city || 'add city'}</button>}
+                    </div></td>
+                    <td>{l.subscription || '—'}</td>
+                    <td>{l.expiry ? fmtDate(l.expiry) : '—'}</td>
+                    <td>{l.paymentStatus || '—'}</td>
+                    <td style={{ fontSize: 12 }}>{l.partner?.name || '—'}</td>
                     <td><span className={`badge ${l.status === 'Active' ? 'badge-active' : 'badge-expired'}`}>{l.status}</span></td>
-                    <td style={{ fontSize: 12 }}>{l.admins.map(a => a.email).join(', ') || '—'}</td>
-                    <td>{l.metrics?.seatsOccupied ?? 0} / {l.metrics?.seatsTotal ?? 0}</td>
-                    <td>{l.metrics?.studentsActive ?? 0}</td>
-                    <td>{inr(l.metrics?.revenue)}</td>
-                    <td>{inr(l.metrics?.expenses)}</td>
-                    <td>{inr(l.metrics?.net)}</td>
+                    <td style={{ fontSize: 12 }}>{fmtDate(l.lastActiveAt)}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       <button className="btn btn-ghost btn-sm" title="View read-only" onClick={() => onOpenLibrary(l, true)}><Eye size={14} /></button>
-                      <button className="btn btn-secondary btn-sm" title="Open as admin" onClick={() => onOpenLibrary(l, false)}><Building2 size={14} /> <span>Manage</span></button>
+                      <button className="btn btn-secondary btn-sm" title="Access Library" onClick={() => onOpenLibrary(l, false)}><Building2 size={14} /> <span>Access Library</span></button>
                       <button className="btn btn-ghost btn-sm" title="Add client admin" onClick={() => setInviteFor(l)}><UserPlus size={14} /></button>
                       <button className="btn btn-ghost btn-sm" title={l.status === 'Active' ? 'Disable' : 'Enable'} onClick={() => toggleStatus(l)}><Power size={14} /></button>
                     </td>
@@ -116,6 +139,7 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
             </table>
           </div>
         </div>
+        )}
 
         {inviteFor && (
           <form className="premium-card" style={{ padding: 16, display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }} onSubmit={addAdmin}>

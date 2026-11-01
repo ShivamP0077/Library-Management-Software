@@ -496,10 +496,10 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
 
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="form-label" style={{ fontSize: '12px' }}>Gender *</label>
-                <div style={{ display: 'flex', gap: '16px' }}>
+                <div className="radio-group" role="radiogroup" aria-label="Gender">
                   {['Male', 'Female', 'Other'].map(g => (
-                    <label key={g} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer' }}>
-                      <input type="radio" name="gnd" checked={gender === g} onChange={() => setGender(g)} />
+                    <label key={g}>
+                      <input type="radio" name="gnd" value={g} checked={gender === g} onChange={() => setGender(g)} />
                       <span>{g}</span>
                     </label>
                   ))}

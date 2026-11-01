@@ -465,7 +465,7 @@ body {
   }
 
   /* Make inputs full width in modals */
-  .modal-content input, .modal-content select, .modal-content textarea {
+  .modal-content input:not([type="radio"]):not([type="checkbox"]), .modal-content select, .modal-content textarea {
     width: 100% !important;
     max-width: 100% !important;
   }

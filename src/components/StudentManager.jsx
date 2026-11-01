@@ -629,8 +629,29 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
         )}
       </div>
 
+      {/* Compact mobile list: Name | Seat | Status | View */}
+      <div className="compact-list mobile-only">
+        {filteredStudents.length === 0 ? (
+          <div className="compact-empty">No student records match your criteria.</div>
+        ) : filteredStudents.map(student => {
+          const subStatus = getSubscriptionStatus(student, settings?.gracePeriodDays);
+          const badgeClass = subStatus.status === 'Expired' ? 'badge-expired' : (subStatus.isGrace ? 'badge-expiring' : 'badge-active');
+          return (
+            <div key={student.id} className="compact-row" onClick={() => isSelectionMode ? handleToggleSelect(student.id) : setSelectedStudent(student)}>
+              {isSelectionMode && (
+                <input type="checkbox" checked={selectedIds.includes(student.id)} onChange={() => handleToggleSelect(student.id)} onClick={e => e.stopPropagation()} />
+              )}
+              <span className="c-main">{student.name}</span>
+              <span className="c-meta">{student.seatNo || '—'}</span>
+              <span className={`badge ${badgeClass}`}>{subStatus.label}</span>
+              <button className="btn btn-ghost" onClick={(e) => { e.stopPropagation(); setSelectedStudent(student); }}>View</button>
+            </div>
+          );
+        })}
+      </div>
+
       {/* Premium Data Grid */}
-      <div className="table-container">
+      <div className="table-container desktop-only">
         <table className="data-grid">
           <thead>
             <tr>

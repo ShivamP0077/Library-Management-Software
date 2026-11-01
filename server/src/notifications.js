@@ -129,7 +129,7 @@ export async function runDailyNotificationJob(Library_) {
 }
 
 /* ---------------------------------------------------------------- permissions */
-async function viewerScope(req) {
+export async function viewerScope(req) {
   if (req.user.role !== 'staff') return { owner: true, can: () => true };
   const staff = req.user.staffId ? await models.staffMembers.findOne({ tenantId: req.tenantId, _key: String(req.user.staffId) }).lean() : null;
   const perms = staff?.permissions || {};
@@ -146,8 +146,8 @@ const visibleCats = (scope) => CATEGORIES.filter(c => scope.can(c));
 
 const pub = (n, uid) => ({ id: String(n._id), category: n.category, severity: n.severity, title: n.title, body: n.body, link: n.link, status: n.status, actionRequired: n.actionRequired, notifyCount: n.notifyCount, at: n.lastNotifiedAt, createdAt: n.createdAt, read: (n.readBy || []).includes(uid), source: n.source, createdBy: n.createdBy, resolvedAt: n.resolvedAt, resolvedBy: n.resolvedBy, resolution: n.resolution, attachment: n.attachment ? { name: n.attachment.name, type: n.attachment.type, size: n.attachment.size } : undefined });
 
-const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
-const MAX_ATTACHMENT = 5 * 1024 * 1024;
+export const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+export const MAX_ATTACHMENT = 5 * 1024 * 1024;
 
 export function createNotificationRouter() {
   const r = express.Router();

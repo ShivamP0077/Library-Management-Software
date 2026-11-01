@@ -12,6 +12,7 @@ import { createStudentRouter, recordStudentDiff, recordArchiveDiff, checkCapacit
 import { audit } from './audit.js';
 import { createNotificationRouter } from './notifications.js';
 import { createInsightsRouter } from './insights.js';
+import { createSupportRouter, createSupportAdminRouter } from './support.js';
 import { createPartnerAdminRouter, createPartnerPortalRouter } from './partners.js';
 import { createReminderRouter, autoSendReceipts } from './reminders.js';
 
@@ -222,6 +223,7 @@ admin.use(requireRole('superadmin'));
 
 admin.use(createInsightsRouter());
 admin.use(createPartnerAdminRouter());
+admin.use(createSupportAdminRouter());
 
 admin.get('/libraries', wrap(async (_req, res) => {
   const libs = await Library.find().sort({ createdAt: 1 }).lean();
@@ -369,6 +371,7 @@ tenant.use(createFinanceRouter());
 tenant.use(createStudentRouter());
 tenant.use(createNotificationRouter());
 tenant.use(createReminderRouter());
+tenant.use(createSupportRouter());
 
 // Generic REST for each entity collection, always filtered by req.tenantId
 const colParam = (req, res, next) => {

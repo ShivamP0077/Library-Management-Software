@@ -16,6 +16,9 @@ import { todayIn } from './finance.js';
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const kpiProviders = [];
 /** Other modules add SaaS KPIs: fn({ libraryIds }) → object merged into summary.kpis[name]. */
+const listDecorators = [];
+/** Other modules add per-library fields to the dashboard list: fn(ids) → { [libraryId]: {...} }. */
+export const registerLibraryListFields = (fn) => { if (!listDecorators.includes(fn)) listDecorators.push(fn); };
 export const registerSaasKpi = (name, fn) => { if (!kpiProviders.some(k => k.name === name)) kpiProviders.push({ name, fn }); };
 
 const ACTIVE = ['Active', 'Expiring Soon'];
@@ -36,6 +39,8 @@ export async function saasSummary() {
   for (const l of libs) { const m = monthOf(l.createdAt); growth[m] = (growth[m] || 0) + 1; }
   const kpis = {};
   for (const p of kpiProviders) { try { kpis[p.name] = await p.fn({ libraryIds: ids }); } catch (e) { kpis[p.name] = { error: e.message }; } }
+  const extra = {};
+  for (const fn of listDecorators) { try { for (const [id, v] of Object.entries(await fn(ids))) extra[id] = { ...(extra[id] || {}), ...v }; } catch (e) { console.error('[saas-summary]', e.message); } }
   return {
     libraries: {
       total: libs.length,
@@ -53,7 +58,7 @@ export async function saasSummary() {
       const owner = users.find(u => u.tenantId === l.libraryId && u.role === 'client_admin');
       return { libraryId: l.libraryId, name: l.name, status: l.status, city: l.city || null, createdAt: l.createdAt,
         owner: owner ? { name: owner.name, email: owner.email } : null, lastActiveAt: lastActive[l.libraryId] || null,
-        subscription: null, expiry: null, paymentStatus: null };
+        subscription: null, expiry: null, paymentStatus: null, ...(extra[l.libraryId] || {}) };
     }),
   };
 }

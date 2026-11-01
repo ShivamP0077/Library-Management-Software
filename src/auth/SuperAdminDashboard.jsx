@@ -4,6 +4,7 @@ import toast, { Toaster } from 'react-hot-toast';
 import { api } from '../utils/api';
 import { useAuth } from './AuthContext';
 import { LibraryInsights } from './LibraryInsights';
+import { PartnersAdmin } from './PartnersAdmin';
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—');
 
@@ -82,9 +83,11 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
         <div role="tablist" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <button role="tab" aria-selected={view === 'business'} className={`btn btn-sm ${view === 'business' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView('business')}>Business dashboard</button>
           <button role="tab" aria-selected={view === 'insights'} className={`btn btn-sm ${view === 'insights' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView('insights')}>Library Insights &amp; Analytics</button>
+          <button role="tab" aria-selected={view === 'partners'} className={`btn btn-sm ${view === 'partners' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView('partners')}>Partners &amp; Commissions</button>
         </div>
 
         {view === 'insights' && <LibraryInsights libraries={libraries} />}
+        {view === 'partners' && <PartnersAdmin libraries={libraries} onChanged={load} />}
 
         {view === 'business' && summary && (
           <div id="sa-totals" style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>

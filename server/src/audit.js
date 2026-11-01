@@ -35,7 +35,7 @@ export async function audit(req, action, { tenantId, target, reason, detail } = 
       tenantId: tenantId !== undefined ? tenantId : (req?.tenantId ?? u.tenantId ?? null),
       actorId: u.id, actorEmail: u.email, actorRole: u.role,
       action, target: target != null ? String(target) : undefined, reason, detail: scrub(detail),
-      ip: req?.ip, impersonation: u.role === 'superadmin' && !!req?.tenantId,
+      ip: req?.ip, impersonation: ['superadmin', 'partner', 'agent'].includes(u.role) && !!req?.tenantId,
     });
   } catch (e) { console.error('[audit] failed to record', action, e.message); }
 }

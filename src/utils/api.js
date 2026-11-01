@@ -48,6 +48,9 @@ export const api = {
   whatsappConnect: () => apiRequest('/whatsapp/connect', { method: 'POST' }),
   whatsappLogout: () => apiRequest('/whatsapp/logout', { method: 'POST' }),
   whatsappSaveSettings: (body) => apiRequest('/whatsapp/settings', { method: 'PUT', body }),
+  reminderSettings: () => apiRequest('/reminders/settings'),
+  saveReminderSettings: (body) => apiRequest('/reminders/settings', { method: 'PUT', body }),
+  reminders: (q = '') => apiRequest(`/reminders${q}`),
   whatsappSendReceipt: (receiptNo, type) => apiRequest(`/whatsapp/receipts/${encodeURIComponent(receiptNo)}`, { method: 'POST', body: { type } }),
   // Seats (server-side atomic allocation)
   seatAllocations: (params = '') => apiRequest(`/seat-allocations${params}`),

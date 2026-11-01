@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import { User, Library } from './models.js';
+import { User, Library, isPlatformRole } from './models.js';
 
 const secret = () => {
   const s = process.env.JWT_SECRET;
@@ -25,13 +25,15 @@ export async function requireAuth(req, res, next) {
     try { payload = jwt.verify(h.slice(7), secret()); } catch { return res.status(401).json({ error: 'Invalid or expired token' }); }
     const user = await User.findById(payload.sub).lean();
     if (!user || user.status !== 'Active') return res.status(401).json({ error: 'Account disabled or not found' });
+    // Tokens issued before a password reset/change stop working.
+    if (user.passwordChangedAt && payload.iat && payload.iat * 1000 < new Date(user.passwordChangedAt).getTime() - 1000) return res.status(401).json({ error: 'Session expired. Please sign in again.' });
     // The database is the source of truth for the tenant. A token minted for a
     // different tenant (e.g. after reassignment) must not be accepted.
     const tenantId = user.tenantId || user.libraryId || null;
     if (payload.tenantId !== undefined && payload.tenantId !== tenantId) {
       return res.status(401).json({ error: 'Token tenant does not match account' });
     }
-    if (user.role !== 'superadmin') {
+    if (!isPlatformRole(user.role)) {
       const lib = await Library.findOne({ libraryId: tenantId }).lean();
       if (!lib || lib.status !== 'Active') return res.status(403).json({ error: 'Library is disabled' });
     }
@@ -54,7 +56,13 @@ export const requireRole = (...roles) => (req, res, next) =>
  */
 export async function tenantScope(req, res, next) {
   try {
-    if (req.user.role === 'superadmin') {
+    if (req.user.role === 'partner' || req.user.role === 'agent') {
+      // Partner Access Library: only assigned libraries, only if granted, always read-only.
+      const target = req.get('X-Library-Id');
+      const { partnerCanAccess } = await import('./partners.js');
+      if (!target || !(await partnerCanAccess(req.user, target))) return res.status(403).json({ error: 'You can only open libraries assigned to you' });
+      req.tenantId = target; req.libraryId = target; req.readOnly = true;
+    } else if (req.user.role === 'superadmin') {
       const target = req.get('X-Library-Id');
       if (!target) return res.status(400).json({ error: 'Super admin must specify X-Library-Id to access library data' });
       const lib = await Library.findOne({ libraryId: target }).lean();

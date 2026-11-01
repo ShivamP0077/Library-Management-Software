@@ -43,3 +43,8 @@ dist-ssr/
 
 # Vercel CLI
 .vercel
+
+# Encrypted database backups (never commit)
+backups/
+server/backups/
+*.bak

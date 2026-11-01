@@ -4,12 +4,15 @@
   "description": "",
   "main": "src/index.js",
   "scripts": {
-    "test": "NODE_ENV=test node --test --test-concurrency=1 test/",
+    "test": "NODE_ENV=test node --test --test-concurrency=1 test/*.test.js",
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "seed": "node src/seed-cli.js",
     "seed:demo": "node src/seed-cli.js --demo",
     "migrate:tenants": "node src/migrate-tenants.js",
+    "backup": "node src/backup.js backup",
+    "restore": "node src/backup.js restore",
+    "backup:verify": "node src/backup.js verify",
     "export:schema": "node scripts/export-schema.js"
   },
   "keywords": [],
@@ -24,7 +27,8 @@
     "google-auth-library": "^11.3.1",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.11.2",
-    "morgan": "^1.12.1"
+    "morgan": "^1.12.1",
+    "nodemailer": "^10.3.1"
   },
   "engines": {
     "node": ">=18"

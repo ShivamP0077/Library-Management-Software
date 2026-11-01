@@ -711,10 +711,18 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
   // localStorage stays as the reliable local cache; backend provides multi-device sync once online.
   const [backendStatus, setBackendStatus] = useState('connecting'); // 'connecting' | 'online' | 'offline'
   const syncRef = useRef(null);
+  const applyRemoteStateRef = useRef(null);
   if (!syncRef.current) {
     let warned = false;
     syncRef.current = createSyncQueue({
       onError: (key, e) => {
+        // Server-side business rule (e.g. seat double booking): show the reason and
+        // reload the server's truth instead of keeping the rejected local change.
+        if (e.status === 409 || e.status === 400) {
+          toast.error(e.message || 'The server rejected this change.', { id: `sync-${key}` });
+          api.getState().then(remote => applyRemoteStateRef.current?.(remote)).catch(() => {});
+          return;
+        }
         console.warn(`[API] Failed to sync "${key}":`, e.message);
         setBackendStatus('offline');
         if (!warned) { warned = true; toast.error('Could not save to the server. Changes are kept locally.'); }
@@ -744,6 +752,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
     });
   };
 
+  applyRemoteStateRef.current = applyRemoteState;
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Data-only refresh: re-fetches the backend snapshot (no page reload, filters preserved).
@@ -2025,8 +2034,11 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
     setArchivedStudents(prev => prev.filter(s => s.id !== studentId));
   };
 
-  const permanentlyDeleteStudent = (studentId) => {
+  const permanentlyDeleteStudent = async (studentId) => {
+    // Server records an audited snapshot; payment records are kept.
+    try { await api.deleteArchivedStudent(studentId); } catch (e) { if (e?.status && e.status !== 404) { toast.error(e.message || 'Could not delete'); return false; } }
     setArchivedStudents(prev => prev.filter(s => s.id !== studentId));
+    return true;
   };
 
   const clearArchivedHistory = () => {

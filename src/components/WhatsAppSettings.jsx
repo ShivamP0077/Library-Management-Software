@@ -462,9 +462,55 @@ const WhatsAppSettingsInner = () => {
             onChange={(value) => handleToggle('otp', value)}
           />
 
+          {(toggles.feeReminders || toggles.expiryReminders) && <ReminderTiming />}
+
           <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '12px 0 0 0' }}>
             Messages are sent only to students who have not opted out, and are prefixed with your library name.
           </p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+
+/** Reminder timing (spec §6): when expiry & fee reminders go out, plus recent reminder log. */
+const ReminderTiming = () => {
+  const [cfg, setCfg] = React.useState(null);
+  const [log, setLog] = React.useState([]);
+  const [saving, setSaving] = React.useState(false);
+  React.useEffect(() => {
+    api.reminderSettings().then(setCfg).catch(() => setCfg(null));
+    api.reminders('?limit=20').then(setLog).catch(() => {});
+  }, []);
+  if (!cfg) return null;
+  const set = (k) => (e) => setCfg(c => ({ ...c, [k]: e.target.value === '' ? null : Number(e.target.value) }));
+  const save = async () => {
+    setSaving(true);
+    try { setCfg(await api.saveReminderSettings(cfg)); toast.success('Reminder timing saved'); }
+    catch (e) { toast.error(e.message || 'Could not save'); } finally { setSaving(false); }
+  };
+  const field = { display: 'grid', gap: 4, fontSize: 13, color: 'var(--text-secondary)', minWidth: 0 };
+  return (
+    <div id="reminder-timing" style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-light)', display: 'grid', gap: 10 }}>
+      <strong style={{ fontSize: 14 }}>Reminder timing</strong>
+      <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
+        <label style={field}>Expiry: days before end<input className="form-input" type="number" min={0} max={30} value={cfg.expiryDaysBefore ?? ''} onChange={set('expiryDaysBefore')} /></label>
+        <label style={field}>Or fixed day of month (1–28)<input className="form-input" type="number" min={1} max={28} placeholder="Off" value={cfg.expiryFixedDay ?? ''} onChange={set('expiryFixedDay')} /></label>
+        <label style={field}>Fee: repeat every (days)<input className="form-input" type="number" min={1} max={30} value={cfg.feeEveryDays ?? ''} onChange={set('feeEveryDays')} /></label>
+        <label style={field}>Fee: max reminders<input className="form-input" type="number" min={1} max={10} value={cfg.feeMaxReminders ?? ''} onChange={set('feeMaxReminders')} /></label>
+      </div>
+      <div><button type="button" className="btn btn-primary btn-sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save timing'}</button></div>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>Reminders go out between 9 AM and 8 PM. Fee reminders stop as soon as the due is cleared; an expiry reminder is cancelled when the student renews.</p>
+      {log.length > 0 && (
+        <div style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+          <strong style={{ fontSize: 13 }}>Recent reminders</strong>
+          {log.map(r => (
+            <div key={r.id} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', color: 'var(--text-secondary)' }}>
+              <span>{r.sendOn}</span><span>{r.type === 'fee_reminder' ? 'Fee' : 'Expiry'}</span><span>student {r.studentId}</span>
+              <span style={{ fontWeight: 600 }}>{r.status}{r.reason ? ` (${r.reason})` : ''}</span>
+            </div>
+          ))}
         </div>
       )}
     </div>

@@ -36,7 +36,7 @@ export function createApp() {
   app.use((err, _req, res, _next) => {
     const status = err.status || (err.code === 11000 ? 409 : 500);
     if (status === 500) console.error('[api] error:', redact(err.message));
-    res.status(status).json({ error: status === 500 ? 'Internal server error' : redact(err.message) });
+    res.status(status).json({ error: status === 500 ? 'Internal server error' : redact(err.message), ...(err.code && typeof err.code === 'string' ? { code: err.code } : {}), ...(err.details ? { details: err.details } : {}) });
   });
   return app;
 }

@@ -2,11 +2,27 @@ import crypto from 'crypto';
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
-import { COLLECTIONS, models, Settings, StudentDocument, Library, User, keyOf, clean } from './models.js';
+import { COLLECTIONS, models, Settings, StudentDocument, Library, User, keyOf, clean, isPlatformRole } from './models.js';
 import { signToken, requireAuth, requireRole, tenantScope } from './auth.js';
 import { createLibrary, createUser, computeMetrics, hashPassword, validatePassword } from './services.js';
 import { verifyGoogleIdToken, googleEnabled, googleConfig, buildAuthUrl, exchangeCode } from './google.js';
 import { createWhatsappRouter } from './whatsapp.js';
+import { createFinanceRouter, validatePaymentBatch } from './finance.js';
+import { createStudentRouter, recordStudentDiff, recordArchiveDiff, checkCapacity } from './students.js';
+import { audit } from './audit.js';
+import { createNotificationRouter } from './notifications.js';
+import { createInsightsRouter } from './insights.js';
+import { createSupportRouter, createSupportAdminRouter } from './support.js';
+import { createPartnerAdminRouter, createPartnerPortalRouter } from './partners.js';
+import { createReminderRouter, autoSendReceipts } from './reminders.js';
+
+// Auto-receipts never block or fail the save; in tests we await so results are observable.
+const sendReceiptsAfterSave = async (tenantId, payments) => {
+  const p = autoSendReceipts(tenantId, payments).catch(e => console.error('[receipts]', e.message));
+  if (process.env.NODE_ENV === 'test') await p;
+};
+import { createPublicAccountRouter, createTenantAccountRouter, auditSuperadminAccess } from './accounts.js';
+import { createSeatRouter, reconcileStudents, releaseForStudents, validateSeatSync, SeatAllocation, seatMatchesAllocation, SeatConflictError } from './seats.js';
 
 const router = express.Router();
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -34,7 +50,7 @@ async function resolveSession(user) {
     return { denial: { status: 403, code: 'account_disabled', message: 'Account is disabled' } };
   }
   let library = null;
-  if (user.role !== 'superadmin') {
+  if (!isPlatformRole(user.role)) {
     library = await Library.findOne({ libraryId: tenantOfUser(user) }).lean();
     if (!library || library.status !== 'Active') {
       return { denial: { status: 403, code: 'library_disabled', message: 'Library is disabled' } };
@@ -178,6 +194,8 @@ router.post('/auth/google', wrap(async (req, res) => {
   return issueSession(user, res);
 }));
 
+router.use(createPublicAccountRouter({ issueSession }));
+
 router.use(requireAuth);
 
 router.get('/auth/me', wrap(async (req, res) => {
@@ -195,12 +213,17 @@ router.post('/auth/change-password', wrap(async (req, res) => {
   user.passwordHash = await hashPassword(newPassword);
   user.authProviders = [...new Set([...(user.authProviders || []), 'password'])];
   await user.save();
+  await audit(req, 'password.changed', { tenantId: user.tenantId || null });
   res.json({ ok: true });
 }));
 
 // ---------------------------------------------------------------- Super admin
 const admin = express.Router();
 admin.use(requireRole('superadmin'));
+
+admin.use(createInsightsRouter());
+admin.use(createPartnerAdminRouter());
+admin.use(createSupportAdminRouter());
 
 admin.get('/libraries', wrap(async (_req, res) => {
   const libs = await Library.find().sort({ createdAt: 1 }).lean();
@@ -230,6 +253,9 @@ admin.patch('/libraries/:libraryId', wrap(async (req, res) => {
   if (req.body?.name) set.name = String(req.body.name).trim();
   if (req.body?.status) { if (!['Active', 'Disabled'].includes(req.body.status)) return res.status(400).json({ error: 'Invalid status' }); set.status = req.body.status; }
   if (req.body?.contactEmail !== undefined) set.contactEmail = req.body.contactEmail;
+  if (req.body?.city !== undefined) set.city = req.body.city ? String(req.body.city).trim().slice(0, 80) : null;
+  if (req.body?.studentLimit !== undefined) { const n = req.body.studentLimit === null ? null : Number(req.body.studentLimit); if (n !== null && !(n >= 0)) return res.status(400).json({ error: 'Invalid studentLimit' }); set.studentLimit = n || null; }
+  await audit(req, 'library.update', { tenantId: req.params.libraryId, target: req.params.libraryId, detail: set });
   const lib = await Library.findOneAndUpdate({ libraryId: req.params.libraryId }, { $set: set }, { new: true, lean: true });
   lib ? res.json({ libraryId: lib.libraryId, name: lib.name, status: lib.status }) : res.status(404).json({ error: 'Library not found' });
 }));
@@ -264,14 +290,24 @@ admin.patch('/users/:id', wrap(async (req, res) => {
     user.authProviders = [...new Set([...(user.authProviders || []), 'password'])];
   }
   await user.save();
+  await audit(req, req.body?.password ? 'superadmin.password_set' : 'superadmin.user_update', { tenantId: user.tenantId || null, target: user.email, detail: { status: req.body?.status } });
   res.json(user.toSafeJSON());
 }));
 
+admin.get('/audit-logs', wrap(async (req, res) => {
+  const { AuditLog, pubAudit } = await import('./audit.js');
+  const q = {}; if (req.query.libraryId) q.tenantId = String(req.query.libraryId); if (req.query.action) q.action = String(req.query.action);
+  res.json((await AuditLog.find(q).sort({ at: -1 }).limit(Math.min(Number(req.query.limit || 200), 1000)).lean()).map(pubAudit));
+}));
+
 router.use('/admin', admin);
+router.use('/partner', createPartnerPortalRouter());
 
 // ---------------------------------------------------------------- Tenant data (scoped)
 const tenant = express.Router();
 tenant.use(tenantScope);
+tenant.use(auditSuperadminAccess);
+tenant.use(createTenantAccountRouter());
 
 // Client admins manage login accounts for their own library (staff / co-admins)
 tenant.get('/users', requireRole('client_admin', 'superadmin'), wrap(async (req, res) => {
@@ -280,6 +316,7 @@ tenant.get('/users', requireRole('client_admin', 'superadmin'), wrap(async (req,
 tenant.post('/users', requireRole('client_admin', 'superadmin'), wrap(async (req, res) => {
   const role = req.body?.role === 'client_admin' ? 'client_admin' : 'staff';
   const r = await createUser({ ...req.body, role, tenantId: req.tenantId, libraryId: req.tenantId });
+  await audit(req, 'user.create', { target: r.user.email, detail: { role } });
   res.status(201).json({ user: r.user.toSafeJSON(), generatedPassword: r.generatedPassword || undefined });
 }));
 tenant.patch('/users/:id', requireRole('client_admin', 'superadmin'), wrap(async (req, res) => {
@@ -289,6 +326,7 @@ tenant.patch('/users/:id', requireRole('client_admin', 'superadmin'), wrap(async
   if (req.body?.name !== undefined) user.name = req.body.name;
   if (req.body?.staffId !== undefined) user.staffId = req.body.staffId;
   await user.save();
+  await audit(req, 'user.update', { target: user.email, detail: { status: req.body?.status, staffId: req.body?.staffId } });
   res.json(user.toSafeJSON());
 }));
 
@@ -328,6 +366,13 @@ tenant.delete('/documents/:key', wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+tenant.use(createSeatRouter());
+tenant.use(createFinanceRouter());
+tenant.use(createStudentRouter());
+tenant.use(createNotificationRouter());
+tenant.use(createReminderRouter());
+tenant.use(createSupportRouter());
+
 // Generic REST for each entity collection, always filtered by req.tenantId
 const colParam = (req, res, next) => {
   if (!COLLECTIONS[req.params.col]) return res.status(404).json({ error: `Unknown collection "${req.params.col}"` });
@@ -351,16 +396,42 @@ tenant.post('/:col', colParam, wrap(async (req, res) => {
   const _key = keyOf(req.params.col, body);
   if (!_key) return res.status(400).json({ error: `Missing key field (${COLLECTIONS[req.params.col].keys.join(' or ')})` });
   if (await req.Model.exists({ tenantId: req.tenantId, _key })) return res.status(409).json({ error: 'Already exists' });
+  if (req.params.col === 'students') {
+    const n = await req.Model.countDocuments({ tenantId: req.tenantId });
+    await checkCapacity(req.tenantId, n + 1, n);
+    await reconcileStudents(req.tenantId, [body], { actor: req.user.email });
+  }
+  if (req.params.col === 'payments') validatePaymentBatch([body]);
   const d = await req.Model.create({ ...body, _key, tenantId: req.tenantId, libraryId: req.tenantId });
+  if (req.params.col === 'students') await recordStudentDiff(req.tenantId, new Map(), [{ ...body, id: _key }], req.user.email);
+  if (req.params.col === 'payments') await sendReceiptsAfterSave(req.tenantId, [{ ...body, _key }]);
   res.status(201).json(clean(d));
 }));
 
 tenant.put('/:col/:key', colParam, wrap(async (req, res) => {
+  if (req.params.col === 'students') {
+    const prev = await req.Model.findOne({ tenantId: req.tenantId, _key: req.params.key }).lean();
+    if (!prev) return res.status(404).json({ error: 'Not found' });
+    const merged = { ...clean(prev), ...stripMeta(req.body), id: prev.id ?? req.params.key };
+    await reconcileStudents(req.tenantId, [merged], { actor: req.user.email, previous: new Map([[String(merged.id), prev]]) });
+    await recordStudentDiff(req.tenantId, new Map([[String(merged.id), prev]]), [merged], req.user.email);
+  }
+  if (req.params.col === 'payments') {
+    const prev = await req.Model.findOne({ tenantId: req.tenantId, _key: req.params.key }).lean();
+    if (prev) validatePaymentBatch([{ ...clean(prev), ...stripMeta(req.body) }], new Map([[req.params.key, prev]]));
+  }
   const d = await req.Model.findOneAndUpdate({ tenantId: req.tenantId, _key: req.params.key }, { $set: stripMeta(req.body) }, { new: true, lean: true });
   d ? res.json(clean(d)) : res.status(404).json({ error: 'Not found' });
 }));
 
 tenant.delete('/:col/:key', colParam, wrap(async (req, res) => {
+  if (req.params.col === 'seats') {
+    const seat = await req.Model.findOne({ tenantId: req.tenantId, _key: req.params.key }).lean();
+    const held = seat && (await SeatAllocation.find({ tenantId: req.tenantId, status: 'active' }).lean()).some(a => seatMatchesAllocation(seat, a));
+    if (held) throw new SeatConflictError(`Seat ${seat.name} has an active student. Move the student to another seat before removing it.`, { seatNo: seat.name });
+  }
+  if (req.params.col === 'students') await releaseForStudents(req.tenantId, [req.params.key]);
+  if (req.params.col === 'archivedStudents') return res.status(400).json({ error: 'Use DELETE /archived-students/:id with confirmation', code: 'confirmation_required' });
   const r = await req.Model.deleteOne({ tenantId: req.tenantId, _key: req.params.key });
   r.deletedCount ? res.json({ ok: true }) : res.status(404).json({ error: 'Not found' });
 }));
@@ -370,6 +441,25 @@ tenant.delete('/:col/:key', colParam, wrap(async (req, res) => {
 tenant.put('/:col', colParam, wrap(async (req, res) => {
   if (!Array.isArray(req.body)) return res.status(400).json({ error: 'Body must be an array' });
   const col = req.params.col;
+  const prevArchived = col === 'archivedStudents' ? await req.Model.find({ tenantId: req.tenantId }).lean() : null;
+  if (col === 'seats') await validateSeatSync(req.tenantId, req.body.map(stripMeta));
+  let newPayments = null;
+  if (col === 'payments') {
+    const prevDocs = await req.Model.find({ tenantId: req.tenantId }).lean();
+    validatePaymentBatch(req.body.map(stripMeta), new Map(prevDocs.map(d => [String(d._key), d])));
+    const had = new Set(prevDocs.map(d => String(d._key)));
+    newPayments = req.body.map(stripMeta).map(b => ({ ...b, _key: keyOf(col, b) })).filter(b => b._key && !had.has(String(b._key)));
+  }
+  if (col === 'students') {
+    const prevDocs = await req.Model.find({ tenantId: req.tenantId }).lean();
+    const previous = new Map(prevDocs.map(d => [String(d._key), d]));
+    const incoming = req.body.map(stripMeta).filter(b => keyOf(col, b));
+    await checkCapacity(req.tenantId, new Set(incoming.map(b => keyOf(col, b))).size, prevDocs.length);
+    await reconcileStudents(req.tenantId, incoming, { actor: req.user.email, previous });
+    req.studentDiff = { previous, incoming };
+    const keep = new Set(incoming.map(b => keyOf(col, b)));
+    await releaseForStudents(req.tenantId, prevDocs.map(d => d._key).filter(k => !keep.has(k)));
+  }
   const seen = new Set();
   const ops = [];
   req.body.forEach((raw, i) => {
@@ -381,10 +471,13 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
   });
   if (ops.length) await req.Model.bulkWrite(ops, { ordered: false });
   const del = await req.Model.deleteMany({ tenantId: req.tenantId, _key: { $nin: [...seen] } });
+  if (req.studentDiff) await recordStudentDiff(req.tenantId, req.studentDiff.previous, req.studentDiff.incoming, req.user.email);
+  if (newPayments?.length) await sendReceiptsAfterSave(req.tenantId, newPayments);
+  if (prevArchived) await recordArchiveDiff(req, prevArchived, req.body.map(stripMeta).filter(b => keyOf(col, b)));
   res.json({ ok: true, upserted: ops.length, deleted: del.deletedCount });
 }));
 
 // WhatsApp (Evolution API) is proxied server-side; mounted before the generic /:col routes
-router.use('/whatsapp', tenantScope, createWhatsappRouter());
+router.use('/whatsapp', tenantScope, auditSuperadminAccess, createWhatsappRouter());
 router.use('/', tenant);
 export default router;

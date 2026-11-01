@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { NotificationBell } from './NotificationBell';
 import { createPortal } from 'react-dom';
 import { useLibrary } from '../context/LibraryContext';
 import { 
@@ -15,7 +16,8 @@ import {
   ShieldCheck,
   Menu,
   X,
-  RefreshCw
+  RefreshCw,
+  LifeBuoy,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
@@ -55,11 +57,12 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
     { id: 'payments', label: 'Payments & Fees', icon: CreditCard },
     { id: 'expenses', label: 'Expenses', icon: Receipt },
     { id: 'reports', label: 'Reports & P&L', icon: BarChart3 },
-    { id: 'settings', label: 'Library Settings', icon: Settings }
+    { id: 'settings', label: 'Library Settings', icon: Settings },
+    { id: 'support', label: 'Help & Support', icon: LifeBuoy }
   ];
 
   const visibleTabs = tabs.filter(t => {
-    if (t.id === 'dashboard') return true;
+    if (t.id === 'dashboard' || t.id === 'support') return true;
     return hasPermission(t.id, 'view');
   });
 
@@ -89,6 +92,10 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
             <h1 className="header-title" style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>{settings.name}</h1>
             <p style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>Library Management OS</p>
           </div>
+        </div>
+
+        <div className="mobile-only" style={{ marginLeft: 'auto' }}>
+          <NotificationBell onOpen={() => { setDrawerOpen(false); setActiveTab('notifications'); }} />
         </div>
 
         {/* Right Controls: Branch Switcher, Staff Switcher, New Student CTA */}
@@ -137,6 +144,8 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
               <span>New Student</span>
             </button>
           )}
+
+          <NotificationBell onOpen={() => setActiveTab('notifications')} />
 
           {/* Global Refresh Button (data-only refresh, no page reload) */}
           <button

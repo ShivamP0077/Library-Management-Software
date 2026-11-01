@@ -13,6 +13,8 @@ import { PrintReceiptModal } from './components/Modals/PrintReceiptModal';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Toaster } from 'react-hot-toast';
 import { ShieldAlert, ArrowLeft, LogOut, Eye, WifiOff, Cloud } from 'lucide-react';
+import { NotificationsCenter } from './components/NotificationsCenter';
+import { SupportCenter } from './components/SupportCenter';
 import { PreviousStudentRecords } from './components/PreviousStudentRecords';
 import { SetupWizard } from './components/SetupWizard';
 import { useLibrary } from './context/LibraryContext';
@@ -20,6 +22,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { AuthProvider, useAuth, prepareLocalCacheFor } from './auth/AuthContext';
 import { LoginScreen } from './auth/LoginScreen';
 import { SuperAdminDashboard } from './auth/SuperAdminDashboard';
+import { PartnerPortal } from './auth/PartnerPortal';
 import { setTenantContext } from './utils/api';
 
 const pageVariants = {
@@ -86,7 +89,7 @@ export const AppContent = () => {
                 style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
               >
                 <ErrorBoundary componentName="Active Module">
-            {!hasPermission(activeTab, 'view') && activeTab !== 'dashboard' && activeTab !== 'archives' ? (
+            {!hasPermission(activeTab, 'view') && activeTab !== 'dashboard' && activeTab !== 'archives' && activeTab !== 'notifications' && activeTab !== 'support' ? (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '64px 24px', textAlign: 'center', minHeight: '400px' }}>
                 <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#fee2e2', color: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px' }}>
                   <ShieldAlert size={32} />
@@ -101,6 +104,9 @@ export const AppContent = () => {
               </div>
             ) : (
               <>
+                {activeTab === 'notifications' && <NotificationsCenter setActiveTab={setActiveTab} />}
+                {activeTab === 'support' && <SupportCenter />}
+
                 {activeTab === 'dashboard' && (
                   <Dashboard
                     setActiveTab={setActiveTab}
@@ -231,7 +237,7 @@ const SessionBar = ({ libraryName, readOnly, onBack, isOffline = false, onSwitch
           </button>
         ) : (
           <>
-            <span><span className="session-email">{user?.email} · </span>{user?.role === 'superadmin' ? 'Super Admin' : user?.role === 'client_admin' ? 'Client Admin' : 'Staff'}</span>
+            <span><span className="session-email">{user?.email} · </span>{user?.role === 'superadmin' ? 'Super Admin' : user?.role === 'client_admin' ? 'Client Admin' : user?.role === 'partner' ? 'Partner' : user?.role === 'agent' ? 'Agent' : 'Staff'}</span>
             <button className="btn btn-ghost btn-sm" onClick={logout} style={{ color: 'inherit' }}><LogOut size={14} /> <span>Sign out</span></button>
           </>
         )}
@@ -319,6 +325,20 @@ const RoleRouter = () => {
       );
     }
     return <SuperAdminDashboard onOpenLibrary={(lib, readOnly) => setDrill({ library: lib, readOnly })} />;
+  }
+
+  if (user.role === 'partner' || user.role === 'agent') {
+    if (drill) {
+      return (
+        <LibraryWorkspace
+          libraryId={drill.library.libraryId}
+          libraryName={drill.library.name}
+          readOnly
+          onBack={() => { setTenantContext({}); setDrill(null); }}
+        />
+      );
+    }
+    return <PartnerPortal onOpenLibrary={(lib) => setDrill({ library: lib, readOnly: true })} />;
   }
 
   return (

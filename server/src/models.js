@@ -16,9 +16,14 @@ export const Library = mongoose.model('Library', new mongoose.Schema({
   contactEmail: { type: String, trim: true, lowercase: true },
   createdBy: String,
   isDefault: { type: Boolean, default: false },
+  city: { type: String, trim: true, default: null }, // used for Library Insights location filters
+  studentLimit: { type: Number, default: null }, // active + expired cap (null = unlimited)
 }, { timestamps: true }));
 
-export const ROLES = ['superadmin', 'client_admin', 'staff'];
+export const ROLES = ['superadmin', 'client_admin', 'staff', 'partner', 'agent'];
+/** Platform accounts have no tenant of their own (partners/agents reach libraries only via assignment). */
+export const PLATFORM_ROLES = ['superadmin', 'partner', 'agent'];
+export const isPlatformRole = (role) => PLATFORM_ROLES.includes(role);
 
 /**
  * Login accounts. superadmin has no tenant; client_admin/staff belong to exactly
@@ -32,15 +37,16 @@ const userSchema = new mongoose.Schema({
   role: { type: String, enum: ROLES, required: true },
   tenantId: {
     type: String, index: true,
-    required: function () { return this.role !== 'superadmin'; },
+    required: function () { return !isPlatformRole(this.role); },
   },
   libraryId: {
     type: String, index: true,
-    required: function () { return this.role !== 'superadmin'; },
+    required: function () { return !isPlatformRole(this.role); },
   },
   staffId: String, // optional link to a staff record (staffMembers.id) inside the library
   status: { type: String, enum: ['Active', 'Disabled'], default: 'Active' },
   lastLoginAt: Date,
+  passwordChangedAt: Date,
   googleSub: { type: String, index: true, sparse: true },
   authProviders: { type: [String], default: [] }, // e.g. ['password', 'google']
 }, { timestamps: true });

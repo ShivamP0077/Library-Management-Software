@@ -1,0 +1,118 @@
+{
+  "collection": "settings",
+  "sampleSize": 200,
+  "fields": {
+    "_id": [
+      "objectId"
+    ],
+    "address": [
+      "string"
+    ],
+    "allowedDocuments": [
+      "array"
+    ],
+    "allowedDocuments[]": [
+      "string"
+    ],
+    "billingMode": [
+      "string"
+    ],
+    "calendarBillingDay": [
+      "number"
+    ],
+    "createdAt": [
+      "date"
+    ],
+    "documentTypes": [
+      "array"
+    ],
+    "documentTypes[].active": [
+      "boolean"
+    ],
+    "documentTypes[].id": [
+      "string"
+    ],
+    "documentTypes[].name": [
+      "string"
+    ],
+    "documentTypes[].requirement": [
+      "string"
+    ],
+    "email": [
+      "string"
+    ],
+    "gracePeriodDays": [
+      "number"
+    ],
+    "idProofDeadlineDays": [
+      "number"
+    ],
+    "idProofRequirement": [
+      "string"
+    ],
+    "isSetupComplete": [
+      "boolean"
+    ],
+    "libraryId": [
+      "string"
+    ],
+    "logo": [
+      "string"
+    ],
+    "migrationVersion": [
+      "number"
+    ],
+    "name": [
+      "string"
+    ],
+    "phone": [
+      "string"
+    ],
+    "receiptFooter": [
+      "string"
+    ],
+    "taxId": [
+      "string"
+    ],
+    "tenantId": [
+      "string"
+    ],
+    "updatedAt": [
+      "date"
+    ],
+    "upiId": [
+      "string"
+    ],
+    "upiQrUrl": [
+      "string"
+    ]
+  },
+  "indexes": [
+    {
+      "v": 2,
+      "key": {
+        "_id": 1
+      },
+      "name": "_id_"
+    },
+    {
+      "v": 2,
+      "key": {
+        "tenantId": 1
+      },
+      "name": "tenantId_1",
+      "unique": true,
+      "partialFilterExpression": {
+        "tenantId": {
+          "$type": "string"
+        }
+      }
+    }
+  ],
+  "options": {
+    "validator": null,
+    "validationLevel": null,
+    "validationAction": null,
+    "capped": false
+  }
+}

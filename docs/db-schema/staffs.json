@@ -1,0 +1,366 @@
+{
+  "collection": "staffs",
+  "sampleSize": 200,
+  "fields": {
+    "__v": [
+      "number"
+    ],
+    "_id": [
+      "objectId"
+    ],
+    "_key": [
+      "string"
+    ],
+    "_order": [
+      "number"
+    ],
+    "branchId": [
+      "string"
+    ],
+    "createdAt": [
+      "date"
+    ],
+    "email": [
+      "string"
+    ],
+    "id": [
+      "string"
+    ],
+    "libraryId": [
+      "string"
+    ],
+    "name": [
+      "string"
+    ],
+    "permissions": [
+      "object"
+    ],
+    "permissions.admissions": [
+      "object"
+    ],
+    "permissions.admissions.approve": [
+      "boolean"
+    ],
+    "permissions.admissions.create": [
+      "boolean"
+    ],
+    "permissions.admissions.delete": [
+      "boolean"
+    ],
+    "permissions.admissions.edit": [
+      "boolean"
+    ],
+    "permissions.admissions.manage": [
+      "boolean"
+    ],
+    "permissions.admissions.view": [
+      "boolean"
+    ],
+    "permissions.canCancelAdmission": [
+      "boolean"
+    ],
+    "permissions.canEditSeats": [
+      "boolean"
+    ],
+    "permissions.canManageExpenses": [
+      "boolean"
+    ],
+    "permissions.canManageSettings": [
+      "boolean"
+    ],
+    "permissions.canManageStudents": [
+      "boolean"
+    ],
+    "permissions.canProcessPayments": [
+      "boolean"
+    ],
+    "permissions.canProcessRefunds": [
+      "boolean"
+    ],
+    "permissions.canViewFinancials": [
+      "boolean"
+    ],
+    "permissions.documents": [
+      "object"
+    ],
+    "permissions.documents.approve": [
+      "boolean"
+    ],
+    "permissions.documents.create": [
+      "boolean"
+    ],
+    "permissions.documents.delete": [
+      "boolean"
+    ],
+    "permissions.documents.edit": [
+      "boolean"
+    ],
+    "permissions.documents.manage": [
+      "boolean"
+    ],
+    "permissions.documents.view": [
+      "boolean"
+    ],
+    "permissions.expenses": [
+      "object"
+    ],
+    "permissions.expenses.approve": [
+      "boolean"
+    ],
+    "permissions.expenses.create": [
+      "boolean"
+    ],
+    "permissions.expenses.delete": [
+      "boolean"
+    ],
+    "permissions.expenses.edit": [
+      "boolean"
+    ],
+    "permissions.expenses.manage": [
+      "boolean"
+    ],
+    "permissions.expenses.view": [
+      "boolean"
+    ],
+    "permissions.feePlans": [
+      "object"
+    ],
+    "permissions.feePlans.approve": [
+      "boolean"
+    ],
+    "permissions.feePlans.create": [
+      "boolean"
+    ],
+    "permissions.feePlans.delete": [
+      "boolean"
+    ],
+    "permissions.feePlans.edit": [
+      "boolean"
+    ],
+    "permissions.feePlans.manage": [
+      "boolean"
+    ],
+    "permissions.feePlans.view": [
+      "boolean"
+    ],
+    "permissions.payments": [
+      "object"
+    ],
+    "permissions.payments.approve": [
+      "boolean"
+    ],
+    "permissions.payments.create": [
+      "boolean"
+    ],
+    "permissions.payments.delete": [
+      "boolean"
+    ],
+    "permissions.payments.edit": [
+      "boolean"
+    ],
+    "permissions.payments.manage": [
+      "boolean"
+    ],
+    "permissions.payments.view": [
+      "boolean"
+    ],
+    "permissions.renewals": [
+      "object"
+    ],
+    "permissions.renewals.approve": [
+      "boolean"
+    ],
+    "permissions.renewals.create": [
+      "boolean"
+    ],
+    "permissions.renewals.delete": [
+      "boolean"
+    ],
+    "permissions.renewals.edit": [
+      "boolean"
+    ],
+    "permissions.renewals.manage": [
+      "boolean"
+    ],
+    "permissions.renewals.view": [
+      "boolean"
+    ],
+    "permissions.reports": [
+      "object"
+    ],
+    "permissions.reports.approve": [
+      "boolean"
+    ],
+    "permissions.reports.create": [
+      "boolean"
+    ],
+    "permissions.reports.delete": [
+      "boolean"
+    ],
+    "permissions.reports.edit": [
+      "boolean"
+    ],
+    "permissions.reports.manage": [
+      "boolean"
+    ],
+    "permissions.reports.view": [
+      "boolean"
+    ],
+    "permissions.seats": [
+      "object"
+    ],
+    "permissions.seats.approve": [
+      "boolean"
+    ],
+    "permissions.seats.create": [
+      "boolean"
+    ],
+    "permissions.seats.delete": [
+      "boolean"
+    ],
+    "permissions.seats.edit": [
+      "boolean"
+    ],
+    "permissions.seats.manage": [
+      "boolean"
+    ],
+    "permissions.seats.view": [
+      "boolean"
+    ],
+    "permissions.settings": [
+      "object"
+    ],
+    "permissions.settings.approve": [
+      "boolean"
+    ],
+    "permissions.settings.create": [
+      "boolean"
+    ],
+    "permissions.settings.delete": [
+      "boolean"
+    ],
+    "permissions.settings.edit": [
+      "boolean"
+    ],
+    "permissions.settings.manage": [
+      "boolean"
+    ],
+    "permissions.settings.view": [
+      "boolean"
+    ],
+    "permissions.staff": [
+      "object"
+    ],
+    "permissions.staff.approve": [
+      "boolean"
+    ],
+    "permissions.staff.create": [
+      "boolean"
+    ],
+    "permissions.staff.delete": [
+      "boolean"
+    ],
+    "permissions.staff.edit": [
+      "boolean"
+    ],
+    "permissions.staff.manage": [
+      "boolean"
+    ],
+    "permissions.staff.view": [
+      "boolean"
+    ],
+    "permissions.students": [
+      "object"
+    ],
+    "permissions.students.approve": [
+      "boolean"
+    ],
+    "permissions.students.create": [
+      "boolean"
+    ],
+    "permissions.students.delete": [
+      "boolean"
+    ],
+    "permissions.students.edit": [
+      "boolean"
+    ],
+    "permissions.students.manage": [
+      "boolean"
+    ],
+    "permissions.students.view": [
+      "boolean"
+    ],
+    "permissions.waitingList": [
+      "object"
+    ],
+    "permissions.waitingList.approve": [
+      "boolean"
+    ],
+    "permissions.waitingList.create": [
+      "boolean"
+    ],
+    "permissions.waitingList.delete": [
+      "boolean"
+    ],
+    "permissions.waitingList.edit": [
+      "boolean"
+    ],
+    "permissions.waitingList.manage": [
+      "boolean"
+    ],
+    "permissions.waitingList.view": [
+      "boolean"
+    ],
+    "phone": [
+      "string"
+    ],
+    "role": [
+      "string"
+    ],
+    "status": [
+      "string"
+    ],
+    "tenantId": [
+      "string"
+    ],
+    "updatedAt": [
+      "date"
+    ]
+  },
+  "indexes": [
+    {
+      "v": 2,
+      "key": {
+        "_id": 1
+      },
+      "name": "_id_"
+    },
+    {
+      "v": 2,
+      "key": {
+        "tenantId": 1
+      },
+      "name": "tenantId_1"
+    },
+    {
+      "v": 2,
+      "key": {
+        "tenantId": 1,
+        "_key": 1
+      },
+      "name": "tenantId_1__key_1",
+      "unique": true,
+      "partialFilterExpression": {
+        "tenantId": {
+          "$type": "string"
+        }
+      }
+    }
+  ],
+  "options": {
+    "validator": null,
+    "validationLevel": null,
+    "validationAction": null,
+    "capped": false
+  }
+}

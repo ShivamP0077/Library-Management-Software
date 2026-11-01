@@ -12,7 +12,8 @@
     "migrate:tenants": "node src/migrate-tenants.js",
     "backup": "node src/backup.js backup",
     "restore": "node src/backup.js restore",
-    "backup:verify": "node src/backup.js verify"
+    "backup:verify": "node src/backup.js verify",
+    "export:schema": "node scripts/export-schema.js"
   },
   "keywords": [],
   "author": "",

@@ -167,14 +167,20 @@ body {
 /* Premium Data Grid */
 .table-container {
   width: 100%;
+  max-width: 100%;
   overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-light);
   background: var(--bg-surface);
   box-shadow: var(--shadow-sm);
 }
 .data-grid {
-  width: 100%;
+  /* Size columns to their content so records stay on a single line. */
+  width: auto;
+  min-width: 100%;
+  table-layout: auto;
   border-collapse: separate;
   border-spacing: 0;
 }
@@ -188,6 +194,7 @@ body {
   letter-spacing: 0.05em;
   border-bottom: 1px solid var(--border-light);
   background: #fafafa;
+  white-space: nowrap;
 }
 .data-grid td {
   padding: 16px 20px;
@@ -195,6 +202,37 @@ body {
   color: var(--text-primary);
   border-bottom: 1px solid var(--border-light);
   transition: background 0.2s ease;
+}
+
+/* Desktop record grids never wrap: each record occupies a single line. */
+@media (min-width: 768px) {
+  .data-grid th,
+  .data-grid td {
+    white-space: nowrap;
+  }
+}
+
+/* Helpers for single-line record cells */
+.cell-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.cell-meta {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+.cell-truncate {
+  display: inline-block;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
 }
 .data-grid tr:last-child td {
   border-bottom: none;
@@ -323,6 +361,33 @@ body {
   height: 1px;
   background: var(--border-light);
   margin: 4px 0;
+}
+
+/* Portal-rendered action menu (BUG-02). It is mounted on document.body, so
+   its item styling must not depend on the original parent container. */
+.action-menu {
+  color: var(--text-primary);
+  pointer-events: auto;
+}
+.action-menu .dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  color: var(--text-primary);
+  background: transparent;
+  white-space: nowrap;
+}
+.action-menu .dropdown-item svg { flex-shrink: 0; }
+.action-menu .dropdown-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.action-menu .dropdown-item.danger { color: #dc2626; }
+.action-menu .dropdown-item.danger:hover {
+  background: #fef2f2;
+  color: #b91c1c;
 }
 
 /* 3D Seat Map Base */
@@ -468,6 +533,16 @@ body {
   .modal-content input:not([type="radio"]):not([type="checkbox"]), .modal-content select, .modal-content textarea {
     width: 100% !important;
     max-width: 100% !important;
+  }
+}
+
+/* At the 768px desktop boundary, keep data grids as real tables. The
+   mobile block above is meant for phones, not the desktop table layout. */
+@media (min-width: 768px) {
+  table.data-grid {
+    display: table;
+    width: auto;
+    min-width: 100%;
   }
 }
 

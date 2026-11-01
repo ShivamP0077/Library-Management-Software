@@ -27,6 +27,7 @@ const ActionMenu = ({ items = [], label = 'More actions', triggerClassName = 'bt
   const [coords, setCoords] = useState({ top: 0, left: 0 });
   const triggerRef = useRef(null);
   const menuRef = useRef(null);
+  const openedAtRef = useRef(0);
 
   useLayoutEffect(() => {
     if (!isOpen || !triggerRef.current || !menuRef.current) return;
@@ -66,9 +67,20 @@ const ActionMenu = ({ items = [], label = 'More actions', triggerClassName = 'bt
     }
 
     const closeMenu = () => setIsOpen(false);
+    const eventPath = (event) => (
+      typeof event.composedPath === 'function' ? event.composedPath() : []
+    );
     const handlePointerDown = (event) => {
-      if (triggerRef.current?.contains(event.target)) return;
-      if (menuRef.current?.contains(event.target)) return;
+      const path = eventPath(event);
+      // Capture phase: check both the real event path (covers the portal) and refs.
+      if (
+        path.includes(triggerRef.current) ||
+        path.includes(menuRef.current) ||
+        triggerRef.current?.contains(event.target) ||
+        menuRef.current?.contains(event.target)
+      ) return;
+      // Ignore the same physical gesture that opened the menu.
+      if (Date.now() - openedAtRef.current < 80) return;
       closeMenu();
     };
     const handleKeyDown = (event) => {
@@ -84,12 +96,12 @@ const ActionMenu = ({ items = [], label = 'More actions', triggerClassName = 'bt
       closeMenu();
     };
 
-    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('pointerdown', handlePointerDown, true);
     document.addEventListener('keydown', handleKeyDown);
     window.addEventListener('resize', closeMenu);
     window.addEventListener('scroll', handleScroll, true);
     return () => {
-      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('pointerdown', handlePointerDown, true);
       document.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('resize', closeMenu);
       window.removeEventListener('scroll', handleScroll, true);
@@ -119,8 +131,10 @@ const ActionMenu = ({ items = [], label = 'More actions', triggerClassName = 'bt
         type="button"
         className={triggerClassName}
         style={triggerStyle}
+        onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => {
           event.stopPropagation();
+          openedAtRef.current = Date.now();
           setIsOpen(open => !open);
         }}
         aria-haspopup="menu"
@@ -134,6 +148,7 @@ const ActionMenu = ({ items = [], label = 'More actions', triggerClassName = 'bt
       {isOpen && createPortal(
         <div
           ref={menuRef}
+          className="action-menu"
           role="menu"
           aria-label={label}
           onPointerDown={(event) => event.stopPropagation()}
@@ -152,7 +167,8 @@ const ActionMenu = ({ items = [], label = 'More actions', triggerClassName = 'bt
             borderRadius: '10px',
             boxShadow: 'var(--shadow-float, 0 25px 50px -12px rgba(0,0,0,0.15))',
             padding: '6px',
-            zIndex: 1300,
+            zIndex: 3000,
+            pointerEvents: 'auto',
             display: 'flex',
             flexDirection: 'column',
             gap: '2px'
@@ -164,10 +180,16 @@ const ActionMenu = ({ items = [], label = 'More actions', triggerClassName = 'bt
               type="button"
               role="menuitem"
               className={`dropdown-item${item.danger ? ' danger' : ''}`}
-              style={{ minHeight: '40px', padding: '10px 12px', fontSize: '14px' }}
-              onClick={() => {
-                setIsOpen(false);
-                item.onClick?.();
+              style={{ minHeight: '40px', padding: '10px 12px', fontSize: '14px', whiteSpace: 'nowrap' }}
+              onClick={(event) => {
+                event.stopPropagation();
+                // Run the action before closing so it can rely on the menu
+                // still being mounted (e.g. focusing a newly opened dialog).
+                try {
+                  item.onClick?.();
+                } finally {
+                  setIsOpen(false);
+                }
               }}
             >
               {item.icon}
@@ -810,7 +832,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
         )}
       </div>
 
-      {/* Compact mobile list: Name | Seat | Status | View */}
+      {/* Compact mobile list: Student Name | Seat | Status | View */}
       <div className="compact-list mobile-only">
         {filteredStudents.length === 0 ? (
           <div className="compact-empty">No student records match your criteria.</div>
@@ -822,10 +844,10 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
               {isSelectionMode && (
                 <input type="checkbox" checked={selectedIds.includes(student.id)} onChange={() => handleToggleSelect(student.id)} onClick={e => e.stopPropagation()} />
               )}
-              <span className="c-main">{student.name}</span>
+              <span className="c-main" title={student.name}>{student.name}</span>
               <span className="c-meta">{student.seatNo || '—'}</span>
               <span className={`badge ${badgeClass}`}>{subStatus.label}</span>
-              <button className="btn btn-ghost" onClick={(e) => { e.stopPropagation(); setSelectedStudent(student); }}>View</button>
+              <button type="button" className="btn btn-ghost" onClick={(e) => { e.stopPropagation(); setSelectedStudent(student); }}>View</button>
             </div>
           );
         })}
@@ -875,22 +897,22 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                     </td>
                   )}
                   <td>
-                    <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{student.name}</div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '4px' }}>
-                      {student.id} • {student.phone}
-                    </div>
+                    <span className="cell-inline">
+                      <span className="cell-truncate" style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{student.name}</span>
+                      <span className="cell-meta">{student.id} • {student.phone}</span>
+                    </span>
                   </td>
                   <td>
                     <span style={{ fontSize: '13px', fontWeight: 500 }}>{getBranchCode(student.branchId)}</span>
                   </td>
                   <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <span className="cell-inline">
                       <span style={{ background: '#f3f4f6', padding: '4px 8px', borderRadius: '4px', fontWeight: 600, fontSize: '12px' }}>
                         {student.seatNo}
                       </span>
                       <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{student.shift}</span>
                       {student.seatNo !== 'Non-Fixed Seat' && student.seatNo !== 'None' && (student.status === 'Active' || student.status === 'Expiring Soon') && !getValidDesksList(student.branchId, student.sectionId).includes(student.seatNo) && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#fee2e2', padding: '4px 8px', borderRadius: '4px' }}>
+                        <span className="cell-inline" style={{ background: '#fee2e2', padding: '4px 8px', borderRadius: '4px' }}>
                           <AlertCircle size={12} color="#ef4444" />
                           <span style={{ fontSize: '11px', color: '#ef4444', fontWeight: 600 }}>Missing from Seat Map</span>
                           <button 
@@ -899,12 +921,12 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                           >
                             Fix Allocation
                           </button>
-                        </div>
+                        </span>
                       )}
-                    </div>
+                    </span>
                   </td>
                   <td>
-                    <div style={{ fontWeight: 500, fontSize: '13px' }}>{student.expiryDate}</div>
+                    <span style={{ fontWeight: 500, fontSize: '13px' }}>{student.expiryDate}</span>
                   </td>
                   <td>
                     {(() => {
@@ -913,7 +935,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                         ? 'badge-expired' 
                         : (subStatus.isGrace ? 'badge-expiring' : 'badge-active');
                       return (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <span className="cell-inline">
                           <span className={`badge ${badgeClass}`}>
                             {subStatus.label}
                           </span>
@@ -925,7 +947,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                           {!student.id && (
                             <span className="badge badge-expiring" style={{ fontSize: '10px' }}>ID Pending</span>
                           )}
-                        </div>
+                        </span>
                       );
                     })()}
                   </td>

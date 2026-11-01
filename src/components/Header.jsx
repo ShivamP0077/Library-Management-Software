@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { NotificationBell } from './NotificationBell';
 import { createPortal } from 'react-dom';
 import { useLibrary } from '../context/LibraryContext';
 import { 
@@ -91,6 +92,10 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
           </div>
         </div>
 
+        <div className="mobile-only" style={{ marginLeft: 'auto' }}>
+          <NotificationBell onOpen={() => { setDrawerOpen(false); setActiveTab('notifications'); }} />
+        </div>
+
         {/* Right Controls: Branch Switcher, Staff Switcher, New Student CTA */}
         <div className={`header-controls ${drawerOpen ? 'drawer-open' : ''}`} style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
           
@@ -137,6 +142,8 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
               <span>New Student</span>
             </button>
           )}
+
+          <NotificationBell onOpen={() => setActiveTab('notifications')} />
 
           {/* Global Refresh Button (data-only refresh, no page reload) */}
           <button

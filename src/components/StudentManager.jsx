@@ -296,6 +296,19 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     }
   }, [relocateActionStudent, setSelectedStudent, setRelocateActionStudent]);
 
+  // Deep link from notifications: #student=<id> opens that student's profile.
+  useEffect(() => {
+    const openFromHash = () => {
+      const id = new URLSearchParams((window.location.hash || '').replace(/^#/, '')).get('student');
+      if (!id) return;
+      const st = students.find(x => String(x.id) === id);
+      if (st) { setSelectedStudent(st); history.replaceState(null, '', window.location.pathname + window.location.search); }
+    };
+    openFromHash();
+    window.addEventListener('hashchange', openFromHash);
+    return () => window.removeEventListener('hashchange', openFromHash);
+  }, [students, setSelectedStudent]);
+
   const [renewPlanId, setRenewPlanId] = useState('');
   const [renewDuration, setRenewDuration] = useState(1);
   const [renewShiftId, setRenewShiftId] = useState('');

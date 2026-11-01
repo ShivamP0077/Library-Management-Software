@@ -25,6 +25,8 @@ export async function requireAuth(req, res, next) {
     try { payload = jwt.verify(h.slice(7), secret()); } catch { return res.status(401).json({ error: 'Invalid or expired token' }); }
     const user = await User.findById(payload.sub).lean();
     if (!user || user.status !== 'Active') return res.status(401).json({ error: 'Account disabled or not found' });
+    // Tokens issued before a password reset/change stop working.
+    if (user.passwordChangedAt && payload.iat && payload.iat * 1000 < new Date(user.passwordChangedAt).getTime() - 1000) return res.status(401).json({ error: 'Session expired. Please sign in again.' });
     // The database is the source of truth for the tenant. A token minted for a
     // different tenant (e.g. after reassignment) must not be accepted.
     const tenantId = user.tenantId || user.libraryId || null;

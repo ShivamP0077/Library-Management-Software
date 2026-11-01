@@ -10,6 +10,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { NumericInput } from './NumericInput';
 import { SetupWizard } from './SetupWizard';
 import { WhatsAppSettings } from './WhatsAppSettings';
+import { TeamAccess } from './TeamAccess';
 import { resolveConfigurationScope, matchesScope } from '../utils/scopeResolver';
 import { 
   STAFF_MODULES, STAFF_ACTIONS, STAFF_ROLES, 
@@ -1899,6 +1900,9 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
               </table>
             </div>
           </div>
+
+          {/* Team logins & invites (client_admin / superadmin only) */}
+          <TeamAccess />
         </div>
       )}
       

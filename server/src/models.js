@@ -42,6 +42,7 @@ const userSchema = new mongoose.Schema({
   staffId: String, // optional link to a staff record (staffMembers.id) inside the library
   status: { type: String, enum: ['Active', 'Disabled'], default: 'Active' },
   lastLoginAt: Date,
+  passwordChangedAt: Date,
   googleSub: { type: String, index: true, sparse: true },
   authProviders: { type: [String], default: [] }, // e.g. ['password', 'google']
 }, { timestamps: true });

@@ -1,0 +1,105 @@
+{
+  "collection": "plans",
+  "sampleSize": 200,
+  "fields": {
+    "__v": [
+      "number"
+    ],
+    "_id": [
+      "objectId"
+    ],
+    "_key": [
+      "string"
+    ],
+    "_order": [
+      "number"
+    ],
+    "active": [
+      "boolean"
+    ],
+    "branchId": [
+      "string"
+    ],
+    "createdAt": [
+      "date"
+    ],
+    "durationPricing": [
+      "array"
+    ],
+    "durationPricing[].basePrice": [
+      "number"
+    ],
+    "durationPricing[].discountType": [
+      "string"
+    ],
+    "durationPricing[].discountValue": [
+      "number"
+    ],
+    "durationPricing[].durationMonths": [
+      "number"
+    ],
+    "id": [
+      "string"
+    ],
+    "libraryId": [
+      "string"
+    ],
+    "name": [
+      "string"
+    ],
+    "seatTypeId": [
+      "string"
+    ],
+    "sectionId": [
+      "string"
+    ],
+    "shiftIds": [
+      "array"
+    ],
+    "shiftIds[]": [
+      "string"
+    ],
+    "tenantId": [
+      "string"
+    ],
+    "updatedAt": [
+      "date"
+    ]
+  },
+  "indexes": [
+    {
+      "v": 2,
+      "key": {
+        "_id": 1
+      },
+      "name": "_id_"
+    },
+    {
+      "v": 2,
+      "key": {
+        "tenantId": 1
+      },
+      "name": "tenantId_1"
+    },
+    {
+      "v": 2,
+      "key": {
+        "tenantId": 1,
+        "_key": 1
+      },
+      "name": "tenantId_1__key_1",
+      "unique": true,
+      "partialFilterExpression": {
+        "tenantId": {
+          "$type": "string"
+        }
+      }
+    }
+  ],
+  "options": {
+    "validator": null,
+    "validationLevel": null,
+    "validationAction": null,
+    "capped": false
+  }
+}

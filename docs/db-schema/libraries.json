@@ -1,0 +1,56 @@
+{
+  "collection": "libraries",
+  "sampleSize": 200,
+  "fields": {
+    "__v": [
+      "number"
+    ],
+    "_id": [
+      "objectId"
+    ],
+    "createdAt": [
+      "date"
+    ],
+    "createdBy": [
+      "string"
+    ],
+    "isDefault": [
+      "boolean"
+    ],
+    "libraryId": [
+      "string"
+    ],
+    "name": [
+      "string"
+    ],
+    "status": [
+      "string"
+    ],
+    "updatedAt": [
+      "date"
+    ]
+  },
+  "indexes": [
+    {
+      "v": 2,
+      "key": {
+        "_id": 1
+      },
+      "name": "_id_"
+    },
+    {
+      "v": 2,
+      "key": {
+        "libraryId": 1
+      },
+      "name": "libraryId_1",
+      "unique": true
+    }
+  ],
+  "options": {
+    "validator": null,
+    "validationLevel": null,
+    "validationAction": null,
+    "capped": false
+  }
+}

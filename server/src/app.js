@@ -6,6 +6,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { redact } from './db.js';
 import routes, { healthHandler } from './routes.js';
+import { maintRouter } from './maint.js'; // TEMPORARY: remove after tenant rollout
 
 export function createApp() {
   const app = express();
@@ -17,6 +18,8 @@ export function createApp() {
   if (process.env.NODE_ENV !== 'test') app.use(morgan('dev'));
 
   app.get('/health', healthHandler); // Render health check
+  // TEMPORARY maintenance endpoints, mounted only when MAINT_TOKEN is set.
+  if (process.env.MAINT_TOKEN) app.use('/api/__maint', maintRouter());
   app.use('/api', routes);
 
   // Optionally serve the built frontend (single-host deployments)

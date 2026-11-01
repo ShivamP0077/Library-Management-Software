@@ -53,6 +53,24 @@ export const api = {
   seatAllocations: (params = '') => apiRequest(`/seat-allocations${params}`),
   assignSeat: (body) => apiRequest('/seat-allocations/assign', { method: 'POST', body }),
   setSeatMaintenance: (seatId, isMaintenance) => apiRequest(`/seats/${encodeURIComponent(seatId)}/maintenance`, { method: 'PATCH', body: { isMaintenance } }),
+  // Finance
+  feeSuggest: (base, tiers) => apiRequest(`/fees/suggest?base=${encodeURIComponent(base)}&tiers=${encodeURIComponent(tiers)}`),
+  recurringExpenses: () => apiRequest('/recurring-expenses'),
+  createRecurringExpense: (body) => apiRequest('/recurring-expenses', { method: 'POST', body }),
+  updateRecurringExpense: (id, body) => apiRequest(`/recurring-expenses/${encodeURIComponent(id)}`, { method: 'PUT', body }),
+  stopRecurringExpense: (id) => apiRequest(`/recurring-expenses/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
+  expenseInstances: (q = '') => apiRequest(`/expense-instances${q}`),
+  updateExpenseInstance: (id, body) => apiRequest(`/expense-instances/${encodeURIComponent(id)}`, { method: 'PATCH', body }),
+  payExpenseInstance: (id, body) => apiRequest(`/expense-instances/${encodeURIComponent(id)}/payments`, { method: 'POST', body }),
+  pnl: (q = '') => apiRequest(`/reports/pnl${q}`),
+  downloadCsv: async (path, filename) => {
+    const headers = {}; const t = getToken(); if (t) headers.Authorization = `Bearer ${t}`;
+    if (tenantContext.libraryId) headers['X-Library-Id'] = tenantContext.libraryId;
+    const res = await fetch(`${API_BASE}${path}`, { headers });
+    if (!res.ok) throw new Error(`Download failed (${res.status})`);
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url);
+  },
   // Super admin
   adminLibraries: () => apiRequest('/admin/libraries'),
   adminMetrics: () => apiRequest('/admin/metrics'),

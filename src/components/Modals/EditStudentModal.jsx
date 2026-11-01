@@ -52,12 +52,15 @@ export const EditStudentModal = ({ isOpen, onClose, student, onSaveComplete }) =
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!formData.name.trim()) return toast.error('Name is required');
-    if (!formData.phone.trim() || formData.phone.length !== 10) return toast.error('Valid 10-digit phone number is required');
+    if (!formData.phone.trim() || formData.phone.length !== 10) return toast.error('Valid 10-digit student mobile number is required');
+    if (formData.emergencyPhone && formData.emergencyPhone.trim() && formData.emergencyPhone.trim().length !== 10) {
+      return toast.error('Emergency contact number must be 10 digits if provided');
+    }
 
     const result = updateStudentDetails(student.id, {
       name: formData.name.trim(),
       phone: formData.phone.trim(),
-      emergencyPhone: formData.emergencyPhone.trim(),
+      emergencyPhone: formData.emergencyPhone ? formData.emergencyPhone.trim() : '',
       gender: formData.gender,
       dob: formData.dob,
       email: formData.email.trim(),
@@ -107,7 +110,7 @@ export const EditStudentModal = ({ isOpen, onClose, student, onSaveComplete }) =
                 />
               </div>
               <div className="form-group">
-                <label className="form-label">Phone *</label>
+                <label className="form-label">Student Mobile Number *</label>
                 <input 
                   type="tel" 
                   maxLength={10} 
@@ -121,13 +124,14 @@ export const EditStudentModal = ({ isOpen, onClose, student, onSaveComplete }) =
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
               <div className="form-group">
-                <label className="form-label">Emergency Phone</label>
+                <label className="form-label">Emergency Contact Number</label>
                 <input 
                   type="tel" 
                   maxLength={10} 
                   className="form-input" 
                   value={formData.emergencyPhone} 
                   onChange={(e) => setFormData({...formData, emergencyPhone: e.target.value})} 
+                  placeholder="Optional 10-digit number"
                 />
               </div>
               <div className="form-group">

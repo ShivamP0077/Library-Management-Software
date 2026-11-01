@@ -15,7 +15,7 @@ const writeSecret = (file, content) => {
  * - Password from SUPERADMIN_PASSWORD; if unset, one is generated and written to
  *   SUPERADMIN_CREDENTIALS_FILE (never logged). Without either, the account is Google-only.
  */
-export const DEFAULT_SUPERADMIN_EMAIL = 'omdevsinhmakwana9898@gmail.com';
+export const DEFAULT_SUPERADMIN_EMAIL = process.env.SUPERADMIN_EMAIL || 'admin@example.com';
 
 const readCredentialFile = (file) => {
   try {

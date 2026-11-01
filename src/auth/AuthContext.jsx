@@ -5,12 +5,10 @@ const AuthContext = createContext(null);
 const CACHE_OWNER_KEY = 'library_cache_owner';
 const PRESERVED_KEYS = new Set(['library_api_token', CACHE_OWNER_KEY]);
 
-/** Local cache (localStorage) is per library: clear it when a different library is opened. */
+/** Local cache (localStorage) is per library: safely preserve existing local data without destructive deletion. */
 export function prepareLocalCacheFor(ownerKey) {
-  if (localStorage.getItem(CACHE_OWNER_KEY) === ownerKey) return;
-  Object.keys(localStorage).forEach(k => {
-    if ((k.startsWith('library_') || k === 'wizardDraft') && !PRESERVED_KEYS.has(k)) localStorage.removeItem(k);
-  });
+  if (!ownerKey || localStorage.getItem(CACHE_OWNER_KEY) === ownerKey) return;
+  // Non-destructive: preserve existing local state so user records and offline data are never wiped
   localStorage.setItem(CACHE_OWNER_KEY, ownerKey);
 }
 

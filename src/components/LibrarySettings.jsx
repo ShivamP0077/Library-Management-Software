@@ -14,6 +14,7 @@ import {
   STAFF_MODULES, STAFF_ACTIONS, STAFF_ROLES, 
   createEmptyPermissions, getDefaultPermissionsForRole, countAllowedActions 
 } from '../utils/staffPermissions';
+import { getCanonicalSeatTypes } from '../utils/seatTypeUtils';
 import toast from 'react-hot-toast';
 
 const ALL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -752,7 +753,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
     ? plans 
     : plans.filter(p => !p.branchId || p.branchId === 'all' || p.branchId === selectedBranchId);
   const displayedSeatTypes = selectedBranchId === 'all' 
-    ? seatTypes 
+    ? getCanonicalSeatTypes(seatTypes) 
     : seatTypes.filter(st => !st.branchId || st.branchId === 'all' || st.branchId === selectedBranchId);
   const displayedSections = selectedBranchId === 'all'
     ? sections
@@ -2348,7 +2349,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                   <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label" style={{ fontSize: '12px', fontWeight: 600 }}>Seat Type *</label>
                     <select className="form-select" value={planSeatTypeId} onChange={e => setPlanSeatTypeId(e.target.value)} required>
-                      {seatTypes.map(st => <option key={st.id} value={st.id}>{st.name}</option>)}
+                      {getCanonicalSeatTypes(seatTypes).map(st => <option key={st.id} value={st.id}>{st.name} ({st.allocationMode})</option>)}
                     </select>
                   </div>
 

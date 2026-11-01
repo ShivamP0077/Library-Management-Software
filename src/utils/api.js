@@ -28,7 +28,7 @@ export async function apiRequest(path, { method = 'GET', body, signal } = {}) {
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (res.status === 401 && token && unauthorizedHandler) unauthorizedHandler();
-  if (!res.ok) throw Object.assign(new Error(data?.error || `Request failed (${res.status})`), { status: res.status });
+  if (!res.ok) throw Object.assign(new Error(data?.error || `Request failed (${res.status})`), { status: res.status, code: data?.code, details: data?.details });
   return data;
 }
 
@@ -49,6 +49,10 @@ export const api = {
   whatsappLogout: () => apiRequest('/whatsapp/logout', { method: 'POST' }),
   whatsappSaveSettings: (body) => apiRequest('/whatsapp/settings', { method: 'PUT', body }),
   whatsappSendReceipt: (receiptNo, type) => apiRequest(`/whatsapp/receipts/${encodeURIComponent(receiptNo)}`, { method: 'POST', body: { type } }),
+  // Seats (server-side atomic allocation)
+  seatAllocations: (params = '') => apiRequest(`/seat-allocations${params}`),
+  assignSeat: (body) => apiRequest('/seat-allocations/assign', { method: 'POST', body }),
+  setSeatMaintenance: (seatId, isMaintenance) => apiRequest(`/seats/${encodeURIComponent(seatId)}/maintenance`, { method: 'PATCH', body: { isMaintenance } }),
   // Super admin
   adminLibraries: () => apiRequest('/admin/libraries'),
   adminMetrics: () => apiRequest('/admin/metrics'),

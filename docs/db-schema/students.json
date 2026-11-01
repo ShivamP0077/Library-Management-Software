@@ -1,0 +1,336 @@
+{
+  "collection": "students",
+  "sampleSize": 200,
+  "fields": {
+    "__v": [
+      "number"
+    ],
+    "_id": [
+      "objectId"
+    ],
+    "_key": [
+      "string"
+    ],
+    "_order": [
+      "number"
+    ],
+    "blockId": [
+      "string"
+    ],
+    "branchId": [
+      "string"
+    ],
+    "createdAt": [
+      "date"
+    ],
+    "documents": [
+      "array"
+    ],
+    "documents[]": [
+      "string"
+    ],
+    "documents[].fileName": [
+      "string"
+    ],
+    "documents[].fileType": [
+      "string"
+    ],
+    "documents[].id": [
+      "string"
+    ],
+    "documents[].name": [
+      "string"
+    ],
+    "documents[].storageKey": [
+      "string"
+    ],
+    "documents[].uploadedAt": [
+      "string"
+    ],
+    "emergencyPhone": [
+      "string"
+    ],
+    "expiryDate": [
+      "string"
+    ],
+    "gender": [
+      "string"
+    ],
+    "id": [
+      "string"
+    ],
+    "idProofStatus": [
+      "string"
+    ],
+    "internalNotes": [
+      "string"
+    ],
+    "isTestData": [
+      "boolean"
+    ],
+    "joinedDate": [
+      "string"
+    ],
+    "libraryId": [
+      "string"
+    ],
+    "name": [
+      "string"
+    ],
+    "paymentHistory": [
+      "array"
+    ],
+    "paymentHistory[].amount": [
+      "number"
+    ],
+    "paymentHistory[].branchCode": [
+      "string"
+    ],
+    "paymentHistory[].branchId": [
+      "string"
+    ],
+    "paymentHistory[].branchName": [
+      "string"
+    ],
+    "paymentHistory[].breakdown": [
+      "array"
+    ],
+    "paymentHistory[].breakdown[].amount": [
+      "number"
+    ],
+    "paymentHistory[].breakdown[].isManual": [
+      "boolean"
+    ],
+    "paymentHistory[].breakdown[].method": [
+      "string"
+    ],
+    "paymentHistory[].date": [
+      "string"
+    ],
+    "paymentHistory[].discount": [
+      "number"
+    ],
+    "paymentHistory[].fine": [
+      "number"
+    ],
+    "paymentHistory[].method": [
+      "string"
+    ],
+    "paymentHistory[].netTotal": [
+      "number"
+    ],
+    "paymentHistory[].planName": [
+      "string"
+    ],
+    "paymentHistory[].receiptNo": [
+      "string"
+    ],
+    "paymentHistory[].seatName": [
+      "string"
+    ],
+    "paymentHistory[].seatNo": [
+      "string"
+    ],
+    "paymentHistory[].staffName": [
+      "string"
+    ],
+    "paymentHistory[].studentId": [
+      "string"
+    ],
+    "paymentHistory[].studentName": [
+      "string"
+    ],
+    "phone": [
+      "string"
+    ],
+    "planId": [
+      "string"
+    ],
+    "renewalHistory": [
+      "array"
+    ],
+    "renewalHistory[].amountPaid": [
+      "number"
+    ],
+    "renewalHistory[].basePrice": [
+      "number"
+    ],
+    "renewalHistory[].date": [
+      "string"
+    ],
+    "renewalHistory[].discount": [
+      "number"
+    ],
+    "renewalHistory[].durationMonths": [
+      "number"
+    ],
+    "renewalHistory[].endDate": [
+      "string"
+    ],
+    "renewalHistory[].fine": [
+      "number"
+    ],
+    "renewalHistory[].planId": [
+      "string"
+    ],
+    "renewalHistory[].planName": [
+      "string"
+    ],
+    "renewalHistory[].receiptNo": [
+      "string"
+    ],
+    "renewalHistory[].renewalId": [
+      "string"
+    ],
+    "renewalHistory[].shift": [
+      "string"
+    ],
+    "renewalHistory[].shiftId": [
+      "string"
+    ],
+    "renewalHistory[].staffName": [
+      "string"
+    ],
+    "renewalHistory[].startDate": [
+      "string"
+    ],
+    "seatHistory": [
+      "array"
+    ],
+    "seatHistory[].changeId": [
+      "string"
+    ],
+    "seatHistory[].date": [
+      "string"
+    ],
+    "seatHistory[].newBranchId": [
+      "string"
+    ],
+    "seatHistory[].newBranchName": [
+      "string"
+    ],
+    "seatHistory[].newSeat": [
+      "string"
+    ],
+    "seatHistory[].newSeatId": [
+      "string"
+    ],
+    "seatHistory[].newSeatTypeId": [
+      "string"
+    ],
+    "seatHistory[].newSectionId": [
+      "string"
+    ],
+    "seatHistory[].newShift": [
+      "string"
+    ],
+    "seatHistory[].newShiftId": [
+      "string"
+    ],
+    "seatHistory[].previousBranchId": [
+      "string"
+    ],
+    "seatHistory[].previousBranchName": [
+      "string"
+    ],
+    "seatHistory[].previousSeat": [
+      "string"
+    ],
+    "seatHistory[].previousSeatId": [
+      "string"
+    ],
+    "seatHistory[].previousSeatTypeId": [
+      "string"
+    ],
+    "seatHistory[].previousSectionId": [
+      "string"
+    ],
+    "seatHistory[].previousShift": [
+      "string"
+    ],
+    "seatHistory[].previousShiftId": [
+      "string"
+    ],
+    "seatHistory[].reason": [
+      "string"
+    ],
+    "seatHistory[].staffName": [
+      "string"
+    ],
+    "seatNo": [
+      "string"
+    ],
+    "seatTypeId": [
+      "string"
+    ],
+    "sectionId": [
+      "string"
+    ],
+    "shift": [
+      "string"
+    ],
+    "shiftId": [
+      "string"
+    ],
+    "source": [
+      "string"
+    ],
+    "startDate": [
+      "string"
+    ],
+    "status": [
+      "string"
+    ],
+    "tenantId": [
+      "string"
+    ],
+    "updatedAt": [
+      "date"
+    ]
+  },
+  "indexes": [
+    {
+      "v": 2,
+      "key": {
+        "_id": 1
+      },
+      "name": "_id_"
+    },
+    {
+      "v": 2,
+      "key": {
+        "tenantId": 1
+      },
+      "name": "tenantId_1"
+    },
+    {
+      "v": 2,
+      "key": {
+        "tenantId": 1,
+        "_key": 1
+      },
+      "name": "tenantId_1__key_1",
+      "unique": true,
+      "partialFilterExpression": {
+        "tenantId": {
+          "$type": "string"
+        }
+      }
+    },
+    {
+      "v": 2,
+      "key": {
+        "tenantId": 1,
+        "branchId": 1,
+        "status": 1
+      },
+      "name": "tenantId_1_branchId_1_status_1"
+    }
+  ],
+  "options": {
+    "validator": null,
+    "validationLevel": null,
+    "validationAction": null,
+    "capped": false
+  }
+}

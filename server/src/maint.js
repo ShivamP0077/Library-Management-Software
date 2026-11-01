@@ -26,7 +26,7 @@ const db = () => {
 async function backup() {
   const src = db();
   const ts = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '').replace('T', '_');
-  const targetName = `${src.databaseName}_backup_${ts}`;
+  const targetName = `lm_backup_${ts}`; // Atlas caps database names at 38 bytes
   const dst = mongoose.connection.getClient().db(targetName);
   const result = { source: src.databaseName, target: targetName, collections: {}, ok: true };
   const cols = (await src.listCollections({}, { nameOnly: false }).toArray()).filter(c => c.type !== 'view' && !c.name.startsWith('system.'));

@@ -277,20 +277,27 @@ Careful: a local backend pointed at the live DB **is production data**.
   src/auth.js             JWT sign/verify, requireAuth (re-checks user+library status in DB), requireRole, tenantScope
   src/routes.js           all routes (auth, admin, tenant)
   src/services.js         createLibrary, createUser, computeMetrics, password helpers
+  src/tenantGuard.js      mongoose plugin: refuses tenant queries without tenantId
+  src/migrate-tenants.js  idempotent libraryId → tenantId backfill (npm run migrate:tenants)
   src/google.js           Google ID-token verification
-  src/seed.js, seed-cli.js  super admin / demo seeding
-  test/tenancy.test.js    node:test integration tests
+  src/seed.js, seed-cli.js  super admin / default tenant / demo seeding
+  MIGRATION.md            multi-tenancy migration runbook
+  test/tenancy.test.js    node:test API/tenant-isolation integration tests
+  test/tenant-guard.test.js  tenant guard coverage
+  test/migration.test.js  migration dry-run/apply/idempotency/collision tests
   render.yaml (repo root) Render blueprint
 /landing                  marketing site (src/components/*, src/config.js reads VITE_APP_URL / VITE_DEMO_EMAIL)
 ```
 
 ### Models (MongoDB, database `library_management`)
-- `libraries`: `{ libraryId (unique), name, status: Active|Disabled, contactEmail, createdBy }`
-- `users`: `{ email (unique), name, passwordHash?, role: superadmin|client_admin|staff, libraryId (required unless superadmin), staffId?, status, googleSub?, authProviders[], lastLoginAt }`
-- `settings`: one per `libraryId`. This is the UI's settings object.
-- Tenant collections, each doc `{ libraryId, _key, _order, ...UI fields }` with a unique `{libraryId,_key}` index. `_key` is the UI's `id` (payments: `receiptNo`):
+- `libraries`: `{ libraryId (unique, canonical tenant key), name, status: Active|Disabled, contactEmail, createdBy, isDefault }`
+- `users`: `{ email (unique), name, passwordHash?, role: superadmin|client_admin|staff, tenantId (required unless superadmin, indexed), libraryId (legacy mirror, required unless superadmin), staffId?, status, googleSub?, authProviders[], lastLoginAt }`
+- `settings`: one per `tenantId`. This is the UI's settings object.
+- Tenant collections, each doc `{ tenantId, _key, _order, ...UI fields }` with a unique `{tenantId,_key}` index. `_key` is the UI's `id` (payments: `receiptNo`):
   `students, archivedstudents, payments, expenses, staffs (staffMembers), branches, sections, seattypes, seats, shifts, plans, waitinglistentries`
-- `studentdocuments`: `{ libraryId, storageKey, data (base64) }`
+  Legacy `libraryId` fields are kept on migrated documents for rollback but are no longer queried.
+- `studentdocuments`: `{ tenantId, storageKey, data (base64) }` with a unique `{tenantId,storageKey}` index.
+- `server/src/tenantGuard.js` rejects any tenant query/aggregate that isn't scoped by `tenantId` (trusted platform code opts out with `skipTenantGuard`).
 
 ### API (all JSON; `Authorization: Bearer <jwt>` except where noted)
 - Public: `GET /health`, `GET /api/health`, `GET /api/auth/config`, `POST /api/auth/login {email,password}`, `POST /api/auth/google {credential}` → `{token,user,library}`
@@ -303,12 +310,14 @@ Careful: a local backend pointed at the live DB **is production data**.
   `GET/PUT/DELETE /api/:collection/:key`. `:collection` ∈ `students, archivedStudents, payments, expenses, staffMembers, branches, sections, seatTypes, seats, shifts, plans, waitingList`.
 
 ### Tenancy rules (don't break these)
-1. A client user's tenant comes **only** from their `User.libraryId` (looked up from the DB on every request). Never trust `libraryId` from the body, query or headers. `stripMeta()` removes it from input, and writes force `libraryId = req.libraryId`.
-2. Every tenant query must filter by `libraryId: req.libraryId`; every bulk delete must be limited to that library.
-3. Only a superadmin may use `X-Library-Id`. `X-Read-Only: 1` must block non-GET requests.
-4. Disabled users or libraries lose access immediately (checked in `requireAuth`).
-5. No self-signup: Google login only maps to existing users.
-6. Add a test to `server/test/tenancy.test.js` for any new tenant-scoped route.
+1. A client user's tenant comes **only** from their DB account (`User.tenantId`, falling back to legacy `User.libraryId`) on every request. Never trust tenant input from the body, query or headers. `stripMeta()` removes `tenantId`/`libraryId`, and writes force `tenantId = req.tenantId`.
+2. Every tenant query must filter by `tenantId: req.tenantId`; every bulk delete must be limited to that tenant. The tenant guard plugin throws on unscoped queries, so violations fail loudly instead of leaking data.
+3. `req.libraryId` and API response `libraryId` remain as compatibility aliases for the canonical `tenantId`. JWT `tenantId` must match the DB account or the request is rejected with 401.
+4. Only a superadmin may use `X-Library-Id`. `X-Read-Only: 1` must block non-GET requests.
+5. Disabled users or libraries lose access immediately (checked in `requireAuth`).
+6. No self-signup: Google login only maps to existing users.
+7. Add a test to `server/test/tenancy.test.js` for any new tenant-scoped route; guard/migration regressions belong in `tenant-guard.test.js` / `migration.test.js`.
+8. Existing databases must run `npm run migrate:tenants` (see `server/MIGRATION.md`) before deploying this code.
 
 ### Conventions
 - The UI owns entity shapes (schemas are `strict: false`). Add new UI state to `SYNCED_COLLECTIONS` (`src/utils/api.js`), to `COLLECTIONS` (`server/src/models.js`), and to the hydrate/sync effects in `LibraryContext.jsx`.

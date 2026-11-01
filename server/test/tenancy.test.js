@@ -1,15 +1,15 @@
 // Integration tests for the role hierarchy and tenant isolation.
-// Requires a MongoDB instance: MONGODB_URI_TEST (default mongodb://127.0.0.1:27017).
+// Uses mongodb-memory-server so no external MongoDB is required.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import mongoose from 'mongoose';
+import jwt from 'jsonwebtoken';
+import { MongoMemoryServer } from 'mongodb-memory-server';
 import { createApp } from '../src/app.js';
 import { ensureSuperAdmin } from '../src/seed.js';
 
-const MONGO = process.env.MONGODB_URI_TEST || 'mongodb://127.0.0.1:27017';
-const DB = `lms_test_${Date.now()}`;
 const SA = { email: 'super@test.local', password: 'SuperSecret#123' };
-let server, base, tokens = {};
+let mongod, server, base, tokens = {}, superAdminId;
 
 const call = async (method, path, { token, body, headers = {} } = {}) => {
   const res = await fetch(base + path, {
@@ -24,9 +24,11 @@ const login = async (email, password) => (await call('POST', '/api/auth/login', 
 
 before(async () => {
   process.env.JWT_SECRET = 'test-secret';
-  await mongoose.connect(MONGO, { dbName: DB });
+  mongod = await MongoMemoryServer.create();
+  await mongoose.connect(mongod.getUri(), { dbName: 'lms_tenancy_test' });
   await Promise.all(Object.values(mongoose.models).map(m => m.syncIndexes()));
-  await ensureSuperAdmin({ SUPERADMIN_EMAIL: SA.email, SUPERADMIN_PASSWORD: SA.password });
+  const sa = await ensureSuperAdmin({ SUPERADMIN_EMAIL: SA.email, SUPERADMIN_PASSWORD: SA.password });
+  superAdminId = String(sa._id);
   server = createApp().listen(0);
   base = `http://127.0.0.1:${server.address().port}`;
   tokens.sa = await login(SA.email, SA.password);
@@ -39,8 +41,8 @@ before(async () => {
 
 after(async () => {
   server?.close();
-  await mongoose.connection.db.dropDatabase();
   await mongoose.disconnect();
+  await mongod?.stop();
 });
 
 test('unauthenticated requests are rejected', async () => {
@@ -52,10 +54,12 @@ test('client admin A creates data that is tagged with A regardless of body libra
   const r = await call('POST', '/api/students', { token: tokens.a, body: { id: 'STU-1', name: 'Alice', status: 'Active', seatNo: 'A1', libraryId: 'lib-b' } });
   assert.equal(r.status, 201);
   assert.equal(r.body.libraryId, 'lib-a');
+  assert.equal(r.body.tenantId, undefined);
   const p = await call('POST', '/api/payments', { token: tokens.a, body: { receiptNo: 'REC-1', studentId: 'STU-1', netTotal: 1500 } });
   assert.equal(p.status, 201);
   await call('PUT', '/api/seats', { token: tokens.a, body: [{ id: 'seat-1', name: 'A1' }, { id: 'seat-2', name: 'A2' }] });
   await call('POST', '/api/expenses', { token: tokens.a, body: { id: 'EXP-1', amount: 400, category: 'Rent' } });
+  assert.equal((await call('PUT', '/api/documents/doc-1', { token: tokens.a, body: { data: 'data-a' } })).status, 200);
 });
 
 test('client B cannot read A data', async () => {
@@ -82,9 +86,34 @@ test('client B cannot modify or delete A data', async () => {
   assert.equal(b.body.libraryId, 'lib-b');
 });
 
+test('cross-tenant ID substitution is a no-op for students, payments and documents', async () => {
+  // A owns this student; B never created its own copy of this key.
+  assert.equal((await call('POST', '/api/students', { token: tokens.a, body: { id: 'STU-ONLY-A', name: 'A only' } })).status, 201);
+  // students
+  assert.equal((await call('GET', '/api/students/STU-ONLY-A', { token: tokens.b })).status, 404);
+  assert.equal((await call('PUT', '/api/students/STU-ONLY-A', { token: tokens.b, body: { name: 'substituted' } })).status, 404);
+  assert.equal((await call('DELETE', '/api/students/STU-ONLY-A', { token: tokens.b })).status, 404);
+  // payments
+  assert.equal((await call('GET', '/api/payments/REC-1', { token: tokens.b })).status, 404);
+  assert.equal((await call('PUT', '/api/payments/REC-1', { token: tokens.b, body: { netTotal: 1 } })).status, 404);
+  assert.equal((await call('DELETE', '/api/payments/REC-1', { token: tokens.b })).status, 404);
+  // documents: B's writes create/delete B's own doc and never touch A's
+  assert.equal((await call('GET', '/api/documents/doc-1', { token: tokens.b })).status, 404);
+  assert.equal((await call('PUT', '/api/documents/doc-1', { token: tokens.b, body: { data: 'data-b' } })).status, 200);
+  assert.equal((await call('GET', '/api/documents/doc-1', { token: tokens.b })).body.data, 'data-b');
+  assert.equal((await call('GET', '/api/documents/doc-1', { token: tokens.a })).body.data, 'data-a');
+  assert.equal((await call('DELETE', '/api/documents/doc-1', { token: tokens.b })).status, 200);
+  assert.equal((await call('GET', '/api/documents/doc-1', { token: tokens.b })).status, 404);
+  // A's data is untouched
+  assert.equal((await call('GET', '/api/students/STU-1', { token: tokens.a })).body.name, 'Alice');
+  assert.equal((await call('GET', '/api/payments/REC-1', { token: tokens.a })).status, 200);
+  assert.equal((await call('GET', '/api/documents/doc-1', { token: tokens.a })).body.data, 'data-a');
+});
+
 test('settings are per library and libraryId is forced', async () => {
   await call('PUT', '/api/settings', { token: tokens.a, body: { name: 'A Settings', libraryId: 'lib-b' } });
   assert.equal((await call('GET', '/api/settings', { token: tokens.a })).body.libraryId, 'lib-a');
+  assert.equal((await call('GET', '/api/settings', { token: tokens.a })).body.tenantId, undefined);
   const sb = (await call('GET', '/api/settings', { token: tokens.b })).body;
   assert.ok(!sb || sb.name !== 'A Settings');
 });
@@ -100,8 +129,9 @@ test('client admin user management is scoped to own library', async () => {
   assert.equal(r.status, 201);
   assert.equal(r.body.user.role, 'staff'); // cannot escalate
   assert.equal(r.body.user.libraryId, 'lib-a');
+  assert.equal(r.body.user.tenantId, 'lib-a');
   const listB = (await call('GET', '/api/users', { token: tokens.b })).body;
-  assert.ok(listB.every(u => u.libraryId === 'lib-b'));
+  assert.ok(listB.every(u => u.libraryId === 'lib-b' && u.tenantId === 'lib-b'));
   assert.equal((await call('PATCH', `/api/users/${r.body.user.id}`, { token: tokens.b, body: { status: 'Disabled' } })).status, 404);
 });
 
@@ -120,13 +150,26 @@ test('super admin sees aggregate metrics', async () => {
   assert.equal(libs[0].admins.length, 1);
 });
 
-test('super admin drill-in: requires X-Library-Id, read-only blocks writes', async () => {
+test('super admin drill-in: requires X-Library-Id, rejects unknown tenants, read-only blocks writes', async () => {
   assert.equal((await call('GET', '/api/students', { token: tokens.sa })).status, 400);
+  assert.equal((await call('GET', '/api/students', { token: tokens.sa, headers: { 'X-Library-Id': 'lib-does-not-exist' } })).status, 404);
   const ro = { 'X-Library-Id': 'lib-a', 'X-Read-Only': '1' };
-  assert.equal((await call('GET', '/api/students', { token: tokens.sa, headers: ro })).body.length, 1);
+  assert.equal((await call('GET', '/api/students', { token: tokens.sa, headers: ro })).body.length, 2);
   assert.equal((await call('PUT', '/api/students/STU-1', { token: tokens.sa, headers: ro, body: { name: 'x' } })).status, 403);
   const rw = { 'X-Library-Id': 'lib-a' };
   assert.equal((await call('PUT', '/api/students/STU-1', { token: tokens.sa, headers: rw, body: { phone: '123' } })).status, 200);
+});
+
+test('a token whose tenantId claim does not match the DB account is rejected', async () => {
+  const decoded = jwt.decode(tokens.a);
+  const forged = jwt.sign({ ...decoded, tenantId: 'lib-b', libraryId: 'lib-b' }, 'test-secret');
+  assert.equal((await call('GET', '/api/students', { token: forged })).status, 401);
+  assert.equal((await call('GET', '/api/auth/me', { token: forged })).status, 401);
+  // JWT for a superadmin with no tenant claim still works
+  const superDecoded = jwt.decode(tokens.sa);
+  assert.equal(superDecoded.tenantId, null);
+  assert.equal((await call('GET', '/api/admin/libraries', { token: tokens.sa })).status, 200);
+  assert.equal(superAdminId, superDecoded.sub);
 });
 
 test('disabling a library locks out its users immediately', async () => {

@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import { Library, User, models } from './models.js';
+import { Library, User, models, isPlatformRole } from './models.js';
 
 export const generatePassword = (len = 20) => {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#%^*-_';
@@ -42,7 +42,7 @@ export async function createUser({ email, name, role, tenantId, libraryId, staff
   if (password && !validatePassword(password)) throw Object.assign(new Error('Password must be at least 8 characters'), { status: 400 });
   const generatedPassword = !password && gen ? generatePassword() : null;
   const pw = password || generatedPassword;
-  const tid = role === 'superadmin' ? undefined : (tenantId || libraryId);
+  const tid = isPlatformRole(role) ? undefined : (tenantId || libraryId);
   const user = await User.create({
     email, name: name || '', role, tenantId: tid, libraryId: tid, staffId,
     passwordHash: pw ? await hashPassword(pw) : undefined,

@@ -21,6 +21,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { AuthProvider, useAuth, prepareLocalCacheFor } from './auth/AuthContext';
 import { LoginScreen } from './auth/LoginScreen';
 import { SuperAdminDashboard } from './auth/SuperAdminDashboard';
+import { PartnerPortal } from './auth/PartnerPortal';
 import { setTenantContext } from './utils/api';
 
 const pageVariants = {
@@ -234,7 +235,7 @@ const SessionBar = ({ libraryName, readOnly, onBack, isOffline = false, onSwitch
           </button>
         ) : (
           <>
-            <span><span className="session-email">{user?.email} · </span>{user?.role === 'superadmin' ? 'Super Admin' : user?.role === 'client_admin' ? 'Client Admin' : 'Staff'}</span>
+            <span><span className="session-email">{user?.email} · </span>{user?.role === 'superadmin' ? 'Super Admin' : user?.role === 'client_admin' ? 'Client Admin' : user?.role === 'partner' ? 'Partner' : user?.role === 'agent' ? 'Agent' : 'Staff'}</span>
             <button className="btn btn-ghost btn-sm" onClick={logout} style={{ color: 'inherit' }}><LogOut size={14} /> <span>Sign out</span></button>
           </>
         )}
@@ -322,6 +323,20 @@ const RoleRouter = () => {
       );
     }
     return <SuperAdminDashboard onOpenLibrary={(lib, readOnly) => setDrill({ library: lib, readOnly })} />;
+  }
+
+  if (user.role === 'partner' || user.role === 'agent') {
+    if (drill) {
+      return (
+        <LibraryWorkspace
+          libraryId={drill.library.libraryId}
+          libraryName={drill.library.name}
+          readOnly
+          onBack={() => { setTenantContext({}); setDrill(null); }}
+        />
+      );
+    }
+    return <PartnerPortal onOpenLibrary={(lib) => setDrill({ library: lib, readOnly: true })} />;
   }
 
   return (

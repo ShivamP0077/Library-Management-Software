@@ -7,7 +7,7 @@ import crypto from 'crypto';
 import mongoose from 'mongoose';
 import express from 'express';
 import bcrypt from 'bcryptjs';
-import { User, Library } from './models.js';
+import { User, Library, isPlatformRole } from './models.js';
 import { hashPassword, validatePassword } from './services.js';
 import { sendMail } from './mailer.js';
 import { audit, AuditLog, pubAudit } from './audit.js';
@@ -99,7 +99,7 @@ export function createPublicAccountRouter({ issueSession }) {
     if (rateLimited(`fp:${email}`, 1, 60e3)) return res.status(429).json({ error: 'Please wait a minute before requesting another code.' });
     const user = await User.findOne({ email }).lean();
     if (!user || user.status !== 'Active') return res.json(generic); // disabled accounts cannot recover
-    if (user.role !== 'superadmin') {
+    if (!isPlatformRole(user.role)) {
       const lib = await Library.findOne({ libraryId: user.tenantId || user.libraryId }).lean();
       if (!lib || lib.status !== 'Active') return res.json(generic);
     }
@@ -188,13 +188,13 @@ export function createTenantAccountRouter() {
 /** Super Admin Access Library is audited: once per session-hour on reads, every write. */
 const seen = new Map();
 export function auditSuperadminAccess(req, _res, next) {
-  if (req.user?.role === 'superadmin' && req.tenantId) {
+  if (['superadmin', 'partner', 'agent'].includes(req.user?.role) && req.tenantId) {
     const write = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
     const key = `${req.user.id}:${req.tenantId}`;
     const last = seen.get(key) || 0;
     if (write || Date.now() - last > 3600e3) {
       if (!write) seen.set(key, Date.now());
-      audit(req, write ? 'superadmin.library_write' : 'superadmin.library_access', { target: `${req.method} ${req.baseUrl}${req.path}`, reason: req.get('X-Access-Reason') || undefined, detail: { readOnly: !!req.readOnly } });
+      audit(req, `${req.user.role}.${write ? 'library_write' : 'library_access'}`, { target: `${req.method} ${req.baseUrl}${req.path}`, reason: req.get('X-Access-Reason') || undefined, detail: { readOnly: !!req.readOnly } });
     }
   }
   next();

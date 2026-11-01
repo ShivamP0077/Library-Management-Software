@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
-import { COLLECTIONS, models, Settings, StudentDocument, Library, User, keyOf, clean } from './models.js';
+import { COLLECTIONS, models, Settings, StudentDocument, Library, User, keyOf, clean, isPlatformRole } from './models.js';
 import { signToken, requireAuth, requireRole, tenantScope } from './auth.js';
 import { createLibrary, createUser, computeMetrics, hashPassword, validatePassword } from './services.js';
 import { verifyGoogleIdToken, googleEnabled, googleConfig, buildAuthUrl, exchangeCode } from './google.js';
@@ -12,6 +12,7 @@ import { createStudentRouter, recordStudentDiff, recordArchiveDiff, checkCapacit
 import { audit } from './audit.js';
 import { createNotificationRouter } from './notifications.js';
 import { createInsightsRouter } from './insights.js';
+import { createPartnerAdminRouter, createPartnerPortalRouter } from './partners.js';
 import { createReminderRouter, autoSendReceipts } from './reminders.js';
 
 // Auto-receipts never block or fail the save; in tests we await so results are observable.
@@ -48,7 +49,7 @@ async function resolveSession(user) {
     return { denial: { status: 403, code: 'account_disabled', message: 'Account is disabled' } };
   }
   let library = null;
-  if (user.role !== 'superadmin') {
+  if (!isPlatformRole(user.role)) {
     library = await Library.findOne({ libraryId: tenantOfUser(user) }).lean();
     if (!library || library.status !== 'Active') {
       return { denial: { status: 403, code: 'library_disabled', message: 'Library is disabled' } };
@@ -220,6 +221,7 @@ const admin = express.Router();
 admin.use(requireRole('superadmin'));
 
 admin.use(createInsightsRouter());
+admin.use(createPartnerAdminRouter());
 
 admin.get('/libraries', wrap(async (_req, res) => {
   const libs = await Library.find().sort({ createdAt: 1 }).lean();
@@ -297,6 +299,7 @@ admin.get('/audit-logs', wrap(async (req, res) => {
 }));
 
 router.use('/admin', admin);
+router.use('/partner', createPartnerPortalRouter());
 
 // ---------------------------------------------------------------- Tenant data (scoped)
 const tenant = express.Router();

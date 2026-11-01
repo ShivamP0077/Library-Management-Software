@@ -8,6 +8,8 @@ import { createLibrary, createUser, computeMetrics, hashPassword, validatePasswo
 import { verifyGoogleIdToken, googleEnabled, googleConfig, buildAuthUrl, exchangeCode } from './google.js';
 import { createWhatsappRouter } from './whatsapp.js';
 import { createFinanceRouter, validatePaymentBatch } from './finance.js';
+import { createStudentRouter, recordStudentDiff, recordArchiveDiff, checkCapacity } from './students.js';
+import { audit } from './audit.js';
 import { createSeatRouter, reconcileStudents, releaseForStudents, validateSeatSync, SeatAllocation, seatMatchesAllocation, SeatConflictError } from './seats.js';
 
 const router = express.Router();
@@ -232,6 +234,8 @@ admin.patch('/libraries/:libraryId', wrap(async (req, res) => {
   if (req.body?.name) set.name = String(req.body.name).trim();
   if (req.body?.status) { if (!['Active', 'Disabled'].includes(req.body.status)) return res.status(400).json({ error: 'Invalid status' }); set.status = req.body.status; }
   if (req.body?.contactEmail !== undefined) set.contactEmail = req.body.contactEmail;
+  if (req.body?.studentLimit !== undefined) { const n = req.body.studentLimit === null ? null : Number(req.body.studentLimit); if (n !== null && !(n >= 0)) return res.status(400).json({ error: 'Invalid studentLimit' }); set.studentLimit = n || null; }
+  await audit(req, 'library.update', { tenantId: req.params.libraryId, target: req.params.libraryId, detail: set });
   const lib = await Library.findOneAndUpdate({ libraryId: req.params.libraryId }, { $set: set }, { new: true, lean: true });
   lib ? res.json({ libraryId: lib.libraryId, name: lib.name, status: lib.status }) : res.status(404).json({ error: 'Library not found' });
 }));
@@ -332,6 +336,7 @@ tenant.delete('/documents/:key', wrap(async (req, res) => {
 
 tenant.use(createSeatRouter());
 tenant.use(createFinanceRouter());
+tenant.use(createStudentRouter());
 
 // Generic REST for each entity collection, always filtered by req.tenantId
 const colParam = (req, res, next) => {
@@ -356,9 +361,14 @@ tenant.post('/:col', colParam, wrap(async (req, res) => {
   const _key = keyOf(req.params.col, body);
   if (!_key) return res.status(400).json({ error: `Missing key field (${COLLECTIONS[req.params.col].keys.join(' or ')})` });
   if (await req.Model.exists({ tenantId: req.tenantId, _key })) return res.status(409).json({ error: 'Already exists' });
-  if (req.params.col === 'students') await reconcileStudents(req.tenantId, [body], { actor: req.user.email });
+  if (req.params.col === 'students') {
+    const n = await req.Model.countDocuments({ tenantId: req.tenantId });
+    await checkCapacity(req.tenantId, n + 1, n);
+    await reconcileStudents(req.tenantId, [body], { actor: req.user.email });
+  }
   if (req.params.col === 'payments') validatePaymentBatch([body]);
   const d = await req.Model.create({ ...body, _key, tenantId: req.tenantId, libraryId: req.tenantId });
+  if (req.params.col === 'students') await recordStudentDiff(req.tenantId, new Map(), [{ ...body, id: _key }], req.user.email);
   res.status(201).json(clean(d));
 }));
 
@@ -368,6 +378,7 @@ tenant.put('/:col/:key', colParam, wrap(async (req, res) => {
     if (!prev) return res.status(404).json({ error: 'Not found' });
     const merged = { ...clean(prev), ...stripMeta(req.body), id: prev.id ?? req.params.key };
     await reconcileStudents(req.tenantId, [merged], { actor: req.user.email, previous: new Map([[String(merged.id), prev]]) });
+    await recordStudentDiff(req.tenantId, new Map([[String(merged.id), prev]]), [merged], req.user.email);
   }
   if (req.params.col === 'payments') {
     const prev = await req.Model.findOne({ tenantId: req.tenantId, _key: req.params.key }).lean();
@@ -384,6 +395,7 @@ tenant.delete('/:col/:key', colParam, wrap(async (req, res) => {
     if (held) throw new SeatConflictError(`Seat ${seat.name} has an active student. Move the student to another seat before removing it.`, { seatNo: seat.name });
   }
   if (req.params.col === 'students') await releaseForStudents(req.tenantId, [req.params.key]);
+  if (req.params.col === 'archivedStudents') return res.status(400).json({ error: 'Use DELETE /archived-students/:id with confirmation', code: 'confirmation_required' });
   const r = await req.Model.deleteOne({ tenantId: req.tenantId, _key: req.params.key });
   r.deletedCount ? res.json({ ok: true }) : res.status(404).json({ error: 'Not found' });
 }));
@@ -393,6 +405,7 @@ tenant.delete('/:col/:key', colParam, wrap(async (req, res) => {
 tenant.put('/:col', colParam, wrap(async (req, res) => {
   if (!Array.isArray(req.body)) return res.status(400).json({ error: 'Body must be an array' });
   const col = req.params.col;
+  const prevArchived = col === 'archivedStudents' ? await req.Model.find({ tenantId: req.tenantId }).lean() : null;
   if (col === 'seats') await validateSeatSync(req.tenantId, req.body.map(stripMeta));
   if (col === 'payments') {
     const prevDocs = await req.Model.find({ tenantId: req.tenantId }).lean();
@@ -402,7 +415,9 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
     const prevDocs = await req.Model.find({ tenantId: req.tenantId }).lean();
     const previous = new Map(prevDocs.map(d => [String(d._key), d]));
     const incoming = req.body.map(stripMeta).filter(b => keyOf(col, b));
+    await checkCapacity(req.tenantId, new Set(incoming.map(b => keyOf(col, b))).size, prevDocs.length);
     await reconcileStudents(req.tenantId, incoming, { actor: req.user.email, previous });
+    req.studentDiff = { previous, incoming };
     const keep = new Set(incoming.map(b => keyOf(col, b)));
     await releaseForStudents(req.tenantId, prevDocs.map(d => d._key).filter(k => !keep.has(k)));
   }
@@ -417,6 +432,8 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
   });
   if (ops.length) await req.Model.bulkWrite(ops, { ordered: false });
   const del = await req.Model.deleteMany({ tenantId: req.tenantId, _key: { $nin: [...seen] } });
+  if (req.studentDiff) await recordStudentDiff(req.tenantId, req.studentDiff.previous, req.studentDiff.incoming, req.user.email);
+  if (prevArchived) await recordArchiveDiff(req, prevArchived, req.body.map(stripMeta).filter(b => keyOf(col, b)));
   res.json({ ok: true, upserted: ops.length, deleted: del.deletedCount });
 }));
 

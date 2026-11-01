@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useLibrary } from '../context/LibraryContext';
 import { 
   Building2, 
@@ -11,7 +12,9 @@ import {
   Receipt, 
   BarChart3, 
   Settings,
-  ShieldCheck
+  ShieldCheck,
+  Menu,
+  X
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { RefreshButton } from './RefreshButton';
@@ -43,22 +46,36 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
     return hasPermission(t.id, 'view');
   });
 
+  // Mobile: hamburger drawer (all tabs + switchers) and a bottom tab bar for primary tabs
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  useEffect(() => { setDrawerOpen(false); }, [activeTab]);
+  const primaryMobileTabs = visibleTabs.filter(t => ['dashboard', 'students', 'seats', 'payments'].includes(t.id));
+
   return (
     <header className="glass-panel" style={{ position: 'sticky', top: 0, zIndex: 100 }}>
       {/* Top Bar: Brand, Branch & Staff Switcher */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.875rem 1.5rem', borderBottom: '1px solid var(--border-color)' }}>
         
         {/* Brand */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div className="header-brand" style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+          <button
+            id="mobile-nav-toggle"
+            className="mobile-only icon-btn"
+            aria-label={drawerOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={drawerOpen}
+            onClick={() => setDrawerOpen(o => !o)}
+          >
+            {drawerOpen ? <X size={20} /> : <Menu size={20} />}
+          </button>
           <div style={{ fontSize: '28px', lineHeight: 1 }}>{settings.logo}</div>
-          <div>
-            <h1 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>{settings.name}</h1>
+          <div style={{ minWidth: 0 }}>
+            <h1 className="header-title" style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>{settings.name}</h1>
             <p style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>Library Management OS</p>
           </div>
         </div>
 
         {/* Right Controls: Branch Switcher, Staff Switcher, New Student CTA */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+        <div className={`header-controls ${drawerOpen ? 'drawer-open' : ''}`} style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
           
           {/* Branch Selector */}
           {branches.length > 1 && (
@@ -110,7 +127,7 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
       </div>
 
       {/* Main Navigation Bar */}
-      <nav style={{ display: 'flex', gap: '4px', padding: '0 24px', overflowX: 'auto', position: 'relative' }}>
+      <nav className={`header-nav ${drawerOpen ? 'drawer-open' : ''}`} style={{ display: 'flex', gap: '4px', padding: '0 24px', overflowX: 'auto', position: 'relative' }}>
         {visibleTabs.map(t => {
           const Icon = t.icon;
           const isActive = activeTab === t.id;
@@ -157,6 +174,26 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
           );
         })}
       </nav>
+
+      {/* Rendered into <body>: the glass header's backdrop-filter would otherwise trap position:fixed */}
+      {drawerOpen && createPortal(<div className="mobile-drawer-backdrop mobile-only" onClick={() => setDrawerOpen(false)} />, document.body)}
+
+      {/* Mobile bottom tab bar */}
+      {createPortal(<nav className="mobile-bottom-nav mobile-only" aria-label="Primary">
+        {primaryMobileTabs.map(t => {
+          const Icon = t.icon;
+          return (
+            <button key={t.id} id={`bottom-tab-${t.id}`} className={activeTab === t.id ? 'active' : ''} onClick={() => setActiveTab(t.id)}>
+              <Icon size={20} />
+              <span>{t.label.split(' ')[0]}</span>
+            </button>
+          );
+        })}
+        <button className={drawerOpen ? 'active' : ''} onClick={() => setDrawerOpen(o => !o)} aria-label="More">
+          <Menu size={20} />
+          <span>More</span>
+        </button>
+      </nav>, document.body)}
     </header>
   );
 };

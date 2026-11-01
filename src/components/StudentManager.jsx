@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useLibrary } from '../context/LibraryContext';
 import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  Search, UserPlus, Phone, MapPin, History, Edit, RefreshCw, 
-  ArrowRightLeft, CreditCard, FileText, X, CheckCircle, AlertCircle, Trash2, Archive, Download, Clock
+  Search, UserPlus, Users, Phone, MapPin, History, Edit, RefreshCw, 
+  ArrowRightLeft, CreditCard, FileText, X, CheckCircle, AlertCircle, Trash2, Archive, Download, Clock, Building2
 } from 'lucide-react';
+import { ErrorBoundary } from './ErrorBoundary';
 import { NumericInput } from './NumericInput';
 import { ShiftManagerModal } from './Modals/ShiftManagerModal';
 import { StudentExcelViewModal } from './Modals/StudentExcelViewModal';
@@ -14,13 +15,16 @@ import { EditStudentModal } from './Modals/EditStudentModal';
 import { handleSplitAmountChange, handleAddSplitComponent, handleRemoveSplitComponent, validateSplitPayment } from '../utils/splitPaymentUtils';
 import { calculateSubscriptionExpiry, calculateRenewalStartDate, getSubscriptionStatus, formatDate } from '../utils/dateUtils';
 import { getDocumentBlob, saveDocumentBlob } from '../utils/idbStorage';
+import { getCanonicalShifts, matchesShiftFilter, isShiftInPlan, resolveCanonicalShift, normalizeShiftName } from '../utils/shiftUtils';
+import { getPlanBasePrice, getPlanDefaultDuration } from '../utils/pricingCalculator';
+import { areSeatTypesEquivalent } from '../utils/seatTypeUtils';
 
 export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedStudent, setActiveTab, renewActionStudent, setRenewActionStudent, relocateActionStudent, setRelocateActionStudent }) => {
   const { 
-    settings, students, branches, sections, activeBranchId, plans, shifts, seatTypes, 
+    settings, students, branches, sections, activeBranchId, setActiveBranchId, plans, shifts, seatTypes, 
     renewSubscription, changeSeat, addStudentDocument, extendStudentDueDate, archiveStudent, 
     cancelAdmission, cancelRenewalTransaction, getValidDesksList, getAvailableEligibleSeats, 
-    currentStaff, waitingList, removeFromWaitingList, updateWaitingListStatus 
+    currentStaff, waitingList, removeFromWaitingList, updateWaitingListStatus, updateStudentDetails
   } = useLibrary();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -41,20 +45,67 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   const [isRenewModalOpen, setIsRenewModalOpen] = useState(false);
   const [isSeatModalOpen, setIsSeatModalOpen] = useState(false);
 
+  const moreActionsRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (moreActionsRef.current && !moreActionsRef.current.contains(event.target)) {
+        setIsMoreActionsOpen(false);
+      }
+    };
+    if (isMoreActionsOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isMoreActionsOpen]);
+
+  useEffect(() => {
+    if (selectedStudent) {
+      const fresh = students.find(s => s.id === selectedStudent.id);
+      if (fresh && JSON.stringify(fresh) !== JSON.stringify(selectedStudent)) {
+        setSelectedStudent(fresh);
+      }
+    }
+  }, [students, selectedStudent, setSelectedStudent]);
+
+  const canonicalShifts = useMemo(() => {
+    return getCanonicalShifts(shifts);
+  }, [shifts]);
+
+  const availableShifts = useMemo(() => {
+    let list = (shifts || []).filter(sh => sh && sh.active !== false);
+    if (activeBranchId && activeBranchId !== 'all') {
+      list = list.filter(sh => !sh.branchId || sh.branchId === 'all' || sh.branchId === activeBranchId);
+    }
+    return getCanonicalShifts(list);
+  }, [shifts, activeBranchId]);
+
+  useEffect(() => {
+    if (shiftFilter !== 'All') {
+      const exists = availableShifts.some(sh => normalizeShiftName(sh.name) === normalizeShiftName(shiftFilter));
+      if (!exists) {
+        setShiftFilter('All');
+      }
+    }
+  }, [activeBranchId, availableShifts, shiftFilter]);
+
   useEffect(() => {
     if (renewActionStudent) {
       setSelectedStudent(renewActionStudent);
       const currentPlan = plans.find(p => p.id === renewActionStudent.planId) || plans[0];
+      const targetDur = Number(renewActionStudent.durationMonths || 1);
       const pricing = currentPlan?.durationPricing || [];
-      const tier = pricing.find(dp => dp.durationMonths === 1) || pricing[0];
-      const base = tier ? tier.basePrice : (currentPlan?.price || 1500);
+      const tier = pricing.find(dp => Number(dp.durationMonths) === targetDur) || pricing.find(dp => Number(dp.durationMonths) === 1) || pricing[0];
+      const base = tier ? tier.basePrice : getPlanBasePrice(currentPlan, targetDur);
       let disc = 0;
       if (tier?.discountType === 'Percentage') disc = Math.round((base * tier.discountValue) / 100);
       else if (tier?.discountType === 'Fixed') disc = tier.discountValue;
 
       setRenewPlanId(currentPlan?.id || '');
       setRenewAmount(base);
-      setRenewDuration(tier?.durationMonths || 1);
+      setRenewDuration(tier?.durationMonths || targetDur || 1);
       setRenewShiftId(currentPlan?.shiftIds?.[0] || '');
       setRenewDiscount(disc);
       setRenewFine(0);
@@ -177,7 +228,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     }
   };
 
-  const handleAttachDocumentToStudent = (e) => {
+  const handleAttachDocumentToStudent = (e, customDocName = null) => {
     const file = e.target.files?.[0];
     if (!file || !selectedStudent) return;
     const reader = new FileReader();
@@ -186,27 +237,74 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
         const base64Data = ev.target.result;
         const storageKey = `doc_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
         await saveDocumentBlob(storageKey, base64Data);
+        const docName = customDocName || file.name.split('.')[0] || "Student ID";
         const docObj = {
           id: storageKey,
-          name: file.name.split('.')[0] || "Student ID",
+          name: docName,
           fileName: file.name,
           fileType: file.type,
           storageKey,
-          uploadedAt: new Date().toISOString()
+          uploadedAt: new Date().toISOString(),
+          status: 'Submitted'
         };
         addStudentDocument(selectedStudent.id, docObj);
+
+        const existingDocs = selectedStudent.documents || [];
+        const filteredDocs = existingDocs.filter(d => (d.name || d.fileName) !== docName);
+        const updatedDocs = [...filteredDocs, docObj];
+
+        const updatedDocStatuses = {
+          ...(selectedStudent.documentStatuses || {}),
+          [docName]: 'Submitted'
+        };
+
+        if (updateStudentDetails) {
+          updateStudentDetails(selectedStudent.id, {
+            documents: updatedDocs,
+            documentStatuses: updatedDocStatuses
+          });
+        }
+
         setSelectedStudent(prev => ({
           ...prev,
-          documents: [...(prev.documents || []), docObj],
-          idProofStatus: "Verified"
+          documents: updatedDocs,
+          documentStatuses: updatedDocStatuses
         }));
-        toast.success(`Attached ${file.name}`);
+        toast.success(`Attached ${file.name} for ${docName}`);
       } catch (err) {
         console.error('Attach doc failed:', err);
         toast.error('Failed to attach document.');
       }
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleUpdateDocStatus = (docTypeName, newStatus) => {
+    if (!selectedStudent) return;
+    const updatedDocStatuses = {
+      ...(selectedStudent.documentStatuses || {}),
+      [docTypeName]: newStatus
+    };
+
+    const activeReqDocs = (settings?.documentTypes || []).filter(d => d.active !== false && d.requirement === 'Required');
+    const allReqVerified = activeReqDocs.length > 0 && activeReqDocs.every(d => updatedDocStatuses[d.name] === 'Verified');
+    const anyReqMissing = activeReqDocs.some(d => updatedDocStatuses[d.name] === 'Not Submitted' || !updatedDocStatuses[d.name]);
+
+    const newIdProofStatus = allReqVerified ? 'Verified' : (anyReqMissing ? 'Pending' : (selectedStudent.idProofStatus || 'Pending'));
+
+    if (updateStudentDetails) {
+      updateStudentDetails(selectedStudent.id, {
+        documentStatuses: updatedDocStatuses,
+        idProofStatus: newIdProofStatus
+      });
+    }
+
+    setSelectedStudent(prev => ({
+      ...prev,
+      documentStatuses: updatedDocStatuses,
+      idProofStatus: newIdProofStatus
+    }));
+    toast.success(`Status for "${docTypeName}" updated to ${newStatus}`);
   };
 
   const handleCloseSeatModal = () => {
@@ -235,7 +333,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       if (s.status !== statusFilter) return false;
     }
 
-    if (shiftFilter !== 'All' && s.shiftId !== shiftFilter) return false;
+    if (shiftFilter !== 'All' && !matchesShiftFilter(shifts, s, shiftFilter)) return false;
     if (searchQuery) {
       const q = searchQuery.toLowerCase().trim();
       const normalizeSeat = (seat) => {
@@ -249,10 +347,10 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       const matchesSeat = normSeat.startsWith(normQ);
       
       const isShortSeatPrefix = /^[a-z]{1,2}\s*-?\s*\d{1,2}$/.test(q);
-      const matchesId = isShortSeatPrefix ? false : s.id.toLowerCase().includes(q);
+      const matchesId = isShortSeatPrefix ? false : (s.id || '').toLowerCase().includes(q);
       
-      const matchesName = s.name.toLowerCase().includes(q);
-      const matchesPhone = s.phone.includes(q);
+      const matchesName = (s.name || '').toLowerCase().includes(q);
+      const matchesPhone = (s.phone || '').includes(q);
 
       return matchesName || matchesId || matchesPhone || matchesSeat;
     }
@@ -264,16 +362,17 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   const handleOpenRenewModal = () => {
     if (!selectedStudent) return;
     const currentPlan = plans.find(p => p.id === selectedStudent.planId) || plans[0];
+    const targetDur = Number(selectedStudent.durationMonths || 1);
     const pricing = currentPlan?.durationPricing || [];
-    const tier = pricing.find(dp => dp.durationMonths === 1) || pricing[0];
-    const base = tier ? tier.basePrice : (currentPlan?.price || 1500);
+    const tier = pricing.find(dp => Number(dp.durationMonths) === targetDur) || pricing.find(dp => Number(dp.durationMonths) === 1) || pricing[0];
+    const base = tier ? tier.basePrice : getPlanBasePrice(currentPlan, targetDur);
     let disc = 0;
     if (tier?.discountType === 'Percentage') disc = Math.round((base * tier.discountValue) / 100);
     else if (tier?.discountType === 'Fixed') disc = tier.discountValue;
 
     setRenewPlanId(currentPlan?.id || '');
     setRenewAmount(base);
-    setRenewDuration(tier?.durationMonths || 1);
+    setRenewDuration(tier?.durationMonths || targetDur || 1);
     setRenewShiftId(selectedStudent.shiftId || currentPlan?.shiftIds?.[0] || '');
     setRenewDiscount(disc);
     setRenewFine(0);
@@ -312,6 +411,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       planName: `${plan.name} (${renewDuration} Month)`,
       shiftId: renewShiftId || plan.shiftIds?.[0] || selectedStudent.shiftId,
       shift: shifts.find(sh => sh.id === (renewShiftId || plan.shiftIds?.[0]))?.name || selectedStudent.shift,
+      durationMonths: Number(renewDuration || 1),
       startDate: startStr,
       expiryDate: expiryStr,
       amountPaid: renewAmount,
@@ -414,7 +514,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       let appliedAmount = renewAmount;
       if (renewPlanId === 'keep_existing') {
         planToApply = plans.find(p => p.id === s.planId) || plans[0];
-        appliedAmount = planToApply ? planToApply.price : renewAmount;
+        appliedAmount = planToApply ? getPlanBasePrice(planToApply, renewDuration) : renewAmount;
       } else {
         planToApply = plans.find(p => p.id === renewPlanId) || plans[0];
       }
@@ -426,6 +526,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
         planName: `${planToApply.name} (${renewDuration} Month)`,
         shiftId: renewShiftId || planToApply.shiftId,
         shift: shifts.find(sh => sh.id === (renewShiftId || planToApply.shiftId))?.name || planToApply.shift,
+        durationMonths: Number(renewDuration || 1),
         startDate: startDateStr,
         expiryDate: expiryDateStr,
         amountPaid: appliedAmount,
@@ -506,7 +607,8 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   };
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+    <ErrorBoundary componentName="Student Records">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
@@ -523,7 +625,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
           </button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-          <div style={{ position: 'relative', display: 'inline-block' }} onMouseLeave={() => setIsMoreActionsOpen(false)}>
+          <div ref={moreActionsRef} style={{ position: 'relative', display: 'inline-block' }}>
             <button className="btn btn-secondary" style={{ padding: '8px 12px', fontWeight: 800, fontSize: '18px', background: 'var(--brand-primary)', color: '#fff', border: 'none' }} onClick={() => setIsMoreActionsOpen(!isMoreActionsOpen)}>
               ⋮
             </button>
@@ -553,7 +655,8 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       {viewMode === 'active' && (
       <>
       {/* Filters Toolbar */}
-      <div className="premium-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '16px' }}>
+      <div className="premium-card" style={{ display: 'flex', flexDirection: 'column', gap: '14px', padding: '16px' }}>
+        {/* Top Search & Status Row */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', width: '100%' }}>
           <div style={{ flex: 1, minWidth: '240px', position: 'relative' }}>
             <Search size={16} color="var(--text-tertiary)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
@@ -574,25 +677,209 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
               <option value="Pending ID Proof">Pending ID Proof</option>
             </select>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <div style={{ width: '160px' }}>
-              <select className="form-select" value={shiftFilter} onChange={(e) => {
-                if (e.target.value === 'manage_shifts') {
-                  setIsShiftModalOpen(true);
-                } else {
-                  setShiftFilter(e.target.value);
-                }
-              }}>
-                <option value="All">All Shifts</option>
-                {shifts.map(sh => <option key={sh.id} value={sh.id}>{sh.name}</option>)}
-                <option disabled>────────</option>
-                <option value="manage_shifts">⚙ Manage Shifts</option>
-              </select>
+        </div>
+
+        {/* Scrollable Branch Selector */}
+        {branches && branches.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-secondary)', fontSize: '12px', fontWeight: 600, flexShrink: 0 }}>
+              <Building2 size={15} />
+              <span>Branch:</span>
             </div>
+            <div 
+              style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '8px', 
+                overflowX: 'auto', 
+                padding: '2px 0 4px 0', 
+                scrollbarWidth: 'none', 
+                msOverflowStyle: 'none',
+                WebkitOverflowScrolling: 'touch',
+                flex: 1
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setActiveBranchId && setActiveBranchId('all')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '5px 12px',
+                  borderRadius: '20px',
+                  fontSize: '12px',
+                  fontWeight: activeBranchId === 'all' ? 700 : 500,
+                  cursor: 'pointer',
+                  border: activeBranchId === 'all' ? '1px solid var(--brand-primary, #000)' : '1px solid var(--border-light, #e2e8f0)',
+                  background: activeBranchId === 'all' ? 'var(--brand-primary, #000)' : '#f8fafc',
+                  color: activeBranchId === 'all' ? '#fff' : 'var(--text-secondary, #475569)',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0,
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <span>🏢 All Branches</span>
+                <span style={{ 
+                  fontSize: '10px', 
+                  padding: '1px 6px', 
+                  borderRadius: '10px', 
+                  background: activeBranchId === 'all' ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.06)',
+                  color: activeBranchId === 'all' ? '#fff' : 'var(--text-secondary)'
+                }}>
+                  {students.length}
+                </span>
+              </button>
+
+              {branches.map(b => {
+                const isSelected = activeBranchId === b.id;
+                const branchStudentCount = students.filter(s => s.branchId === b.id).length;
+                return (
+                  <button
+                    key={b.id}
+                    type="button"
+                    onClick={() => setActiveBranchId && setActiveBranchId(b.id)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '5px 12px',
+                      borderRadius: '20px',
+                      fontSize: '12px',
+                      fontWeight: isSelected ? 700 : 500,
+                      cursor: 'pointer',
+                      border: isSelected ? '1px solid var(--brand-primary, #000)' : '1px solid var(--border-light, #e2e8f0)',
+                      background: isSelected ? 'var(--brand-primary, #000)' : '#f8fafc',
+                      color: isSelected ? '#fff' : 'var(--text-secondary, #475569)',
+                      whiteSpace: 'nowrap',
+                      flexShrink: 0,
+                      transition: 'all 0.15s ease'
+                    }}
+                  >
+                    <span>📍 {b.name}</span>
+                    <span style={{ 
+                      fontSize: '10px', 
+                      padding: '1px 6px', 
+                      borderRadius: '10px', 
+                      background: isSelected ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.06)',
+                      color: isSelected ? '#fff' : 'var(--text-secondary)'
+                    }}>
+                      {branchStudentCount}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Scrollable Shift Selector */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', borderTop: '1px solid var(--border-light, #f1f5f9)', paddingTop: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-secondary)', fontSize: '12px', fontWeight: 600, flexShrink: 0 }}>
+            <Clock size={15} />
+            <span>Shift:</span>
+          </div>
+          <div 
+            style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '8px', 
+              overflowX: 'auto', 
+              padding: '2px 0 4px 0', 
+              scrollbarWidth: 'none', 
+              msOverflowStyle: 'none',
+              WebkitOverflowScrolling: 'touch',
+              flex: 1
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setShiftFilter('All')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px',
+                padding: '5px 12px',
+                borderRadius: '20px',
+                fontSize: '12px',
+                fontWeight: shiftFilter === 'All' ? 700 : 500,
+                cursor: 'pointer',
+                border: shiftFilter === 'All' ? '1px solid #2563eb' : '1px solid var(--border-light, #e2e8f0)',
+                background: shiftFilter === 'All' ? '#2563eb' : '#fff',
+                color: shiftFilter === 'All' ? '#fff' : 'var(--text-secondary, #475569)',
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
+                transition: 'all 0.15s ease'
+              }}
+            >
+              All Shifts
+            </button>
+
+            {availableShifts.map(sh => {
+              const isSelected = shiftFilter === sh.name;
+              return (
+                <button
+                  key={sh.id}
+                  type="button"
+                  onClick={() => setShiftFilter(sh.name)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '5px 12px',
+                    borderRadius: '20px',
+                    fontSize: '12px',
+                    fontWeight: isSelected ? 700 : 500,
+                    cursor: 'pointer',
+                    border: isSelected ? '1px solid #2563eb' : '1px solid var(--border-light, #e2e8f0)',
+                    background: isSelected ? '#2563eb' : '#fff',
+                    color: isSelected ? '#fff' : 'var(--text-secondary, #475569)',
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  <span>{sh.name}</span>
+                  {sh.startTime && sh.endTime && (
+                    <span style={{ 
+                      fontSize: '10px', 
+                      opacity: isSelected ? 0.9 : 0.65,
+                      fontWeight: 400
+                    }}>
+                      {sh.startTime}–{sh.endTime}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+
+            <button
+              type="button"
+              onClick={() => setIsShiftModalOpen(true)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                padding: '5px 10px',
+                borderRadius: '20px',
+                fontSize: '11px',
+                fontWeight: 500,
+                cursor: 'pointer',
+                border: '1px dashed var(--border-strong, #cbd5e1)',
+                background: 'transparent',
+                color: 'var(--text-tertiary, #64748b)',
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
+                marginLeft: 'auto'
+              }}
+            >
+              ⚙ Manage
+            </button>
           </div>
         </div>
         
         {/* Bulk Action Bar */}
+
         {isSelectionMode && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', borderTop: '1px solid var(--border-light)', paddingTop: '12px' }}>
             <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)' }}>
@@ -892,37 +1179,55 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
               <div className="modal-header">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                   <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--brand-primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '18px' }}>
-                    {selectedStudent.name.charAt(0)}
+                    {((selectedStudent.name || 'S').charAt(0)).toUpperCase()}
                   </div>
                   <div>
-                    <h3 style={{ fontSize: '20px', fontWeight: 700, letterSpacing: '-0.02em' }}>{selectedStudent.name}</h3>
-                    <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                      {selectedStudent.id} • {selectedStudent.phone} • {selectedStudent.gender || 'Male'}
+                    <h3 style={{ fontSize: '20px', fontWeight: 700, letterSpacing: '-0.02em' }}>{selectedStudent.name || 'Unnamed Student'}</h3>
+                    <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '2px', display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+                      <span>{selectedStudent.id || 'N/A'}</span>
+                      <span>•</span>
+                      <span>Mobile: <strong style={{ color: selectedStudent.phone ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>{selectedStudent.phone || 'N/A'}</strong></span>
+                      <span>•</span>
+                      <span>{selectedStudent.gender || 'Male'}</span>
+                      <span>•</span>
+                      <span>Emergency: <strong style={{ color: selectedStudent.emergencyPhone ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>{selectedStudent.emergencyPhone || 'Not Provided'}</strong></span>
                     </div>
                   </div>
                 </div>
                 <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', color: 'var(--text-secondary)' }} onClick={() => setSelectedStudent(null)}><X size={24} /></button>
               </div>
 
-              <div style={{ padding: '24px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', background: 'var(--bg-main)' }}>
+              <div style={{ padding: '24px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '16px', background: 'var(--bg-main)' }}>
                 <div>
                   <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>ASSIGNED DESK</span>
-                  <div style={{ fontSize: '18px', fontWeight: 700, marginTop: '4px' }}>{selectedStudent.seatNo}</div>
+                  <div style={{ fontSize: '18px', fontWeight: 700, marginTop: '4px' }}>{selectedStudent.seatNo || 'None'}</div>
                 </div>
                 <div>
                   <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>SHIFT</span>
-                  <div style={{ fontSize: '16px', fontWeight: 500, marginTop: '4px' }}>{selectedStudent.shift}</div>
+                  <div style={{ fontSize: '16px', fontWeight: 500, marginTop: '4px' }}>{selectedStudent.shift || 'N/A'}</div>
                 </div>
                 <div>
                   <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>EXPIRY DATE</span>
                   <div style={{ fontSize: '16px', fontWeight: 600, color: selectedStudent.status === 'Expired' ? 'var(--text-primary)' : '#10b981', marginTop: '4px' }}>
-                    {selectedStudent.expiryDate}
+                    {selectedStudent.expiryDate || 'N/A'}
+                  </div>
+                </div>
+                <div>
+                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>STUDENT MOBILE NUMBER</span>
+                  <div style={{ fontSize: '16px', fontWeight: 600, color: selectedStudent.phone ? 'var(--text-primary)' : 'var(--text-tertiary)', marginTop: '4px' }}>
+                    {selectedStudent.phone || 'N/A'}
+                  </div>
+                </div>
+                <div>
+                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>EMERGENCY CONTACT NUMBER</span>
+                  <div style={{ fontSize: '16px', fontWeight: 600, color: selectedStudent.emergencyPhone ? 'var(--text-primary)' : 'var(--text-tertiary)', marginTop: '4px' }}>
+                    {selectedStudent.emergencyPhone || 'Not Provided'}
                   </div>
                 </div>
                 {selectedStudent.idProofStatus === 'Pending' && (
                   <div style={{ gridColumn: '1 / -1', padding: '12px', background: 'var(--bg-warning)', border: '1px solid var(--border-warning)', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <AlertCircle size={16} color="var(--warning-color)" />
-                    <span style={{ fontSize: '13px', color: 'var(--warning-color)', fontWeight: 500 }}>ID Proof Document is pending. Deadline: {selectedStudent.idProofDeadline}</span>
+                    <span style={{ fontSize: '13px', color: 'var(--warning-color)', fontWeight: 500 }}>ID Proof Document is pending. Deadline: {selectedStudent.idProofDeadline || 'N/A'}</span>
                   </div>
                 )}
               </div>
@@ -965,7 +1270,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
               </div>
 
               <div style={{ display: 'flex', borderBottom: '1px solid var(--border-light)', padding: '0 24px' }}>
-                {['history', 'payments', 'documents'].map(tab => (
+                {['history', 'relocations', 'payments', 'documents'].map(tab => (
                   <button key={tab} onClick={() => setActiveDrawerTab(tab)} style={{ 
                     padding: '16px 24px', background: 'transparent', border: 'none', cursor: 'pointer',
                     color: activeDrawerTab === tab ? 'var(--text-primary)' : 'var(--text-secondary)',
@@ -1061,6 +1366,39 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                     })()}
                   </div>
                 )}
+                {activeDrawerTab === 'relocations' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {(!selectedStudent.seatHistory || selectedStudent.seatHistory.length === 0) ? (
+                      <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: '13px', border: '1px dashed var(--border-light)', borderRadius: '8px' }}>
+                        No desk relocation records found for this student.
+                      </div>
+                    ) : (
+                      selectedStudent.seatHistory.map((record, idx) => (
+                        <div key={record.changeId || idx} style={{ padding: '16px', border: '1px solid var(--border-light)', borderRadius: '8px', background: 'var(--bg-surface)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: 600, fontSize: '14px' }}>
+                              <span style={{ background: '#f3f4f6', padding: '4px 10px', borderRadius: '4px' }}>
+                                {record.previousBranchName ? `${record.previousBranchName} (${record.previousSeat || 'None'})` : (record.previousSeat || 'None')}
+                              </span>
+                              <ArrowRightLeft size={16} color="var(--brand-primary)" />
+                              <span style={{ background: 'var(--bg-primary-light, #e0e7ff)', color: 'var(--brand-primary)', padding: '4px 10px', borderRadius: '4px' }}>
+                                {record.newBranchName ? `${record.newBranchName} (${record.newSeat || 'None'})` : (record.newSeat || 'None')}
+                              </span>
+                            </div>
+                            <span style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>{record.date}</span>
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                            <div><strong>Shift:</strong> {record.newShift || record.previousShift || selectedStudent.shift || 'N/A'}</div>
+                            <div><strong>Staff Member:</strong> {record.staffName || 'Admin'}</div>
+                            <div style={{ gridColumn: '1 / -1' }}>
+                              <strong>Relocation Reason:</strong> {record.reason || 'No specific reason provided'}
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
                 {activeDrawerTab === 'payments' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                     {selectedStudent.paymentHistory?.map((pay, idx) => (
@@ -1080,42 +1418,137 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                   </div>
                 )}
                 {activeDrawerTab === 'documents' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                      <span style={{ fontSize: '13px', fontWeight: 600 }}>Attached Verification Documents</span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                      <div>
+                        <h4 style={{ fontSize: '14px', fontWeight: 600, margin: 0 }}>Required Verification Documents</h4>
+                        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0 0' }}>Verification status and compliance checklist</p>
+                      </div>
                       <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
-                        + Add Document
-                        <input type="file" style={{ display: 'none' }} accept="image/*,.pdf" onChange={handleAttachDocumentToStudent} />
+                        + Add Custom Document
+                        <input type="file" style={{ display: 'none' }} accept="image/*,.pdf" onChange={(e) => handleAttachDocumentToStudent(e)} />
                       </label>
                     </div>
-                    {(!selectedStudent.documents || selectedStudent.documents.length === 0) ? (
-                      <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: '13px', border: '1px dashed var(--border-light)', borderRadius: '8px' }}>
-                        No documents attached for this student.
-                      </div>
-                    ) : (
-                      selectedStudent.documents.map((doc, idx) => {
-                        const docObj = typeof doc === 'object' && doc !== null ? doc : { name: String(doc) };
-                        return (
-                          <div key={idx} style={{ padding: '14px 16px', border: '1px solid var(--border-light)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div>
-                              <div style={{ fontWeight: 600, fontSize: '14px' }}>{docObj.name || docObj.fileName || 'Attached ID Document'}</div>
-                              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                                {docObj.fileName ? `${docObj.fileName} • ` : ''}{docObj.uploadedAt ? new Date(docObj.uploadedAt).toLocaleDateString() : 'Verified'}
+
+                    {/* Required Document Types Checklist */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      {(() => {
+                        const configuredTypes = (settings?.documentTypes && settings.documentTypes.length > 0)
+                          ? settings.documentTypes.filter(d => d.active !== false)
+                          : (settings?.allowedDocuments || ['Aadhaar Card', 'Student ID', 'Address Proof', 'Photograph']).map(name => ({ id: name, name, requirement: 'Required' }));
+
+                        const uploadedDocs = selectedStudent.documents || [];
+
+                        return configuredTypes.map((docType) => {
+                          const matchingDoc = uploadedDocs.find(d => 
+                            (d.name && d.name.toLowerCase() === docType.name.toLowerCase()) ||
+                            (d.docTypeId && d.docTypeId === docType.id)
+                          );
+
+                          let currentStatus = selectedStudent.documentStatuses?.[docType.name] || selectedStudent.documentStatuses?.[docType.id];
+                          if (!currentStatus) {
+                            if (matchingDoc) {
+                              currentStatus = matchingDoc.status || (selectedStudent.idProofStatus === 'Verified' ? 'Verified' : 'Submitted');
+                            } else {
+                              currentStatus = 'Not Submitted';
+                            }
+                          }
+
+                          const badgeStyle = currentStatus === 'Verified' 
+                            ? { background: '#dcfce7', color: '#166534', border: '1px solid #bbf7d0' }
+                            : currentStatus === 'Submitted'
+                            ? { background: '#dbeafe', color: '#1e40af', border: '1px solid #bfdbfe' }
+                            : { background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca' };
+
+                          return (
+                            <div key={docType.id || docType.name} style={{ padding: '14px 16px', border: '1px solid var(--border-light)', borderRadius: '8px', background: 'var(--bg-surface)' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                                <div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <span style={{ fontWeight: 600, fontSize: '14px' }}>{docType.name}</span>
+                                    <span style={{ fontSize: '11px', color: 'var(--text-tertiary)', padding: '1px 6px', borderRadius: '4px', background: '#f3f4f6' }}>
+                                      {docType.requirement || 'Required'}
+                                    </span>
+                                  </div>
+                                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                                    {matchingDoc ? (
+                                      <span>File attached: {matchingDoc.fileName || matchingDoc.name} ({matchingDoc.uploadedAt ? new Date(matchingDoc.uploadedAt).toLocaleDateString() : 'Uploaded'})</span>
+                                    ) : (
+                                      <span>No physical file uploaded yet</span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                  <span style={{ fontSize: '12px', fontWeight: 600, padding: '3px 8px', borderRadius: '4px', ...badgeStyle }}>
+                                    {currentStatus === 'Verified' ? '✓ Verified' : currentStatus === 'Submitted' ? 'Submitted' : 'Not Submitted'}
+                                  </span>
+
+                                  <select
+                                    className="form-select"
+                                    style={{ padding: '4px 8px', fontSize: '12px', height: '30px', width: 'auto' }}
+                                    value={currentStatus}
+                                    onChange={(e) => handleUpdateDocStatus(docType.name, e.target.value)}
+                                  >
+                                    <option value="Not Submitted">Not Submitted</option>
+                                    <option value="Submitted">Submitted</option>
+                                    <option value="Verified">Verified</option>
+                                  </select>
+
+                                  {matchingDoc?.storageKey && (
+                                    <button className="btn btn-secondary btn-sm" onClick={() => handleViewDocument(matchingDoc)}>
+                                      View File
+                                    </button>
+                                  )}
+
+                                  <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer', margin: 0, padding: '4px 8px' }}>
+                                    {matchingDoc ? 'Replace' : 'Upload'}
+                                    <input type="file" style={{ display: 'none' }} accept="image/*,.pdf" onChange={(e) => handleAttachDocumentToStudent(e, docType.name)} />
+                                  </label>
+                                </div>
                               </div>
                             </div>
-                            <div>
-                              {docObj.storageKey ? (
-                                <button className="btn btn-secondary btn-sm" onClick={() => handleViewDocument(docObj)}>
-                                  View Document
-                                </button>
-                              ) : (
-                                <span style={{ fontSize: '12px', color: '#10b981', fontWeight: 600 }}>✓ Verified</span>
-                              )}
-                            </div>
+                          );
+                        });
+                      })()}
+                    </div>
+
+                    {/* Additional Uploaded Documents */}
+                    {(() => {
+                      const configuredNames = ((settings?.documentTypes && settings.documentTypes.length > 0)
+                        ? settings.documentTypes
+                        : (settings?.allowedDocuments || []).map(name => ({ name }))).map(d => d.name?.toLowerCase());
+
+                      const extraDocs = (selectedStudent.documents || []).filter(d => 
+                        !configuredNames.includes((d.name || '').toLowerCase())
+                      );
+
+                      if (extraDocs.length === 0) return null;
+
+                      return (
+                        <div style={{ marginTop: '12px' }}>
+                          <h5 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>Other Attachments</h5>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            {extraDocs.map((doc, idx) => {
+                              const docObj = typeof doc === 'object' && doc !== null ? doc : { name: String(doc) };
+                              return (
+                                <div key={idx} style={{ padding: '10px 14px', border: '1px solid var(--border-light)', borderRadius: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <div style={{ fontSize: '13px' }}>
+                                    <strong>{docObj.name || docObj.fileName || 'Attachment'}</strong>
+                                    {docObj.fileName && <span style={{ color: 'var(--text-secondary)', marginLeft: '8px', fontSize: '12px' }}>{docObj.fileName}</span>}
+                                  </div>
+                                  {docObj.storageKey && (
+                                    <button className="btn btn-secondary btn-sm" onClick={() => handleViewDocument(docObj)}>
+                                      View File
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
-                        );
-                      })
-                    )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               </div>
@@ -1146,14 +1579,15 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                       } else {
                         const p = plans.find(plan => plan.id === e.target.value);
                         if (p) {
-                          setRenewAmount(p.price);
-                          setRenewDuration(p.durationMonths || 1);
+                          const defDur = getPlanDefaultDuration(p);
+                          setRenewAmount(getPlanBasePrice(p, defDur));
+                          setRenewDuration(defDur);
                           setRenewShiftId(p.shiftIds?.[0] || p.shiftId || '');
                         }
                       }
                     }}>
                       <option value="keep_existing">Keep Existing Plan</option>
-                      {plans.map(p => <option key={p.id} value={p.id}>{p.name} - ₹{p.price}</option>)}
+                      {plans.map(p => <option key={p.id} value={p.id}>{p.name} - ₹{getPlanBasePrice(p, 1)}</option>)}
                     </select>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
@@ -1167,7 +1601,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                         const newShId = e.target.value;
                         setRenewShiftId(newShId);
                         if (newShId && renewPlanId !== 'keep_existing') {
-                          const p = plans.find(plan => plan.shiftId === newShId);
+                          const p = plans.find(plan => isShiftInPlan(shifts, plan, newShId));
                           if (p) {
                             setRenewPlanId(p.id);
                             setRenewAmount(p.price);
@@ -1176,7 +1610,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                         }
                       }}>
                         <option value="">Linked to Plan</option>
-                        {shifts.map(sh => <option key={sh.id} value={sh.id}>{sh.name}</option>)}
+                        {canonicalShifts.map(sh => <option key={sh.id} value={sh.id}>{sh.name}</option>)}
                       </select>
                     </div>
                     <div className="form-group">
@@ -1217,7 +1651,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                 const validRenewalPlans = plans.filter(p => 
                   p.active !== false &&
                   (!p.branchId || p.branchId === 'all' || p.branchId === selectedStudent.branchId) &&
-                  (!p.seatTypeId || p.seatTypeId === selectedStudent.seatTypeId)
+                  (!p.seatTypeId || p.seatTypeId === selectedStudent.seatTypeId || areSeatTypesEquivalent(seatTypes, p.seatTypeId, selectedStudent.seatTypeId))
                 );
 
                 const handlePlanSelect = (pId) => {
@@ -1226,7 +1660,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                   if (p) {
                     const pricing = p.durationPricing || [];
                     const tier = pricing.find(dp => dp.durationMonths === renewDuration) || pricing[0];
-                    const base = tier ? tier.basePrice : (p.price || 1500);
+                    const base = tier ? tier.basePrice : getPlanBasePrice(p, renewDuration);
                     let disc = 0;
                     if (tier?.discountType === 'Percentage') disc = Math.round((base * tier.discountValue) / 100);
                     else if (tier?.discountType === 'Fixed') disc = tier.discountValue;
@@ -1253,9 +1687,9 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                       return;
                     }
                   }
-                  // Authoritative calculation: unit price * duration
+                  // Authoritative calculation: getPlanBasePrice
                   if (p) {
-                    setRenewAmount((p.price || 0) * numDur);
+                    setRenewAmount(getPlanBasePrice(p, numDur));
                     setRenewDiscount(0);
                   } else {
                     setRenewAmount(0);
@@ -1600,5 +2034,6 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
         onSaveComplete={(updatedStudent) => setSelectedStudent(updatedStudent)}
       />
     </motion.div>
+    </ErrorBoundary>
   );
 };

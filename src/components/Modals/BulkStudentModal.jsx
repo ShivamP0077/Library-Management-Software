@@ -4,6 +4,7 @@ import { X, Users, AlertCircle, Check } from 'lucide-react';
 import { NumericInput } from '../NumericInput';
 import toast from 'react-hot-toast';
 import { calculatePricing } from '../../utils/pricingCalculator';
+import { getCanonicalSeatTypes } from '../../utils/seatTypeUtils';
 
 export const BulkStudentModal = ({ isOpen, onClose }) => {
   const {
@@ -360,8 +361,8 @@ export const BulkStudentModal = ({ isOpen, onClose }) => {
                   className="w-full px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-white"
                 >
                   <option value="all">All Seat Types</option>
-                  {seatTypes.map(st => (
-                    <option key={st.id} value={st.id}>{st.name}</option>
+                  {getCanonicalSeatTypes(seatTypes).map(st => (
+                    <option key={st.id} value={st.id}>{st.name} ({st.allocationMode})</option>
                   ))}
                 </select>
               </div>

@@ -11,7 +11,11 @@ lerna-debug.log*
 .DS_Store
 *.local
 scratch/chrome_test_profile/
+scratch/chrome_inspect_profile_temp/
+scratch/chrome_*/
 scratch/*.png
+scratch/*.mjs
+scratch/inspect_port3003_radhe.js
 
 # Dependencies
 node_modules/

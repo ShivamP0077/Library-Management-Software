@@ -7,6 +7,8 @@ import { calculatePricing } from '../../utils/pricingCalculator';
 import { handleSplitAmountChange, handleAddSplitComponent, handleRemoveSplitComponent, validateSplitPayment } from '../../utils/splitPaymentUtils';
 import { calculateSubscriptionExpiry, formatDate } from '../../utils/dateUtils';
 import { saveDocumentBlob } from '../../utils/idbStorage';
+import { getCanonicalShifts, isShiftInPlan } from '../../utils/shiftUtils';
+import { getCanonicalSeatTypes, areSeatTypesEquivalent } from '../../utils/seatTypeUtils';
 
 export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPayload }) => {
   const { 
@@ -97,13 +99,14 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
 
   // Valid Active Shifts & Plans (filtering out broken/unsynced configurations)
   const validShifts = useMemo(() => {
-    return shifts.filter(sh => {
+    const raw = shifts.filter(sh => {
       if (sh.active === false) return false;
       if (unsyncedShifts.includes(sh.id)) return false;
       if (branchId && branchId !== 'all' && sh.branchId && sh.branchId !== 'all' && sh.branchId !== branchId) return false;
       if (sectionId && sectionId !== 'all' && sh.sectionId && sh.sectionId !== 'all' && sh.sectionId !== sectionId) return false;
       return true;
     });
+    return getCanonicalShifts(raw);
   }, [shifts, unsyncedShifts, branchId, sectionId]);
 
   const validPlans = useMemo(() => {
@@ -116,29 +119,30 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
       
       // In plan-first flow, show all plans for the branch/section. Selecting a plan auto-updates the seat type.
       if (admissionFlow === 'seat-first') {
-        if (seatTypeId && p.seatTypeId && p.seatTypeId !== seatTypeId) return false;
+        if (seatTypeId && p.seatTypeId && p.seatTypeId !== seatTypeId && !areSeatTypesEquivalent(seatTypes, p.seatTypeId, seatTypeId)) return false;
       }
       
       if (shiftId) {
-        if (!p.shiftIds || p.shiftIds.length === 0 || !p.shiftIds.includes(shiftId)) return false;
+        if (!isShiftInPlan(shifts, p, shiftId)) return false;
       }
       return true;
     });
-  }, [plans, branchId, sectionId, seatTypeId, shiftId, admissionFlow]);
+  }, [plans, shifts, seatTypes, branchId, sectionId, seatTypeId, shiftId, admissionFlow]);
 
   const branchSections = useMemo(() => {
     return sections.filter(s => !branchId || branchId === 'all' || !s.branchId || s.branchId === branchId);
   }, [sections, branchId]);
 
   const validSeatTypes = useMemo(() => {
-    return seatTypes.filter(st => {
+    const scoped = seatTypes.filter(st => {
       if (branchId && branchId !== 'all' && st.branchId && st.branchId !== 'all' && st.branchId !== branchId) return false;
       if (sectionId && sectionId !== 'all' && st.sectionId && st.sectionId !== 'all' && st.sectionId !== sectionId) return false;
       return true;
     });
+    return getCanonicalSeatTypes(scoped);
   }, [seatTypes, branchId, sectionId]);
 
-  // Reset form when opened
+  // Reset form ONLY when modal opens or waitlistPayload changes (do not depend on validSeatTypes/branches)
   useEffect(() => {
     if (isOpen) {
       setName(''); setPhone(''); setEmergencyPhone(''); setGender('Male');
@@ -160,7 +164,7 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
       } else {
         setBranchId(defaultB);
         setSectionId(defaultS);
-        setSeatTypeId(validSeatTypes[0]?.id || '');
+        setSeatTypeId('');
         setSeatNo('');
         setPlanId('');
         setShiftId('');
@@ -169,14 +173,38 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
       }
       setDurationMonths(1); setIsManualDuration(false); setDiscountType('None'); setDiscountValue(0); setFine(0);
     }
-  }, [isOpen, branches, sections, seatTypes, validSeatTypes, waitlistPayload]);
+  }, [isOpen, waitlistPayload]);
+
+  // When branchId changes, adapt section, seatType, and plan cleanly without resetting branch
+  const prevBranchRef = React.useRef(branchId);
+  useEffect(() => {
+    if (prevBranchRef.current !== branchId) {
+      prevBranchRef.current = branchId;
+      const validSecs = sections.filter(s => !branchId || branchId === 'all' || !s.branchId || s.branchId === branchId);
+      if (!validSecs.some(s => s.id === sectionId)) {
+        setSectionId(validSecs[0]?.id || '');
+      }
+      setSeatNo('');
+      setPlanId('');
+    }
+  }, [branchId, sections, sectionId]);
+
+  // Auto-sync seatTypeId with validSeatTypes
+  useEffect(() => {
+    if (validSeatTypes.length > 0) {
+      if (!seatTypeId || !validSeatTypes.some(st => st.id === seatTypeId || areSeatTypesEquivalent(seatTypes, st.id, seatTypeId))) {
+        setSeatTypeId(validSeatTypes[0].id);
+      }
+    } else {
+      setSeatTypeId('');
+    }
+  }, [validSeatTypes, seatTypeId, seatTypes]);
 
   // Progressive Defaults: if only 1 branch or 1 section, auto-select
   useEffect(() => {
-    if (branches.length === 1) setBranchId(branches[0].id);
-    if (branchSections.length === 1) setSectionId(branchSections[0].id);
-    if (validSeatTypes.length === 1) setSeatTypeId(validSeatTypes[0].id);
-  }, [branches, branchSections, validSeatTypes]);
+    if (branches.length === 1 && !branchId) setBranchId(branches[0].id);
+    if (branchSections.length === 1 && !sectionId) setSectionId(branchSections[0].id);
+  }, [branches, branchSections, branchId, sectionId]);
 
   // FLOW A: SEAT-FIRST -> When vacant seat & shift selected, auto-match valid plan
   useEffect(() => {
@@ -198,9 +226,9 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
         if (selectedPlan.seatTypeId) setSeatTypeId(selectedPlan.seatTypeId);
         if (selectedPlan.sectionId) setSectionId(selectedPlan.sectionId);
 
-        const applicableShifts = validShifts.filter(sh => selectedPlan.shiftIds?.includes(sh.id));
+        const applicableShifts = validShifts.filter(sh => isShiftInPlan(shifts, selectedPlan, sh.id));
         if (applicableShifts.length > 0) {
-          if (!shiftId || !(selectedPlan.shiftIds || []).includes(shiftId)) {
+          if (!shiftId || !isShiftInPlan(shifts, selectedPlan, shiftId)) {
             setShiftId(applicableShifts[0].id);
           }
         }
@@ -218,55 +246,25 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
     }
   }, [planId, plans, validShifts]);
 
-  // When Duration is changed for current Plan, load that duration's default basePrice and offer
-  const handleDurationChange = (dur, isManual = false) => {
-    // Save raw string to state so typing "2" after clearing works
+  // When Duration is changed for current Plan, recalculate basePrice and discount
+  const handleDurationChange = (dur) => {
     setDurationMonths(dur);
-    setIsManualDuration(isManual);
     const selectedPlan = plans.find(p => p.id === planId);
-    
-    // For calculation, parse strictly. If invalid or empty, use 0 for math temporarily
-    const numDur = dur === '' ? 0 : Number(dur);
+    const numDur = dur === '' ? 1 : Math.max(1, Number(dur) || 1);
 
-    if (isManual) {
-      let unitPrice = 0;
-      if (selectedPlan) {
-        if (selectedPlan.price) {
-          unitPrice = Number(selectedPlan.price);
-        } else if (selectedPlan.durationPricing && selectedPlan.durationPricing.length > 0) {
-          const oneMonth = selectedPlan.durationPricing.find(d => d.durationMonths === 1);
-          if (oneMonth) {
-            unitPrice = Number(oneMonth.basePrice);
-          } else {
-            unitPrice = Number(selectedPlan.durationPricing[0].basePrice) / Number(selectedPlan.durationPricing[0].durationMonths);
-          }
-        }
-      }
-      setBaseAmount(unitPrice * numDur);
-      // Retain the existing discount state instead of overwriting it, as manual duration allows discounts to still work
-      return;
-    }
-
-    if (selectedPlan && selectedPlan.durationPricing && numDur > 0) {
+    if (selectedPlan && selectedPlan.durationPricing && selectedPlan.durationPricing.length > 0) {
       const match = selectedPlan.durationPricing.find(dp => dp.durationMonths === numDur);
       if (match) {
         setBaseAmount(match.basePrice);
         setDiscountType(match.discountType || 'None');
         setDiscountValue(match.discountValue || 0);
       } else {
-        let unitPrice = selectedPlan.price ? Number(selectedPlan.price) : 0;
-        if (!unitPrice && selectedPlan.durationPricing && selectedPlan.durationPricing.length > 0) {
-          const oneMonth = selectedPlan.durationPricing.find(d => d.durationMonths === 1);
-          unitPrice = oneMonth ? Number(oneMonth.basePrice) : Number(selectedPlan.durationPricing[0].basePrice) / Number(selectedPlan.durationPricing[0].durationMonths);
-        }
+        const oneMonth = selectedPlan.durationPricing.find(d => d.durationMonths === 1);
+        const unitPrice = oneMonth ? Number(oneMonth.basePrice) : (Number(selectedPlan.durationPricing[0].basePrice) / Number(selectedPlan.durationPricing[0].durationMonths));
         setBaseAmount(unitPrice * numDur);
       }
     } else if (selectedPlan) {
-      let unitPrice = selectedPlan.price ? Number(selectedPlan.price) : 0;
-      if (!unitPrice && selectedPlan.durationPricing && selectedPlan.durationPricing.length > 0) {
-        const oneMonth = selectedPlan.durationPricing.find(d => d.durationMonths === 1);
-        unitPrice = oneMonth ? Number(oneMonth.basePrice) : Number(selectedPlan.durationPricing[0].basePrice) / Number(selectedPlan.durationPricing[0].durationMonths);
-      }
+      const unitPrice = selectedPlan.price ? Number(selectedPlan.price) : 0;
       setBaseAmount(unitPrice * numDur);
     } else {
       setBaseAmount(0);
@@ -679,65 +677,43 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
               {planId && (
                 <div className="form-group" style={{ marginBottom: 0 }}>
                   <label className="form-label" style={{ fontSize: '12px' }}>Subscription Duration</label>
-                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                    {(plans.find(p => p.id === planId)?.durationPricing || [{ durationMonths: 1 }]).map(dp => {
-                      const isSel = durationMonths === dp.durationMonths;
-                      return (
-                        <button
-                          type="button"
-                          key={dp.durationMonths}
-                          onClick={() => handleDurationChange(dp.durationMonths)}
-                          style={{
-                            padding: '4px 10px', borderRadius: '4px', fontSize: '12px', fontWeight: 600, cursor: 'pointer',
-                            border: (!isManualDuration && isSel) ? '1px solid var(--brand-primary)' : '1px solid var(--border-light)',
-                            background: (!isManualDuration && isSel) ? 'var(--brand-primary)' : '#fff',
-                            color: (!isManualDuration && isSel) ? '#fff' : 'var(--text-primary)'
-                          }}
-                        >
-                          {dp.durationMonths} Mo
-                        </button>
-                      );
-                    })}
-                    <button
-                      type="button"
-                      onClick={() => handleDurationChange(durationMonths, true)}
-                      style={{
-                        padding: '4px 10px', borderRadius: '4px', fontSize: '12px', fontWeight: 600, cursor: 'pointer',
-                        border: isManualDuration ? '1px solid var(--brand-primary)' : '1px solid var(--border-light)',
-                        background: isManualDuration ? 'var(--brand-primary)' : '#fff',
-                        color: isManualDuration ? '#fff' : 'var(--text-primary)'
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <label htmlFor="duration-months-input" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                      Months:
+                    </label>
+                    <input
+                      id="duration-months-input"
+                      type="number"
+                      min="1"
+                      step="1"
+                      className={`form-input ${errors.durationMonths ? 'error' : ''}`}
+                      value={durationMonths}
+                      onChange={(e) => handleDurationChange(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'ArrowUp') {
+                          e.preventDefault();
+                          const val = Math.max(1, (Number(durationMonths) || 0) + 1);
+                          handleDurationChange(val);
+                        } else if (e.key === 'ArrowDown') {
+                          e.preventDefault();
+                          const val = Math.max(1, (Number(durationMonths) || 1) - 1);
+                          handleDurationChange(val);
+                        }
                       }}
-                    >
-                      Manual
-                    </button>
-                    {isManualDuration && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', width: '100%', marginTop: '6px' }}>
-                        <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>Months:</span>
-                        <input
-                          type="number"
-                          min="1"
-                          max="36"
-                          className={`manual-duration-input ${errors.durationMonths ? 'error' : ''}`}
-                          value={durationMonths}
-                          onChange={(e) => handleDurationChange(e.target.value, true)}
-                          style={{
-                            minWidth: '140px',
-                            width: '100%',
-                            height: '48px',
-                            padding: '10px 14px',
-                            fontSize: '16px',
-                            fontWeight: 600,
-                            borderRadius: '8px',
-                            border: errors.durationMonths ? '1.5px solid #ef4444' : '1.5px solid var(--brand-primary)',
-                            background: '#fff',
-                            color: 'var(--text-primary)',
-                            boxSizing: 'border-box'
-                          }}
-                        />
-                        {errors.durationMonths && <div style={{ color: '#ef4444', fontSize: '11px', width: '100%', marginTop: '4px' }}>{errors.durationMonths}</div>}
-                      </div>
-                    )}
+                      onBlur={() => {
+                        const val = Number(durationMonths);
+                        if (!val || val < 1) handleDurationChange(1);
+                      }}
+                      style={{
+                        width: '120px',
+                        padding: '8px 12px',
+                        fontSize: '15px',
+                        fontWeight: 600,
+                        borderRadius: '6px'
+                      }}
+                    />
                   </div>
+                  {errors.durationMonths && <span style={{ color: '#ef4444', fontSize: '11px', display: 'block', marginTop: '4px' }}>{errors.durationMonths}</span>}
                 </div>
               )}
 

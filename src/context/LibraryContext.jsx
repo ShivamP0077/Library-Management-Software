@@ -1,6 +1,9 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import toast from 'react-hot-toast';
+import { api, createSyncQueue, SYNCED_COLLECTIONS } from '../utils/api';
 import { getDefaultPermissionsForRole, syncLegacyPermissions } from '../utils/staffPermissions';
+import { isShiftInPlan, resolveCanonicalShift, getCanonicalShifts, normalizeShiftName, shiftsOverlap } from '../utils/shiftUtils';
+import { areSeatTypesEquivalent } from '../utils/seatTypeUtils';
 
 const LibraryContext = createContext();
 
@@ -108,27 +111,7 @@ const INITIAL_PAYMENTS = [];
 const INITIAL_ARCHIVED_STUDENTS = [];
 
 // Helper: Determine if two shifts overlap in schedule without durationType
-export const shiftsOverlap = (shA, shB) => {
-  if (!shA || !shB) return false;
-  if (shA.id === shB.id) return true;
-
-  // Day intersection check
-  const daysA = shA.daysOfWeek || [];
-  const daysB = shB.daysOfWeek || [];
-  if (daysA.length > 0 && daysB.length > 0) {
-    const commonDay = daysA.some(d => daysB.includes(d));
-    if (!commonDay) return false;
-  }
-
-  // Time overlap check: startA < endB && startB < endA
-  if (shA.startTime && shA.endTime && shB.startTime && shB.endTime) {
-    return shA.startTime < shB.endTime && shB.startTime < shA.endTime;
-  }
-
-  // Fallback: if time metadata is missing/corrupted, FAIL SAFE by treating them as overlapping.
-  // Do NOT rely on name matching which allows unsafe double-booking for differently named shifts.
-  return true;
-};
+export { shiftsOverlap };
 
 // Dynamic Reconciliation Helpers (No hardcoded library or entity IDs)
 export const reconcileSeatTypes = ({ savedSeatTypes, seats = [], plans = [], students = [], wizardDraft = null, libId = 'lib-main' }) => {
@@ -374,36 +357,61 @@ export const reconcileSeats = ({ savedSeats, students = [], sections = [], branc
   // Track physically occupied seat names to ensure we never drop a seat that an active student is sitting in
   const occupiedSeatNames = new Set();
   students.forEach(st => {
-    if (st.status === 'Active' && st.seatNo) {
+    if ((st.status === 'Active' || st.status === 'Expiring Soon') && st.seatNo) {
       occupiedSeatNames.add(st.seatNo);
     }
   });
 
-  const defaultSectionId = sections.length > 0 ? sections[0].id : undefined;
   const defaultBranchId = branches && branches.length > 0 ? branches[0].id : undefined;
 
   savedSeats.forEach(seat => {
+    // 1. Resolve true branch of the seat
+    const seatBranch = seat.branchId || defaultBranchId;
     let effectiveSectionId = seat.sectionId;
+
     if (sections.length > 0) {
-      if (!effectiveSectionId || !validSections.has(effectiveSectionId)) {
-         effectiveSectionId = defaultSectionId;
+      const currentSec = sections.find(s => s.id === effectiveSectionId);
+      // Check if currentSec is missing OR does not belong to seatBranch (cross-branch section mismatch)
+      const isSecMismatched = !currentSec || (seatBranch && seatBranch !== 'all' && currentSec.branchId && currentSec.branchId !== 'all' && currentSec.branchId !== seatBranch);
+
+      if (isSecMismatched) {
+        // Find matching section in the seat's branch
+        const branchSecs = sections.filter(s => !s.branchId || s.branchId === 'all' || s.branchId === seatBranch);
+        // Prioritize matching by section name if the previous section had a name (e.g. "Premium" in Radhe 2)
+        const sameNameSec = currentSec ? branchSecs.find(s => s.name?.toLowerCase() === currentSec.name?.toLowerCase()) : null;
+        effectiveSectionId = sameNameSec ? sameNameSec.id : (branchSecs[0]?.id || currentSec?.id || sections[0]?.id);
       }
     } else {
       effectiveSectionId = undefined;
     }
 
-    // Drop orphans safely (only if they aren't occupied to prevent data loss on broken references)
-    if (seat.seatTypeId && !validSeatTypes.has(seat.seatTypeId)) {
-      if (!seat.name || !occupiedSeatNames.has(seat.name)) return;
+    // Resolve seat type to match branch if applicable
+    let effectiveSeatTypeId = seat.seatTypeId;
+    if (effectiveSeatTypeId && seatTypes.length > 0) {
+      const currentST = seatTypes.find(st => st.id === effectiveSeatTypeId);
+      const isSTMismatched = !currentST || (seatBranch && seatBranch !== 'all' && currentST.branchId && currentST.branchId !== 'all' && currentST.branchId !== seatBranch);
+      if (isSTMismatched) {
+        const branchSTs = seatTypes.filter(st => st.allocationMode === 'Fixed' && (!st.branchId || st.branchId === 'all' || st.branchId === seatBranch));
+        const equiv = currentST ? branchSTs.find(st => areSeatTypesEquivalent(seatTypes, st.id, effectiveSeatTypeId)) : null;
+        effectiveSeatTypeId = equiv ? equiv.id : (branchSTs[0]?.id || effectiveSeatTypeId);
+      }
     }
 
-    // Unique fingerprint for a physical desk
-    const key = `${seat.branchId || defaultBranchId || 'none'}-${effectiveSectionId || 'none'}-${seat.seatTypeId || 'none'}-${seat.name || seat.seatNumber}`;
+    // Drop orphans safely (only if they aren't occupied to prevent data loss on broken references)
+    if (effectiveSeatTypeId && !validSeatTypes.has(effectiveSeatTypeId)) {
+      const equiv = seatTypes.find(st => areSeatTypesEquivalent(seatTypes, st.id, effectiveSeatTypeId));
+      if (!equiv && (!seat.name || !occupiedSeatNames.has(seat.name))) return;
+    }
+
+    // Unique fingerprint for a physical desk within a branch and section
+    const seatName = seat.name || seat.seatNumber;
+    const key = `${seatBranch || 'none'}-${effectiveSectionId || 'none'}-${seatName}`;
     
     const normalizedSeat = {
       ...seat,
+      seatTypeId: effectiveSeatTypeId,
       sectionId: effectiveSectionId,
-      branchId: seat.branchId || defaultBranchId
+      branchId: seatBranch
     };
 
     if (!seatMap[key]) {
@@ -417,7 +425,6 @@ export const reconcileSeats = ({ savedSeats, students = [], sections = [], branc
       // If the current duplicate is occupied/maintenance but the first one isn't, swap them.
       if (currentIsOccupied || normalizedSeat.isMaintenance || normalizedSeat.isUnavailable) {
         if (!existingIsOccupied && !existing.isMaintenance && !existing.isUnavailable) {
-          // Replace the blank duplicate with the functionally significant one
           const index = dedupedSeats.findIndex(s => s.id === existing.id);
           if (index !== -1) {
             dedupedSeats[index] = normalizedSeat;
@@ -428,10 +435,89 @@ export const reconcileSeats = ({ savedSeats, students = [], sections = [], branc
     }
   });
 
+  // Ensure every active student with an allocated physical seat has that seat recovered in their branch/section
+  students.forEach(st => {
+    if ((st.status === 'Active' || st.status === 'Expiring Soon') && st.seatNo && st.seatNo !== 'Non-Fixed Seat' && st.seatNo !== 'None') {
+      const targetBranch = st.branchId || defaultBranchId;
+      const branchSecs = sections.filter(s => !s.branchId || s.branchId === 'all' || s.branchId === targetBranch);
+      let targetSecId = st.sectionId;
+      if (!targetSecId || !branchSecs.some(s => s.id === targetSecId)) {
+        const matchingSec = targetSecId ? sections.find(s => s.id === targetSecId) : null;
+        const sameNameSec = matchingSec ? branchSecs.find(s => s.name?.toLowerCase() === matchingSec.name?.toLowerCase()) : null;
+        targetSecId = sameNameSec ? sameNameSec.id : (branchSecs[0]?.id || undefined);
+      }
+      
+      const key = `${targetBranch || 'none'}-${targetSecId || 'none'}-${st.seatNo}`;
+      if (!seatMap[key]) {
+        const templateSeat = savedSeats.find(s => (s.name || s.seatNumber) === st.seatNo);
+        const branchFixedTypes = seatTypes.filter(t => t.allocationMode === 'Fixed' && (!t.branchId || t.branchId === 'all' || t.branchId === targetBranch));
+        const effectiveSeatTypeId = templateSeat?.seatTypeId || branchFixedTypes[0]?.id || seatTypes[0]?.id;
+        const recoveredSeat = {
+          id: templateSeat ? (templateSeat.id.includes(targetBranch) ? templateSeat.id : `seat-${targetBranch}-${st.seatNo}`) : `seat-recovered-${Date.now()}-${st.seatNo}`,
+          name: st.seatNo,
+          branchId: targetBranch,
+          sectionId: targetSecId,
+          seatTypeId: effectiveSeatTypeId,
+          libraryId: templateSeat?.libraryId || st.libraryId || 'lib-main',
+          isMaintenance: false,
+          isUnavailable: false
+        };
+        seatMap[key] = recoveredSeat;
+        dedupedSeats.push(recoveredSeat);
+      }
+    }
+  });
+
+  // Reconcile sibling vacant seats in the series for sections that have existing or active desks
+  if (branches && branches.length > 0) {
+    branches.forEach(b => {
+      const branchSecs = sections.filter(s => !s.branchId || s.branchId === 'all' || s.branchId === b.id);
+      branchSecs.forEach(sec => {
+        const hasExistingSeatsInSec = dedupedSeats.some(s => s.branchId === b.id && s.sectionId === sec.id);
+        if (hasExistingSeatsInSec) {
+          savedSeats.forEach(rawSeat => {
+            const sName = rawSeat.name || rawSeat.seatNumber;
+            if (!sName) return;
+            const key = `${b.id}-${sec.id}-${sName}`;
+            if (!seatMap[key]) {
+              const isOccupiedElsewhere = students.some(st => 
+                (st.status === 'Active' || st.status === 'Expiring Soon') && 
+                st.seatNo === sName && 
+                st.branchId && st.branchId !== b.id
+              );
+              const rawSecObj = sections.find(s => s.id === rawSeat.sectionId);
+              const matchesSecName = rawSecObj && sec.name && rawSecObj.name?.toLowerCase() === sec.name?.toLowerCase();
+              const wasExplicitlyForBranch = rawSeat.branchId === b.id;
+              
+              if (!isOccupiedElsewhere && (matchesSecName || wasExplicitlyForBranch)) {
+                const branchFixedTypes = seatTypes.filter(t => t.allocationMode === 'Fixed' && (!t.branchId || t.branchId === 'all' || t.branchId === b.id));
+                const recoveredSeat = {
+                  ...rawSeat,
+                  id: rawSeat.id && rawSeat.id.includes(b.id) ? rawSeat.id : `seat-${b.id}-${sName}`,
+                  name: sName,
+                  branchId: b.id,
+                  sectionId: sec.id,
+                  seatTypeId: rawSeat.seatTypeId && branchFixedTypes.some(t => t.id === rawSeat.seatTypeId)
+                    ? rawSeat.seatTypeId
+                    : (branchFixedTypes[0]?.id || seatTypes[0]?.id),
+                  libraryId: rawSeat.libraryId || 'lib-main',
+                  isMaintenance: Boolean(rawSeat.isMaintenance),
+                  isUnavailable: Boolean(rawSeat.isUnavailable)
+                };
+                seatMap[key] = recoveredSeat;
+                dedupedSeats.push(recoveredSeat);
+              }
+            }
+          });
+        }
+      });
+    });
+  }
+
   return dedupedSeats.length > 0 ? dedupedSeats : [];
 };
 
-export const LibraryProvider = ({ children }) => {
+export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = null }) => {
   const [settings, setSettings] = useState(() => {
     const saved = localStorage.getItem('library_settings');
     return saved ? JSON.parse(saved) : INITIAL_SETTINGS;
@@ -621,6 +707,90 @@ export const LibraryProvider = ({ children }) => {
   }, [students]);
   useEffect(() => { console.log('[EFFECT] waitingList'); localStorage.setItem('library_waiting_list', JSON.stringify(waitingList)); }, [waitingList]);
 
+  // ---------- Backend (MongoDB) persistence & sync ----------
+  // localStorage stays as the reliable local cache; backend provides multi-device sync once online.
+  const [backendStatus, setBackendStatus] = useState('connecting'); // 'connecting' | 'online' | 'offline'
+  const syncRef = useRef(null);
+  if (!syncRef.current) {
+    let warned = false;
+    syncRef.current = createSyncQueue({
+      onError: (key, e) => {
+        console.warn(`[API] Failed to sync "${key}":`, e.message);
+        setBackendStatus('offline');
+        if (!warned) { warned = true; toast.error('Could not save to the server. Changes are kept locally.'); }
+      }
+    });
+  }
+  const latestStateRef = useRef({});
+  latestStateRef.current = {
+    settings, branches, sections, seatTypes, seats, shifts, plans, staffMembers,
+    students, archivedStudents, expenses, payments, waitingList
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const setters = {
+      branches: setBranches, sections: setSections, seatTypes: setSeatTypes, seats: setSeats,
+      shifts: setShifts, plans: setPlans, staffMembers: setStaffMembers, students: setStudents,
+      archivedStudents: setArchivedStudents, expenses: setExpenses, payments: setPayments, waitingList: setWaitingList
+    };
+    const sync = syncRef.current;
+    (async () => {
+      try {
+        const remote = await api.getState();
+        if (cancelled) return;
+        const hasRemoteData = !!remote.settings || SYNCED_COLLECTIONS.some(c => (remote[c] || []).length > 0);
+        if (hasRemoteData) {
+          if (remote.settings) { sync.markSynced('settings', remote.settings); setSettings(remote.settings); }
+          SYNCED_COLLECTIONS.forEach(c => {
+            const items = remote[c] || [];
+            if (c === 'staffMembers' && items.length === 0) return;
+            sync.markSynced(c, items);
+            setters[c](items);
+          });
+          if (!readOnly) sync.enable();
+        } else if (!readOnly) {
+          sync.enable();
+          const local = latestStateRef.current;
+          const seededSettings = { ...local.settings, libraryId: remote.libraryId || local.settings.libraryId };
+          await sync.push('settings', seededSettings);
+          await Promise.all(SYNCED_COLLECTIONS.map(k => sync.push(k, local[k])));
+          const fresh = await api.getState();
+          if (cancelled) return;
+          if (fresh.settings) { sync.markSynced('settings', fresh.settings); setSettings(fresh.settings); }
+          SYNCED_COLLECTIONS.forEach(c => { const items = fresh[c] || []; if (c === 'staffMembers' && !items.length) return; sync.markSynced(c, items); setters[c](items); });
+        }
+        setBackendStatus('online');
+      } catch (e) {
+        if (cancelled) return;
+        setBackendStatus('offline');
+      }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!lockedStaffId) return;
+    const mine = staffMembers.find(st => st.id === lockedStaffId);
+    if (mine && currentStaff?.id !== mine.id) setCurrentStaff(mine);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lockedStaffId, staffMembers, currentStaff]);
+
+  useEffect(() => { syncRef.current?.queue('settings', settings); }, [settings]);
+  useEffect(() => { syncRef.current?.queue('branches', branches); }, [branches]);
+  useEffect(() => { syncRef.current?.queue('sections', sections); }, [sections]);
+  useEffect(() => { syncRef.current?.queue('seatTypes', seatTypes); }, [seatTypes]);
+  useEffect(() => { syncRef.current?.queue('seats', seats); }, [seats]);
+  useEffect(() => { syncRef.current?.queue('shifts', shifts); }, [shifts]);
+  useEffect(() => { syncRef.current?.queue('plans', plans); }, [plans]);
+  useEffect(() => { syncRef.current?.queue('staffMembers', staffMembers); }, [staffMembers]);
+  useEffect(() => { syncRef.current?.queue('students', students); }, [students]);
+  useEffect(() => { syncRef.current?.queue('archivedStudents', archivedStudents); }, [archivedStudents]);
+  useEffect(() => { syncRef.current?.queue('expenses', expenses); }, [expenses]);
+  useEffect(() => { syncRef.current?.queue('payments', payments); }, [payments]);
+  useEffect(() => { syncRef.current?.queue('waitingList', waitingList); }, [waitingList]);
+
   // Safe Non-Destructive Data Migration (v3)
   useEffect(() => {
     let libId = settings.libraryId || `lib-${Date.now()}`;
@@ -723,7 +893,7 @@ export const LibraryProvider = ({ children }) => {
   const getSeatOccupancyStatus = (libId, branchId, sectionId, seatName, requestedShiftId, transientStudents = [], excludeStudentId = null) => {
     if (!seatName || seatName === 'Non-Fixed Seat' || seatName === 'None') return null;
 
-    const reqShiftObj = shifts.find(sh => sh.id === requestedShiftId);
+    const reqShiftObj = resolveCanonicalShift(shifts, requestedShiftId) || shifts.find(sh => sh.id === requestedShiftId);
 
     const allStudents = [...students, ...transientStudents];
     for (const s of allStudents) {
@@ -741,7 +911,7 @@ export const LibraryProvider = ({ children }) => {
           return s;
         }
 
-        const studentShift = shifts.find(sh => sh.id === s.shiftId) || { id: s.shiftId, name: s.shift };
+        const studentShift = resolveCanonicalShift(shifts, s.shiftId) || shifts.find(sh => sh.id === s.shiftId) || { id: s.shiftId, name: s.shift };
         if (reqShiftObj) {
           if (shiftsOverlap(studentShift, reqShiftObj)) {
             return s;
@@ -756,14 +926,18 @@ export const LibraryProvider = ({ children }) => {
 
   const getBlockOccupancyMap = (branchId, sectionId, shiftId) => {
     const map = { fixed: {}, nonFixed: [] };
-    const reqShiftObj = shifts.find(sh => sh.id === shiftId);
+    const reqShiftObj = resolveCanonicalShift(shifts, shiftId) || shifts.find(sh => sh.id === shiftId);
 
     students.forEach(s => {
       if (branchId && branchId !== 'all' && s.branchId && s.branchId !== 'all' && s.branchId !== branchId) return;
-      if (sectionId && sectionId !== 'all' && s.sectionId && s.sectionId !== sectionId) return;
+      if (sectionId && sectionId !== 'all') {
+        const studentSecMatches = !s.sectionId || s.sectionId === 'all' || s.sectionId === sectionId;
+        const seatMatchesSec = s.seatNo && seats.some(st => (st.name || st.seatNumber) === s.seatNo && (!st.branchId || st.branchId === branchId) && (!st.sectionId || st.sectionId === sectionId));
+        if (!studentSecMatches && !seatMatchesSec) return;
+      }
       if (s.status !== 'Active' && s.status !== 'Expiring Soon') return;
 
-      const studentShift = shifts.find(sh => sh.id === s.shiftId) || { id: s.shiftId, name: s.shift };
+      const studentShift = resolveCanonicalShift(shifts, s.shiftId) || shifts.find(sh => sh.id === s.shiftId) || { id: s.shiftId, name: s.shift };
       const overlaps = reqShiftObj ? shiftsOverlap(studentShift, reqShiftObj) : true;
 
       if (overlaps) {
@@ -771,6 +945,9 @@ export const LibraryProvider = ({ children }) => {
           map.nonFixed.push(s);
         } else {
           map.fixed[s.seatNo] = s;
+          if (s.seatId) {
+            map.fixed[s.seatId] = s;
+          }
         }
       }
     });
@@ -778,7 +955,7 @@ export const LibraryProvider = ({ children }) => {
   };
 
   const getCurrentActiveAdmissions = (libId, branchId, sectionId, seatTypeId, shiftId, transientStudents = []) => {
-    const reqShiftObj = shifts.find(sh => sh.id === shiftId);
+    const reqShiftObj = resolveCanonicalShift(shifts, shiftId) || shifts.find(sh => sh.id === shiftId);
 
     const allStudents = [...students, ...transientStudents];
     return allStudents.filter(s => {
@@ -789,19 +966,18 @@ export const LibraryProvider = ({ children }) => {
       if (sectionId && sectionId !== 'all' && s.sectionId && s.sectionId !== sectionId) return false;
 
       if (!shiftId) return true;
-      const studentShift = shifts.find(sh => sh.id === s.shiftId) || { id: s.shiftId, name: s.shift };
+      const studentShift = resolveCanonicalShift(shifts, s.shiftId) || shifts.find(sh => sh.id === s.shiftId) || { id: s.shiftId, name: s.shift };
       return reqShiftObj ? shiftsOverlap(studentShift, reqShiftObj) : (s.shiftId === shiftId);
     }).length;
   };
 
   const getAvailableEligibleSeats = (libId, branchId, sectionId, seatTypeId, shiftId, transientStudents = []) => {
     if (!seatTypeId) return [];
-
     return seats.filter(seat => {
       if (libId && seat.libraryId && seat.libraryId !== libId) return false;
       if (branchId && branchId !== 'all' && seat.branchId && seat.branchId !== 'all' && seat.branchId !== branchId) return false;
       if (sectionId && sectionId !== 'all' && seat.sectionId && seat.sectionId !== sectionId) return false;
-      if (seat.seatTypeId !== seatTypeId) return false;
+      if (seat.seatTypeId !== seatTypeId && !areSeatTypesEquivalent(seatTypes, seat.seatTypeId, seatTypeId)) return false;
       if (seat.isMaintenance || seat.isUnavailable) return false;
 
       const seatIdentifier = seat.name || seat.seatNumber;
@@ -859,9 +1035,9 @@ export const LibraryProvider = ({ children }) => {
       if (sectionId && sectionId !== 'all' && p.sectionId && p.sectionId !== 'all' && p.sectionId !== sectionId) return false;
       // Requirement #9: "Seat: Any" must NOT bypass seat type relationship. Every plan must explicitly match a valid seat type!
       if (!p.seatTypeId) return false;
-      if (seatTypeId && p.seatTypeId !== seatTypeId) return false;
+      if (seatTypeId && p.seatTypeId !== seatTypeId && !areSeatTypesEquivalent(seatTypes, p.seatTypeId, seatTypeId)) return false;
       if (shiftId) {
-        if (!p.shiftIds || p.shiftIds.length === 0 || !p.shiftIds.includes(shiftId)) return false;
+        if (!isShiftInPlan(shifts, p, shiftId)) return false;
       }
       return true;
     });
@@ -870,7 +1046,7 @@ export const LibraryProvider = ({ children }) => {
   // Valid shifts for a plan
   const getValidShiftsForPlan = (plan) => {
     if (!plan || !plan.shiftIds) return [];
-    return shifts.filter(sh => sh.active !== false && plan.shiftIds.includes(sh.id));
+    return shifts.filter(sh => sh.active !== false && isShiftInPlan(shifts, plan, sh.id));
   };
 
   // Valid desks list for branch / section
@@ -1549,7 +1725,7 @@ export const LibraryProvider = ({ children }) => {
       planName: renewalData.planName,
       shiftId: renewalData.shiftId || student.shiftId,
       shift: renewalData.shift || student.shift,
-      durationMonths: renewalData.durationMonths || 1,
+      durationMonths: Number(renewalData.durationMonths || 1),
       startDate: renewalData.startDate,
       endDate: renewalData.expiryDate,
       amountPaid: netTotal,
@@ -1590,6 +1766,7 @@ export const LibraryProvider = ({ children }) => {
           planId: renewalData.planId || s.planId,
           shiftId: renewalData.shiftId || s.shiftId,
           shift: renewalData.shift || s.shift,
+          durationMonths: Number(renewalData.durationMonths || s.durationMonths || 1),
           startDate: renewalData.startDate,
           expiryDate: renewalData.expiryDate,
           status: "Active",
@@ -2510,7 +2687,10 @@ export const LibraryProvider = ({ children }) => {
       addStaffMember,
       updateStaffMember,
       toggleStaffStatus,
-      deleteStaffMember
+      deleteStaffMember,
+      // Backend Status & Read-Only Context
+      backendStatus,
+      readOnly
     }}>
       {children}
     </LibraryContext.Provider>

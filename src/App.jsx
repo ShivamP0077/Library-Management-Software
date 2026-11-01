@@ -12,10 +12,15 @@ import { NewStudentModal } from './components/Modals/NewStudentModal';
 import { PrintReceiptModal } from './components/Modals/PrintReceiptModal';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Toaster } from 'react-hot-toast';
-import { ShieldAlert } from 'lucide-react';
+import { ShieldAlert, ArrowLeft, LogOut, Eye, WifiOff, Cloud } from 'lucide-react';
 import { PreviousStudentRecords } from './components/PreviousStudentRecords';
 import { SetupWizard } from './components/SetupWizard';
 import { useLibrary } from './context/LibraryContext';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { AuthProvider, useAuth, prepareLocalCacheFor } from './auth/AuthContext';
+import { LoginScreen } from './auth/LoginScreen';
+import { SuperAdminDashboard } from './auth/SuperAdminDashboard';
+import { setTenantContext } from './utils/api';
 
 const pageVariants = {
   initial: { opacity: 0 },
@@ -80,6 +85,7 @@ export const AppContent = () => {
                 transition={{ type: 'spring', stiffness: 260, damping: 20 }}
                 style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
               >
+                <ErrorBoundary componentName="Active Module">
             {!hasPermission(activeTab, 'view') && activeTab !== 'dashboard' && activeTab !== 'archives' ? (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '64px 24px', textAlign: 'center', minHeight: '400px' }}>
                 <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#fee2e2', color: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px' }}>
@@ -167,6 +173,7 @@ export const AppContent = () => {
                 )}
               </>
             )}
+                </ErrorBoundary>
               </motion.div>
             </AnimatePresence>
           </main>
@@ -202,10 +209,131 @@ export const AppContent = () => {
   );
 };
 
+/** Thin bar above the app showing who is signed in, read-only state, offline mode, and navigation. */
+const SessionBar = ({ libraryName, readOnly, onBack, isOffline = false, onSwitchToCloud }) => {
+  const { user, logout } = useAuth();
+  return (
+    <div id="session-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '6px 16px', fontSize: 12, background: readOnly ? '#fef3c7' : isOffline ? '#1e293b' : '#111827', color: readOnly ? '#92400e' : '#e5e7eb' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        {onBack && <button className="btn btn-ghost btn-sm" onClick={onBack} style={{ color: 'inherit' }}><ArrowLeft size={14} /> <span>All libraries</span></button>}
+        <span style={{ fontWeight: 600 }}>{libraryName || 'Library'}</span>
+        {readOnly && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 600 }}><Eye size={12} /> Read-only view</span>}
+        {isOffline && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'rgba(56, 189, 248, 0.15)', padding: '2px 8px', borderRadius: 4, color: '#38bdf8', fontWeight: 600 }}>
+            <WifiOff size={12} /> Local Offline Mode
+          </span>
+        )}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        {isOffline ? (
+          <button className="btn btn-ghost btn-sm" onClick={onSwitchToCloud} style={{ color: '#38bdf8' }}>
+            <Cloud size={14} /> <span>Connect / Sign In</span>
+          </button>
+        ) : (
+          <>
+            <span><span className="session-email">{user?.email} · </span>{user?.role === 'superadmin' ? 'Super Admin' : user?.role === 'client_admin' ? 'Client Admin' : 'Staff'}</span>
+            <button className="btn btn-ghost btn-sm" onClick={logout} style={{ color: 'inherit' }}><LogOut size={14} /> <span>Sign out</span></button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const LibraryWorkspace = ({ libraryId, libraryName, readOnly = false, lockedStaffId = null, onBack, isOffline = false, onSwitchToCloud }) => {
+  const [ready, setReady] = useState(false);
+  React.useLayoutEffect(() => {
+    if (!isOffline && libraryId) {
+      setTenantContext(onBack ? { libraryId, readOnly } : {});
+      prepareLocalCacheFor(`${libraryId}${readOnly ? ':ro' : ''}`);
+    }
+    setReady(true);
+  }, [libraryId, readOnly, onBack, isOffline]);
+
+  if (!ready) return null;
+  return (
+    <div className="lib-workspace" style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+      <SessionBar libraryName={libraryName} readOnly={readOnly} onBack={onBack} isOffline={isOffline} onSwitchToCloud={onSwitchToCloud} />
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <LibraryProvider key={`${libraryId || 'local'}-${readOnly}-${isOffline}`} readOnly={readOnly} lockedStaffId={lockedStaffId}>
+          <ErrorBoundary>
+            <AppContent />
+          </ErrorBoundary>
+        </LibraryProvider>
+      </div>
+    </div>
+  );
+};
+
+const RoleRouter = () => {
+  const { status, user, library } = useAuth();
+  const [drill, setDrill] = useState(null); // super admin: { library, readOnly }
+  const [offlineMode, setOfflineMode] = useState(() => {
+    return localStorage.getItem('library_mode_preference') === 'offline';
+  });
+
+  const handleContinueOffline = () => {
+    localStorage.setItem('library_mode_preference', 'offline');
+    setOfflineMode(true);
+  };
+
+  const handleSwitchToCloud = () => {
+    localStorage.removeItem('library_mode_preference');
+    setOfflineMode(false);
+  };
+
+  if (offlineMode) {
+    return (
+      <LibraryWorkspace
+        libraryId="local-workspace"
+        libraryName="Local Library"
+        isOffline={true}
+        onSwitchToCloud={handleSwitchToCloud}
+      />
+    );
+  }
+
+  if (status === 'loading') {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, background: 'var(--bg-primary, #f8fafc)' }}>
+        <div style={{ fontSize: 36 }}>📖</div>
+        <div style={{ fontSize: 16, fontWeight: 600 }}>Connecting to Library Management OS…</div>
+        <button className="btn btn-secondary btn-sm" onClick={handleContinueOffline}>Continue in Local Offline Mode</button>
+      </div>
+    );
+  }
+
+  if (status !== 'authenticated' || !user) {
+    return <LoginScreen onContinueOffline={handleContinueOffline} />;
+  }
+
+  if (user.role === 'superadmin') {
+    if (drill) {
+      return (
+        <LibraryWorkspace
+          libraryId={drill.library.libraryId}
+          libraryName={drill.library.name}
+          readOnly={drill.readOnly}
+          onBack={() => { setTenantContext({}); setDrill(null); }}
+        />
+      );
+    }
+    return <SuperAdminDashboard onOpenLibrary={(lib, readOnly) => setDrill({ library: lib, readOnly })} />;
+  }
+
+  return (
+    <LibraryWorkspace
+      libraryId={user.libraryId}
+      libraryName={library?.name || user.libraryId}
+      lockedStaffId={user.role === 'staff' ? user.staffId : null}
+    />
+  );
+};
+
 export default function App() {
   return (
-    <LibraryProvider>
-      <AppContent />
-    </LibraryProvider>
+    <AuthProvider>
+      <RoleRouter />
+    </AuthProvider>
   );
 }

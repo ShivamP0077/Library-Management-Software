@@ -1,0 +1,13 @@
+node_modules/
+.env
+.env.*
+!.env.example
+*.local
+*.credentials
+*.pem
+*.key
+*.log
+credentials*.txt
+superadmin*.txt
+demo*.txt
+

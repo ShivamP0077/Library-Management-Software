@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useLibrary } from '../context/LibraryContext';
-import { MoreVertical, Plus, Trash2, Settings, Ban, CheckCircle2, X, AlertCircle } from 'lucide-react';
+import { MoreVertical, Plus, Trash2, Settings, Ban, CheckCircle2, X, AlertCircle, Building2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { NumericInput } from './NumericInput';
 import { resolveConfigurationScope, matchesScope } from '../utils/scopeResolver';
+import { getCanonicalShifts, normalizeShiftName, resolveCanonicalShift, shiftsOverlap } from '../utils/shiftUtils';
 import toast from 'react-hot-toast';
 
 export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }) => {
@@ -26,32 +27,48 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
     selectedSectionId
   });
 
-  // Filter shifts: only active, synced, branch/section scope-valid shifts
+  // Reset section selection if active branch changes
+  useEffect(() => {
+    setSelectedSectionId(null);
+  }, [activeBranchId]);
+
+  // Filter shifts: only active, synced shifts
   const unsyncedShiftsList = React.useMemo(() => {
     return getUnsyncedShifts ? getUnsyncedShifts().map(s => s.id) : [];
   }, [getUnsyncedShifts, shifts, plans]);
 
-  // Show ONLY shifts strictly applicable to the currently resolved scope (Library, Branch, or Branch + Section)
+  // Show shifts applicable to the selected branch, or canonical deduplicated under All Branches
   const applicableShifts = React.useMemo(() => {
-    return (shifts || []).filter(sh => {
+    const rawShifts = (shifts || []).filter(sh => {
       if (sh.active === false) return false;
       if (unsyncedShiftsList.includes(sh.id)) return false;
-      return matchesScope(sh, scope.resolvedBranchId, scope.resolvedSectionId);
+      if (activeBranchId !== 'all') {
+        return !sh.branchId || sh.branchId === 'all' || sh.branchId === activeBranchId;
+      }
+      return true;
     });
-  }, [shifts, unsyncedShiftsList, scope.resolvedBranchId, scope.resolvedSectionId]);
+    return getCanonicalShifts(rawShifts);
+  }, [shifts, unsyncedShiftsList, activeBranchId]);
 
   const [selectedShiftId, setSelectedShiftId] = useState('');
 
-  // Auto-sync selectedShiftId when applicableShifts changes
+  // Auto-sync selectedShiftId when applicableShifts changes, preserving canonical shift name if available
   useEffect(() => {
     if (applicableShifts.length > 0) {
-      if (!selectedShiftId || !applicableShifts.some(s => s.id === selectedShiftId)) {
+      const currentSelected = shifts.find(s => s.id === selectedShiftId);
+      const matchingShift = currentSelected 
+        ? applicableShifts.find(s => normalizeShiftName(s.name) === normalizeShiftName(currentSelected.name))
+        : null;
+
+      if (matchingShift) {
+        setSelectedShiftId(matchingShift.id);
+      } else if (!selectedShiftId || !applicableShifts.some(s => s.id === selectedShiftId)) {
         setSelectedShiftId(applicableShifts[0].id);
       }
     } else {
       setSelectedShiftId('');
     }
-  }, [applicableShifts, selectedShiftId]);
+  }, [applicableShifts, selectedShiftId, shifts]);
   const [selectedDesk, setSelectedDesk] = useState(null);
 
   // Bulk Selection State
@@ -61,6 +78,7 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
 
   // Add Seats Modal State (Post-Setup)
   const [isAddSeatsModalOpen, setIsAddSeatsModalOpen] = useState(false);
+  const [targetAddBranchId, setTargetAddBranchId] = useState('');
   const [targetAddSectionId, setTargetAddSectionId] = useState('');
   const [targetAddSeatTypeId, setTargetAddSeatTypeId] = useState('');
   const [addMode, setAddMode] = useState('simple'); // 'simple' | 'row'
@@ -70,6 +88,26 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
   const [addRowNames, setAddRowNames] = useState('A, B');
   const [addSeatsPerRow, setAddSeatsPerRow] = useState(10);
   const [addLivePreview, setAddLivePreview] = useState([]);
+
+  // Auto-initialize Add Desks modal fields when opened or branch changed
+  useEffect(() => {
+    if (isAddSeatsModalOpen) {
+      const initialBranch = (activeBranchId !== 'all' ? activeBranchId : null) || (branches.length > 0 ? branches[0].id : '');
+      setTargetAddBranchId(prev => prev || initialBranch);
+      const branchSecs = sections.filter(s => !s.branchId || s.branchId === 'all' || s.branchId === (targetAddBranchId || initialBranch));
+      setTargetAddSectionId(branchSecs[0]?.id || '');
+      const branchTypes = seatTypes.filter(st => st.allocationMode === 'Fixed' && (!st.branchId || st.branchId === 'all' || st.branchId === (targetAddBranchId || initialBranch)));
+      setTargetAddSeatTypeId(branchTypes[0]?.id || '');
+    }
+  }, [isAddSeatsModalOpen, activeBranchId, branches]);
+
+  const handleTargetBranchChange = (newBranchId) => {
+    setTargetAddBranchId(newBranchId);
+    const branchSecs = sections.filter(s => !s.branchId || s.branchId === 'all' || s.branchId === newBranchId);
+    setTargetAddSectionId(branchSecs[0]?.id || '');
+    const branchTypes = seatTypes.filter(st => st.allocationMode === 'Fixed' && (!st.branchId || st.branchId === 'all' || st.branchId === newBranchId));
+    setTargetAddSeatTypeId(branchTypes[0]?.id || '');
+  };
 
 
   // Live preview for Add Seats Modal
@@ -215,21 +253,30 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
 
   // Add Generated Seats to Map
   const handleConfirmAddSeats = () => {
-    const fixedTypes = seatTypes.filter(st => st.allocationMode === 'Fixed');
-    const typeId = targetAddSeatTypeId || fixedTypes[0]?.id;
-    if (!typeId) return toast.error('No Fixed Seat Type available.');
+    const effectiveBranch = (targetAddBranchId && targetAddBranchId !== 'all')
+      ? targetAddBranchId
+      : ((activeBranchId !== 'all' ? activeBranchId : null) || (branches.length > 0 ? branches[0].id : undefined));
+
+    const branchFixedTypes = seatTypes.filter(st => st.allocationMode === 'Fixed' && (!st.branchId || st.branchId === 'all' || st.branchId === effectiveBranch));
+    const typeId = targetAddSeatTypeId || branchFixedTypes[0]?.id || seatTypes.find(st => st.allocationMode === 'Fixed')?.id;
+    if (!typeId) return toast.error('No Fixed Seat Type available for this branch.');
 
     if (addLivePreview.length === 0) return toast.error('No seats to add.');
 
-    const targetSec = targetAddSectionId || (sections[0]?.id || undefined);
-    const targetBranch = branches[0]?.id || undefined;
+    const branchSecs = sections.filter(s => !s.branchId || s.branchId === 'all' || s.branchId === effectiveBranch);
+    const targetSec = targetAddSectionId || (branchSecs[0]?.id || sections[0]?.id || undefined);
+    const targetBranch = effectiveBranch;
 
     let added = 0;
     let skippedDuplicates = 0;
     const newItems = [];
 
     addLivePreview.forEach(sName => {
-      const isDuplicate = seats.some(s => (s.name || s.seatNumber)?.toString().toLowerCase() === sName.toLowerCase() && s.sectionId === targetSec);
+      const isDuplicate = seats.some(s => 
+        (s.name || s.seatNumber)?.toString().toLowerCase() === sName.toLowerCase() && 
+        s.sectionId === targetSec &&
+        (!s.branchId || s.branchId === targetBranch)
+      );
       if (isDuplicate) {
         skippedDuplicates++;
       } else {
@@ -296,16 +343,40 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
           {/* Progressive Scope Display Badge */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#f8fafc', padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
             <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>SCOPE:</span>
-            <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--brand-primary)' }}>📍 {scope.scopeDisplayName}</span>
+            <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--brand-primary)' }}>
+              📍 {activeBranchId === 'all' 
+                ? `All Branches (${branches.length || 0})` 
+                : (branches.find(b => b.id === activeBranchId)?.name || 'Branch')}
+              {activeBranchId !== 'all' && selectedSectionId && (
+                ` → ${sections.find(s => s.id === selectedSectionId)?.name || 'Section'}`
+              )}
+            </span>
           </div>
 
-          {/* Progressive Section Selector (Shown ONLY when 2+ sections exist in resolved branch) */}
-          {scope.showSectionSelector && (
+          {/* Progressive Section Selector (Shown ONLY when 2+ sections exist in selected branch) */}
+          {activeBranchId !== 'all' && scope.showSectionSelector && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#f1f5f9', padding: '4px', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
               <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', paddingLeft: '4px', paddingRight: '4px' }}>ROOM:</span>
+              <button
+                type="button"
+                onClick={() => setSelectedSectionId(null)}
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  background: !selectedSectionId ? 'var(--brand-primary)' : 'transparent',
+                  color: !selectedSectionId ? '#fff' : 'var(--text-secondary)',
+                  fontWeight: !selectedSectionId ? 700 : 500,
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                All Rooms
+              </button>
               {scope.availableSections.map(sec => {
-                const isSelected = sec.id === scope.resolvedSectionId;
-                const secSeatCount = seats.filter(s => s.sectionId === sec.id).length;
+                const isSelected = sec.id === selectedSectionId;
+                const secSeatCount = seats.filter(s => s.sectionId === sec.id && (!s.branchId || s.branchId === 'all' || s.branchId === activeBranchId)).length;
                 return (
                   <button
                     key={sec.id}
@@ -361,7 +432,11 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
             className="btn btn-primary" 
             style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}
             onClick={() => {
-              if (scope.resolvedSectionId) setTargetAddSectionId(scope.resolvedSectionId);
+              const currentBranch = activeBranchId !== 'all' ? activeBranchId : (branches[0]?.id || undefined);
+              const branchSecs = sections.filter(s => !s.branchId || s.branchId === 'all' || s.branchId === currentBranch);
+              setTargetAddSectionId(selectedSectionId || branchSecs[0]?.id || (sections[0]?.id || ''));
+              const branchFixedTypes = seatTypes.filter(st => st.allocationMode === 'Fixed' && (!st.branchId || st.branchId === 'all' || st.branchId === currentBranch));
+              setTargetAddSeatTypeId(branchFixedTypes[0]?.id || seatTypes.find(st => st.allocationMode === 'Fixed')?.id || '');
               setIsAddSeatsModalOpen(true);
             }}
           >
@@ -392,33 +467,75 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
           .filter(s => !s.branchId || s.branchId === branch.id || s.branchId === 'all')
           .slice()
           .sort((a, b) => (a.order || 0) - (b.order || 0) || (a.name || '').localeCompare(b.name || '', undefined, { numeric: true }));
-        const renderSections = scope.resolvedSectionId 
-          ? branchSections.filter(s => s.id === scope.resolvedSectionId)
+
+        // When viewing a specific branch and user picked a room, show only that room.
+        // Otherwise, show all sections belonging to this branch.
+        const renderSections = (activeBranchId !== 'all' && selectedSectionId)
+          ? branchSections.filter(s => s.id === selectedSectionId)
           : (branchSections.length > 0 ? branchSections : [{ id: undefined, name: 'Main Section' }]);
 
         return (
           <div key={branch.id || 'lib'} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {activeBranchId === 'all' && branches.length > 1 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', borderBottom: '1px solid var(--border-light)', marginTop: '8px' }}>
+                <Building2 size={18} color="var(--brand-primary)" />
+                <h3 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+                  {branch.name}
+                </h3>
+              </div>
+            )}
             {renderSections.map(section => {
-              const sectionSeats = seats.filter(s => {
-                if (section.id) return s.sectionId === section.id;
-                return !s.sectionId;
+              // Occupancy mapping using canonical schedules
+              const blockOccupancy = getBlockOccupancyMap(branch.id, section.id, selectedShiftId);
+              const seatOccupancyMap = blockOccupancy.fixed;
+
+              const rawSectionSeats = seats.filter(s => {
+                const matchesBranch = !s.branchId || s.branchId === 'all' || s.branchId === branch.id;
+                if (!matchesBranch) return false;
+
+                // Resolve effective section within this branch so seats never disappear
+                let effectiveSecId = s.sectionId;
+                const isSecInBranch = effectiveSecId && branchSections.some(bs => bs.id === effectiveSecId);
+                if (!isSecInBranch && branchSections.length > 0) {
+                  const origSec = sections.find(sec => sec.id === effectiveSecId);
+                  const sameNameSec = origSec ? branchSections.find(bs => bs.name?.toLowerCase() === origSec.name?.toLowerCase()) : null;
+                  effectiveSecId = sameNameSec ? sameNameSec.id : branchSections[0]?.id;
+                }
+
+                if (section.id) return effectiveSecId === section.id;
+                return !effectiveSecId;
+              });
+
+              // Deduplicate seats by seat name/number, prioritizing occupied/maintenance seats
+              const dedupedMap = new Map();
+              rawSectionSeats.forEach(s => {
+                const sName = String(s.name || s.seatNumber || s.id);
+                if (!dedupedMap.has(sName)) {
+                  dedupedMap.set(sName, s);
+                } else {
+                  const existing = dedupedMap.get(sName);
+                  const isCurOccupied = Boolean(seatOccupancyMap[s.name] || (s.id && seatOccupancyMap[s.id]));
+                  const isExistOccupied = Boolean(seatOccupancyMap[existing.name] || (existing.id && seatOccupancyMap[existing.id]));
+                  if ((isCurOccupied || s.isMaintenance || s.isUnavailable) && !isExistOccupied && !existing.isMaintenance && !existing.isUnavailable) {
+                    dedupedMap.set(sName, s);
+                  }
+                }
+              });
+
+              // Sort seats in ascending numerical order: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10...
+              const sectionSeats = Array.from(dedupedMap.values()).sort((a, b) => {
+                const nameA = String(a.name || a.seatNumber || '');
+                const nameB = String(b.name || b.seatNumber || '');
+                return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
               });
 
               const sectionSeatTypes = seatTypes.filter(st => {
+                const matchesBranch = !st.branchId || st.branchId === 'all' || st.branchId === branch.id;
+                if (!matchesBranch) return false;
                 if (section.id) return !st.sectionId || st.sectionId === section.id;
                 return true;
               });
               const nonFixedTypes = sectionSeatTypes.filter(st => st.allocationMode === 'Non-Fixed');
-
-              // Determine effective shift for this section
-              const sectionShifts = applicableShifts.filter(sh => matchesScope(sh, branch.id, section.id));
-              const effectiveShiftId = sectionShifts.some(s => s.id === selectedShiftId) 
-                ? selectedShiftId 
-                : (sectionShifts[0]?.id || selectedShiftId);
-
-              // Occupancy mapping using canonical schedules
-              const blockOccupancy = getBlockOccupancyMap(branch.id, section.id, effectiveShiftId);
-              const seatOccupancyMap = blockOccupancy.fixed;
 
               // Accurate Count Calculations
               const totalSeats = sectionSeats.length;
@@ -429,26 +546,26 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
               sectionSeats.forEach(seat => {
                 if (seat.isUnavailable) unavailableCount++;
                 else if (seat.isMaintenance) maintenanceCount++;
-                else if (seatOccupancyMap[seat.name]) occupiedCount++;
+                else if (seatOccupancyMap[seat.name] || (seat.id && seatOccupancyMap[seat.id])) occupiedCount++;
               });
 
               const vacantEligibleCount = Math.max(0, totalSeats - occupiedCount - maintenanceCount - unavailableCount);
 
               // Non-fixed stats
               const nonFixedStats = nonFixedTypes.map(st => {
-                const activeCount = getCurrentActiveAdmissions(libId, branch.id, section.id, st.id, effectiveShiftId);
+                const activeCount = getCurrentActiveAdmissions(libId, branch.id, section.id, st.id, selectedShiftId);
                 return { name: st.name, count: activeCount, max: st.maximumStudentsAllowed };
               });
 
               if (sectionSeats.length === 0 && nonFixedStats.length === 0) return null;
 
               return (
-                <div key={section.id || 'main'} className="premium-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div key={`${branch.id || 'lib'}-${section.id || 'main'}`} className="premium-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
                   {/* Section Title & KPI Legend Bar */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
                     <div>
                       <h3 style={{ fontSize: '17px', fontWeight: 700, color: 'var(--text-primary)' }}>
-                        {branch.name ? `${branch.name} — ` : ''}{section.name}
+                        {activeBranchId === 'all' ? `${branch.name} — ${section.name}` : (branches.length > 1 ? `${branch.name} — ${section.name}` : section.name)}
                       </h3>
 
                       {/* Precise Counts Breakdown */}
@@ -561,7 +678,7 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
                   <div className="seat-map-container" style={{ minHeight: '120px' }}>
                     <div className="seat-grid-3d">
                       {sectionSeats.map((seat, idx) => {
-                        const occupant = seatOccupancyMap[seat.name];
+                        const occupant = seatOccupancyMap[seat.name] || (seat.id && seatOccupancyMap[seat.id]);
                         const isOccupied = Boolean(occupant);
                         const isSelected = selectedSeatIds.includes(seat.id);
 
@@ -710,20 +827,51 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
               </div>
 
               <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {activeBranchId === 'all' && branches.length > 1 && (
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" style={{ fontSize: '12px' }}>Branch *</label>
+                    <select 
+                      className="form-select" 
+                      value={targetAddBranchId || branches[0]?.id || ''} 
+                      onChange={e => handleTargetBranchChange(e.target.value)}
+                    >
+                      {branches.map(b => (
+                        <option key={b.id} value={b.id}>{b.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                   <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label" style={{ fontSize: '12px' }}>Seat Type *</label>
                     <select className="form-select" value={targetAddSeatTypeId} onChange={e => setTargetAddSeatTypeId(e.target.value)}>
-                      {seatTypes.filter(st => st.allocationMode === 'Fixed').map(st => (
-                        <option key={st.id} value={st.id}>{st.name}</option>
-                      ))}
+                      {seatTypes
+                        .filter(st => {
+                          const effBranch = (targetAddBranchId && targetAddBranchId !== 'all') ? targetAddBranchId : (activeBranchId !== 'all' ? activeBranchId : branches[0]?.id);
+                          return st.allocationMode === 'Fixed' && (!st.branchId || st.branchId === 'all' || st.branchId === effBranch);
+                        })
+                        .map(st => (
+                          <option key={st.id} value={st.id}>
+                            {st.name}
+                          </option>
+                        ))}
                     </select>
                   </div>
 
                   <div className="form-group" style={{ marginBottom: 0 }}>
                     <label className="form-label" style={{ fontSize: '12px' }}>Section</label>
                     <select className="form-select" value={targetAddSectionId} onChange={e => setTargetAddSectionId(e.target.value)}>
-                      {sections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      {sections
+                        .filter(s => {
+                          const effBranch = (targetAddBranchId && targetAddBranchId !== 'all') ? targetAddBranchId : (activeBranchId !== 'all' ? activeBranchId : branches[0]?.id);
+                          return !s.branchId || s.branchId === 'all' || s.branchId === effBranch;
+                        })
+                        .map(s => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
                     </select>
                   </div>
                 </div>

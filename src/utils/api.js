@@ -62,6 +62,16 @@ export const api = {
   createInvite: (body) => apiRequest('/invites', { method: 'POST', body }),
   revokeInvite: (id) => apiRequest(`/invites/${encodeURIComponent(id)}/revoke`, { method: 'POST' }),
   auditLogs: (q = '') => apiRequest(`/audit-logs${q}`),
+  // Notifications
+  notifications: (q = '') => apiRequest(`/notifications${q}`),
+  notificationCounts: () => apiRequest('/notifications/unread-count'),
+  markNotificationRead: (id, unread = false) => apiRequest(`/notifications/${encodeURIComponent(id)}/read`, { method: 'POST', body: { unread } }),
+  markAllNotificationsRead: () => apiRequest('/notifications/read-all', { method: 'POST' }),
+  resolveNotification: (id, resolution) => apiRequest(`/notifications/${encodeURIComponent(id)}/resolve`, { method: 'POST', body: { resolution } }),
+  notificationAttachment: (id) => apiRequest(`/notifications/${encodeURIComponent(id)}/attachment`),
+  refreshNotifications: () => apiRequest('/notifications/refresh', { method: 'POST' }),
+  createNotice: (notice) => apiRequest('/notices', { method: 'POST', body: notice }),
+  uploadNotice: (body) => apiRequest('/notices', { method: 'POST', body }),
   // Students
   studentsSummary: (branchId = 'all') => apiRequest(`/students-summary?branchId=${encodeURIComponent(branchId)}`),
   studentHistory: (id) => apiRequest(`/students/${encodeURIComponent(id)}/history`),

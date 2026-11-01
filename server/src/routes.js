@@ -10,6 +10,7 @@ import { createWhatsappRouter } from './whatsapp.js';
 import { createFinanceRouter, validatePaymentBatch } from './finance.js';
 import { createStudentRouter, recordStudentDiff, recordArchiveDiff, checkCapacity } from './students.js';
 import { audit } from './audit.js';
+import { createNotificationRouter } from './notifications.js';
 import { createPublicAccountRouter, createTenantAccountRouter, auditSuperadminAccess } from './accounts.js';
 import { createSeatRouter, reconcileStudents, releaseForStudents, validateSeatSync, SeatAllocation, seatMatchesAllocation, SeatConflictError } from './seats.js';
 
@@ -352,6 +353,7 @@ tenant.delete('/documents/:key', wrap(async (req, res) => {
 tenant.use(createSeatRouter());
 tenant.use(createFinanceRouter());
 tenant.use(createStudentRouter());
+tenant.use(createNotificationRouter());
 
 // Generic REST for each entity collection, always filtered by req.tenantId
 const colParam = (req, res, next) => {

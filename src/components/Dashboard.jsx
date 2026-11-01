@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { ActionRequiredCard } from './NotificationsCenter';
 import { useLibrary } from '../context/LibraryContext';
 import { motion } from 'framer-motion';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -111,6 +112,8 @@ export const Dashboard = ({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
     >
+      <ActionRequiredCard setActiveTab={setActiveTab} />
+
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: '16px' }}>
         <div>

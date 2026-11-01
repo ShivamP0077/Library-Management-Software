@@ -90,3 +90,47 @@ export function calculatePricing({
   };
 }
 
+/**
+ * Build percentage-based pricing tiers for a plan.
+ *
+ * @param {number} monthlyPrice - Base price for a single month.
+ * @param {Array<{months: number, discountPercent: number}>} durations - Optional durations.
+ * @returns {Array<{
+ *   durationMonths: number,
+ *   basePrice: number,
+ *   discountType: 'Percentage',
+ *   discountValue: number,
+ *   discountAmount: number,
+ *   netPrice: number
+ * }>}
+ */
+export function buildDurationPricing(monthlyPrice, durations) {
+  const parsedMonthly = Number(monthlyPrice);
+  const safeMonthlyPrice = Number.isFinite(parsedMonthly) && parsedMonthly > 0 ? parsedMonthly : 0;
+
+  if (!Array.isArray(durations)) return [];
+
+  return durations.reduce((pricing, duration) => {
+    const months = Number(duration?.months);
+    if (!Number.isFinite(months) || months <= 0) return pricing;
+
+    const parsedDiscount = Number(duration?.discountPercent);
+    const discountPercent = Number.isFinite(parsedDiscount)
+      ? Math.min(100, Math.max(0, parsedDiscount))
+      : 0;
+
+    const basePrice = safeMonthlyPrice * months;
+    const discountAmount = Math.round((basePrice * discountPercent) / 100);
+
+    pricing.push({
+      durationMonths: months,
+      basePrice,
+      discountType: 'Percentage',
+      discountValue: discountPercent,
+      discountAmount,
+      netPrice: basePrice - discountAmount
+    });
+
+    return pricing;
+  }, []);
+}

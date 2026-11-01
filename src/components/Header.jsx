@@ -14,10 +14,11 @@ import {
   Settings,
   ShieldCheck,
   Menu,
-  X
+  X,
+  RefreshCw
 } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { RefreshButton } from './RefreshButton';
+import toast from 'react-hot-toast';
 
 export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
   const { 
@@ -28,8 +29,24 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
     staffMembers, 
     currentStaff, 
     setCurrentStaff,
-    hasPermission
+    hasPermission,
+    refreshData,
+    isRefreshing
   } = useLibrary();
+
+  const handleRefresh = async () => {
+    if (isRefreshing) return;
+    try {
+      const refreshed = await refreshData();
+      if (refreshed) {
+        toast.success('Data refreshed successfully.');
+      } else {
+        toast.error('No data available on the server.');
+      }
+    } catch (e) {
+      toast.error('Could not refresh data. Please try again.');
+    }
+  };
 
   const tabs = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -121,8 +138,38 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
             </button>
           )}
 
-          {/* Global Refresh Button */}
-          <RefreshButton />
+          {/* Global Refresh Button (data-only refresh, no page reload) */}
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            title="Refresh Data"
+            aria-label="Refresh Data"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '36px',
+              height: '36px',
+              borderRadius: '8px',
+              background: '#111827',
+              color: '#ffffff',
+              border: '1px solid #1f2937',
+              cursor: isRefreshing ? 'not-allowed' : 'pointer',
+              opacity: isRefreshing ? 0.7 : 1,
+              transition: 'all 0.2s ease',
+              boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+              flexShrink: 0
+            }}
+          >
+            <motion.div
+              animate={{ rotate: isRefreshing ? 360 : 0 }}
+              transition={{ duration: 1, repeat: isRefreshing ? Infinity : 0, ease: 'linear' }}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >
+              <RefreshCw size={15} color="#ffffff" />
+            </motion.div>
+          </button>
         </div>
       </div>
 

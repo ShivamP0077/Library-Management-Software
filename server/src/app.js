@@ -15,7 +15,14 @@ export function createApp() {
   app.use(cors({ origin: corsOrigins.includes('*') ? true : corsOrigins }));
   app.set('trust proxy', 1);
   app.use(express.json({ limit: process.env.JSON_LIMIT || '25mb' })); // documents are base64 data URLs
-  if (process.env.NODE_ENV !== 'test') app.use(morgan('dev'));
+  if (process.env.NODE_ENV !== 'test') {
+    // Never log query strings for OAuth routes (they can contain codes/state).
+    morgan.token('safe-url', (req) => {
+      const url = req.originalUrl || req.url || '';
+      return url.startsWith('/api/auth/google') ? url.split('?')[0] : url;
+    });
+    app.use(morgan(':method :safe-url :status :response-time ms'));
+  }
 
   app.get('/health', healthHandler); // Render health check
   // TEMPORARY maintenance endpoints, mounted only when MAINT_TOKEN is set.

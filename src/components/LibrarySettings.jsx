@@ -9,6 +9,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { NumericInput } from './NumericInput';
 import { SetupWizard } from './SetupWizard';
+import { WhatsAppSettings } from './WhatsAppSettings';
 import { resolveConfigurationScope, matchesScope } from '../utils/scopeResolver';
 import { 
   STAFF_MODULES, STAFF_ACTIONS, STAFF_ROLES, 
@@ -30,8 +31,10 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
     addStaffMember, updateStaffMember, toggleStaffStatus, deleteStaffMember, hasPermission
   } = useLibrary();
 
+  const canManageWhatsapp = !currentStaff || currentStaff.role === 'Admin' || currentStaff.role === 'Manager' || hasPermission?.('settings', 'manage') || hasPermission?.('settings', 'edit');
+
   // Navigation tab for clean organization (Problem 22: Level 2 Category Tabs)
-  const [activeTab, setActiveTab] = useState('plans'); // 'plans' | 'shifts' | 'seatTypes' | 'sections' | 'branches' | 'admission' | 'billing' | 'staff' | 'data'
+  const [activeTab, setActiveTab] = useState('plans'); // 'plans' | 'shifts' | 'seatTypes' | 'sections' | 'branches' | 'admission' | 'billing' | 'whatsapp' | 'staff' | 'data'
   const [viewLevel, setViewLevel] = useState('branches'); // 'branches' | 'modules' | 'module-view'
 
   // Setup Wizard Modal State
@@ -896,6 +899,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
               { id: 'branches', label: '🏢 Branch Details' },
               { id: 'admission', label: '📄 Document Requirements' },
               { id: 'billing', label: '⚙️ General & Billing Settings' },
+              { id: 'whatsapp', label: '💬 WhatsApp' },
               { id: 'staff', label: '👥 Staff Permissions' },
               { id: 'data', label: '💾 Data Hub & Testing' }
             ].map(tab => (
@@ -1646,6 +1650,13 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
             </button>
           </div>
         </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* TAB 4.5: WHATSAPP INTEGRATION */}
+      {/* ======================================================== */}
+      {activeTab === 'whatsapp' && (
+        <WhatsAppSettings canManage={canManageWhatsapp} />
       )}
 
       {/* ======================================================== */}

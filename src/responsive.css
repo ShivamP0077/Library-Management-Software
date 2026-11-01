@@ -34,6 +34,7 @@ img, svg, canvas, video { max-width: 100%; }
 /* ---------------- Mobile ---------------- */
 @media (max-width: 767px) {
   .mobile-only { display: revert !important; }
+  .desktop-only { display: none !important; }
   button.mobile-only, .icon-btn.mobile-only { display: inline-flex !important; }
 
   /* Header: brand row only; controls + full nav live in the collapsible drawer */
@@ -133,3 +134,28 @@ img, svg, canvas, video { max-width: 100%; }
   .sa-main { padding: 12px !important; }
   #sa-totals > * { min-width: calc(50% - 6px) !important; }
 }
+
+/* Radios/checkboxes never stretch (BUG-01) */
+input[type="radio"], input[type="checkbox"] { width: auto !important; min-height: 0 !important; flex-shrink: 0; margin: 0; accent-color: var(--brand-primary, #2563eb); }
+.radio-group { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.radio-group label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; padding: 6px 2px; white-space: nowrap; }
+
+/* Compact mobile list rows (BUG-06 / BUG-07) */
+.compact-list { flex-direction: column; width: 100%; max-width: 100%; border: 1px solid var(--border-light); border-radius: 12px; background: var(--bg-surface); overflow: hidden; }
+.compact-list.mobile-only { display: none !important; }
+@media (max-width: 767px) { .compact-list.mobile-only { display: flex !important; } }
+.compact-row {
+  display: flex; align-items: center; flex-wrap: nowrap; gap: 10px;
+  padding: 10px 12px; min-height: 52px; cursor: pointer;
+  white-space: nowrap; overflow: hidden;
+}
+.compact-row + .compact-row { border-top: 1px solid var(--border-light); }
+.compact-row .c-main { flex: 1 1 auto; min-width: 0; font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
+.compact-row .c-meta { flex: 0 0 auto; font-size: 12px; font-weight: 600; background: #f3f4f6; padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
+.compact-row .c-amount { flex: 0 0 auto; font-weight: 700; color: #10b981; font-size: 14px; white-space: nowrap; }
+.compact-row .badge { flex: 0 0 auto; white-space: nowrap; }
+.compact-row .btn { flex: 0 0 auto; padding: 6px 12px !important; min-height: 40px !important; min-width: 40px; font-size: 12px; white-space: nowrap; }
+.compact-empty { padding: 32px 12px; text-align: center; color: var(--text-tertiary); font-size: 13px; }
+
+/* Touch-friendly row actions (>=40px targets) without wrapping rows */
+.data-grid td button, .data-grid td .btn { min-height: 40px; min-width: 40px; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; }

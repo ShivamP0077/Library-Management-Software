@@ -727,13 +727,48 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
     students, archivedStudents, expenses, payments, waitingList
   };
 
-  useEffect(() => {
-    let cancelled = false;
+  // Applies a backend snapshot to state without touching UI filters or form drafts.
+  const applyRemoteState = (remote) => {
+    const sync = syncRef.current;
     const setters = {
       branches: setBranches, sections: setSections, seatTypes: setSeatTypes, seats: setSeats,
       shifts: setShifts, plans: setPlans, staffMembers: setStaffMembers, students: setStudents,
       archivedStudents: setArchivedStudents, expenses: setExpenses, payments: setPayments, waitingList: setWaitingList
     };
+    if (remote.settings) { sync.markSynced('settings', remote.settings); setSettings(remote.settings); }
+    SYNCED_COLLECTIONS.forEach(c => {
+      const items = remote[c] || [];
+      if (c === 'staffMembers' && items.length === 0) return; // never leave the app without a staff user
+      sync.markSynced(c, items);
+      setters[c](items);
+    });
+  };
+
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Data-only refresh: re-fetches the backend snapshot (no page reload, filters preserved).
+  const refreshData = async () => {
+    setIsRefreshing(true);
+    try {
+      const remote = await api.getState();
+      const hasRemoteData = !!remote.settings || SYNCED_COLLECTIONS.some(c => (remote[c] || []).length > 0);
+      if (!hasRemoteData) {
+        setBackendStatus('online');
+        return false;
+      }
+      applyRemoteState(remote);
+      setBackendStatus('online');
+      return true;
+    } catch (e) {
+      setBackendStatus('offline');
+      throw e;
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
     const sync = syncRef.current;
     (async () => {
       try {
@@ -741,13 +776,8 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         if (cancelled) return;
         const hasRemoteData = !!remote.settings || SYNCED_COLLECTIONS.some(c => (remote[c] || []).length > 0);
         if (hasRemoteData) {
-          if (remote.settings) { sync.markSynced('settings', remote.settings); setSettings(remote.settings); }
-          SYNCED_COLLECTIONS.forEach(c => {
-            const items = remote[c] || [];
-            if (c === 'staffMembers' && items.length === 0) return;
-            sync.markSynced(c, items);
-            setters[c](items);
-          });
+          // Server wins: load its data into state (and the localStorage cache via the effects above)
+          applyRemoteState(remote);
           if (!readOnly) sync.enable();
         } else if (!readOnly) {
           sync.enable();
@@ -757,8 +787,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
           await Promise.all(SYNCED_COLLECTIONS.map(k => sync.push(k, local[k])));
           const fresh = await api.getState();
           if (cancelled) return;
-          if (fresh.settings) { sync.markSynced('settings', fresh.settings); setSettings(fresh.settings); }
-          SYNCED_COLLECTIONS.forEach(c => { const items = fresh[c] || []; if (c === 'staffMembers' && !items.length) return; sync.markSynced(c, items); setters[c](items); });
+          applyRemoteState(fresh);
         }
         setBackendStatus('online');
       } catch (e) {
@@ -2631,6 +2660,11 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       archivedStudents, setArchivedStudents,
       waitingList, setWaitingList,
       todayStr,
+      backendStatus,
+      isRefreshing,
+      refreshData,
+      readOnly,
+      lockedStaffId,
       // Central helpers
       getSetupStatus,
       resolveScope,

@@ -38,10 +38,17 @@ export const api = {
   saveSettings: (settings) => apiRequest('/settings', { method: 'PUT', body: settings }),
   syncCollection: (col, items) => apiRequest(`/${col}`, { method: 'PUT', body: items }),
   authConfig: () => apiRequest('/auth/config'),
+  googleStartUrl: () => `${API_BASE}/auth/google/start`,
   login: async (credentials) => { const r = await apiRequest('/auth/login', { method: 'POST', body: credentials }); setToken(r.token); return r; },
   loginWithGoogle: async (credential) => { const r = await apiRequest('/auth/google', { method: 'POST', body: { credential } }); setToken(r.token); return r; },
   me: () => apiRequest('/auth/me'),
   logout: () => setToken(null),
+  // WhatsApp
+  whatsappStatus: () => apiRequest('/whatsapp/status'),
+  whatsappConnect: () => apiRequest('/whatsapp/connect', { method: 'POST' }),
+  whatsappLogout: () => apiRequest('/whatsapp/logout', { method: 'POST' }),
+  whatsappSaveSettings: (body) => apiRequest('/whatsapp/settings', { method: 'PUT', body }),
+  whatsappSendReceipt: (receiptNo, type) => apiRequest(`/whatsapp/receipts/${encodeURIComponent(receiptNo)}`, { method: 'POST', body: { type } }),
   // Super admin
   adminLibraries: () => apiRequest('/admin/libraries'),
   adminMetrics: () => apiRequest('/admin/metrics'),

@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useLibrary } from '../context/LibraryContext';
 import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  Search, UserPlus, Phone, MapPin, History, Edit, RefreshCw, 
+  Search, UserPlus, Phone, MapPin, History, Edit, RefreshCw, Users, Bell, XCircle,
   ArrowRightLeft, CreditCard, FileText, X, CheckCircle, AlertCircle, Trash2, Archive, Download, Clock
 } from 'lucide-react';
 import { NumericInput } from './NumericInput';
@@ -15,12 +16,177 @@ import { handleSplitAmountChange, handleAddSplitComponent, handleRemoveSplitComp
 import { calculateSubscriptionExpiry, calculateRenewalStartDate, getSubscriptionStatus, formatDate } from '../utils/dateUtils';
 import { getDocumentBlob, saveDocumentBlob } from '../utils/idbStorage';
 
+/**
+ * Accessible kebab/context menu. Rendered in a portal with fixed positioning so
+ * parent overflow/transform styles can never clip or hide it.
+ */
+const ActionMenu = ({ items = [], label = 'More actions', triggerClassName = 'btn btn-ghost', triggerStyle, triggerContent, menuWidth = 220 }) => {
+  const menuItems = items.filter(Boolean);
+  const [isOpen, setIsOpen] = useState(false);
+  const [isPositioned, setIsPositioned] = useState(false);
+  const [coords, setCoords] = useState({ top: 0, left: 0 });
+  const triggerRef = useRef(null);
+  const menuRef = useRef(null);
+
+  useLayoutEffect(() => {
+    if (!isOpen || !triggerRef.current || !menuRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const menuRect = menuRef.current.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const edge = 8;
+    const gap = 6;
+
+    // Prefer aligning the menu's right edge with the trigger (opens leftwards).
+    let left = rect.right - menuRect.width;
+    if (left < edge) left = rect.left; // No room on the left: flip to open rightwards.
+    left = Math.min(Math.max(edge, left), viewportWidth - menuRect.width - edge);
+
+    // Open below the trigger, flipping above when the bottom would overflow.
+    let top = rect.bottom + gap;
+    if (top + menuRect.height > viewportHeight - edge) {
+      const aboveTrigger = rect.top - menuRect.height - gap;
+      top = aboveTrigger >= edge ? aboveTrigger : Math.max(edge, viewportHeight - menuRect.height - edge);
+    }
+
+    setCoords({ top, left });
+    setIsPositioned(true);
+  }, [isOpen, menuItems.length]);
+
+  useEffect(() => {
+    if (!isOpen || !isPositioned || !menuRef.current) return;
+    const firstItem = menuRef.current.querySelector('button:not([disabled])');
+    firstItem?.focus({ preventScroll: true });
+  }, [isOpen, isPositioned]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setIsPositioned(false);
+      return undefined;
+    }
+
+    const closeMenu = () => setIsOpen(false);
+    const handlePointerDown = (event) => {
+      if (triggerRef.current?.contains(event.target)) return;
+      if (menuRef.current?.contains(event.target)) return;
+      closeMenu();
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        closeMenu();
+        triggerRef.current?.focus({ preventScroll: true });
+      }
+    };
+
+    const handleScroll = (event) => {
+      if (menuRef.current?.contains(event.target)) return;
+      closeMenu();
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('resize', closeMenu);
+    window.addEventListener('scroll', handleScroll, true);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('resize', closeMenu);
+      window.removeEventListener('scroll', handleScroll, true);
+    };
+  }, [isOpen]);
+
+  const handleMenuKeyDown = (event) => {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const buttons = Array.from(menuRef.current?.querySelectorAll('button:not([disabled])') || []);
+    if (!buttons.length) return;
+    event.preventDefault();
+    const current = buttons.indexOf(document.activeElement);
+    let next = current;
+    if (event.key === 'ArrowDown') next = (current + 1) % buttons.length;
+    if (event.key === 'ArrowUp') next = (current - 1 + buttons.length) % buttons.length;
+    if (event.key === 'Home') next = 0;
+    if (event.key === 'End') next = buttons.length - 1;
+    buttons[next]?.focus({ preventScroll: true });
+  };
+
+  if (menuItems.length === 0) return null;
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={triggerClassName}
+        style={triggerStyle}
+        onClick={(event) => {
+          event.stopPropagation();
+          setIsOpen(open => !open);
+        }}
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+        aria-label={label}
+        title={label}
+      >
+        {triggerContent}
+      </button>
+
+      {isOpen && createPortal(
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label={label}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={handleMenuKeyDown}
+          style={{
+            position: 'fixed',
+            top: coords.top,
+            left: coords.left,
+            width: menuWidth,
+            maxHeight: 'calc(100vh - 16px)',
+            overflowY: 'auto',
+            visibility: isPositioned ? 'visible' : 'hidden',
+            background: 'var(--bg-surface, #ffffff)',
+            border: '1px solid var(--border-strong, rgba(0,0,0,0.1))',
+            borderRadius: '10px',
+            boxShadow: 'var(--shadow-float, 0 25px 50px -12px rgba(0,0,0,0.15))',
+            padding: '6px',
+            zIndex: 1300,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '2px'
+          }}
+        >
+          {menuItems.map(item => (
+            <button
+              key={item.label}
+              type="button"
+              role="menuitem"
+              className={`dropdown-item${item.danger ? ' danger' : ''}`}
+              style={{ minHeight: '40px', padding: '10px 12px', fontSize: '14px' }}
+              onClick={() => {
+                setIsOpen(false);
+                item.onClick?.();
+              }}
+            >
+              {item.icon}
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </div>,
+        document.body
+      )}
+    </>
+  );
+};
+
 export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedStudent, setActiveTab, renewActionStudent, setRenewActionStudent, relocateActionStudent, setRelocateActionStudent }) => {
   const { 
     settings, students, branches, sections, activeBranchId, plans, shifts, seatTypes, 
     renewSubscription, changeSeat, addStudentDocument, extendStudentDueDate, archiveStudent, 
     cancelAdmission, cancelRenewalTransaction, getValidDesksList, getAvailableEligibleSeats, 
-    currentStaff, waitingList, removeFromWaitingList, updateWaitingListStatus 
+    currentStaff, waitingList, removeFromWaitingList, updateWaitingListStatus, hasPermission 
   } = useLibrary();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -28,7 +194,6 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   const [shiftFilter, setShiftFilter] = useState('All');
   const [activeDrawerTab, setActiveDrawerTab] = useState('history');
   const [viewMode, setViewMode] = useState('active'); // active | waiting 
-  const [isMoreActionsOpen, setIsMoreActionsOpen] = useState(false);
   const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
   const [isExcelViewOpen, setIsExcelViewOpen] = useState(false);
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
@@ -505,6 +670,10 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     }
   };
 
+  const canCreateAdmission = hasPermission('admissions', 'create') || hasPermission('students', 'create');
+  const canViewStudents = hasPermission('students', 'view');
+  const canManageStudents = hasPermission('students', 'edit') || hasPermission('renewals', 'create') || Boolean(currentStaff?.permissions?.canCancelAdmission);
+
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       
@@ -523,30 +692,42 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
           </button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-          <div style={{ position: 'relative', display: 'inline-block' }} onMouseLeave={() => setIsMoreActionsOpen(false)}>
-            <button className="btn btn-secondary" style={{ padding: '8px 12px', fontWeight: 800, fontSize: '18px', background: 'var(--brand-primary)', color: '#fff', border: 'none' }} onClick={() => setIsMoreActionsOpen(!isMoreActionsOpen)}>
-              ⋮
-            </button>
-            {isMoreActionsOpen && (
-              <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: '4px', background: 'var(--bg-surface)', border: '1px solid var(--border-light)', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 50, display: 'flex', flexDirection: 'column', minWidth: '180px', overflow: 'hidden' }}>
-                <button style={{ padding: '12px 16px', textAlign: 'left', background: 'none', border: 'none', borderBottom: '1px solid var(--border-light)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', fontSize: '14px' }} onClick={() => { onOpenNewStudent(); setIsMoreActionsOpen(false); }}>
-                  <UserPlus size={14} /> New Admission
-                </button>
-                <button style={{ padding: '12px 16px', textAlign: 'left', background: 'none', border: 'none', borderBottom: '1px solid var(--border-light)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', fontSize: '14px' }} onClick={() => { setIsBulkModalOpen(true); setIsMoreActionsOpen(false); }}>
-                  <Users size={14} /> Bulk Admission
-                </button>
-                <button style={{ padding: '12px 16px', textAlign: 'left', background: 'none', border: 'none', borderBottom: '1px solid var(--border-light)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', fontSize: '14px' }} onClick={() => { setIsSelectionMode(!isSelectionMode); setSelectedIds([]); setIsMoreActionsOpen(false); }}>
-                  <CheckCircle size={14} /> {isSelectionMode ? 'Cancel Selection' : 'Select Students'}
-                </button>
-                <button style={{ padding: '12px 16px', textAlign: 'left', background: 'none', border: 'none', borderBottom: '1px solid var(--border-light)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', fontSize: '14px' }} onClick={() => { setIsExcelViewOpen(true); setIsMoreActionsOpen(false); }}>
-                  <Download size={14} /> View in Excel
-                </button>
-                <button style={{ padding: '12px 16px', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', fontSize: '14px' }} onClick={() => { setActiveTab('archives'); setIsMoreActionsOpen(false); }}>
-                  <History size={14} /> History
-                </button>
-              </div>
-            )}
-          </div>
+          <ActionMenu
+            label="Student record actions"
+            triggerClassName="btn btn-secondary"
+            triggerStyle={{ padding: '8px 12px', fontWeight: 800, fontSize: '18px', background: 'var(--brand-primary)', color: '#fff', border: 'none' }}
+            triggerContent={<span aria-hidden="true">⋮</span>}
+            items={[
+              canCreateAdmission && {
+                label: 'New Admission',
+                icon: <UserPlus size={15} />,
+                onClick: () => onOpenNewStudent()
+              },
+              canCreateAdmission && {
+                label: 'Bulk Admission',
+                icon: <Users size={15} />,
+                onClick: () => setIsBulkModalOpen(true)
+              },
+              canManageStudents && {
+                label: isSelectionMode ? 'Cancel Selection' : 'Select Students',
+                icon: <CheckCircle size={15} />,
+                onClick: () => {
+                  setIsSelectionMode(!isSelectionMode);
+                  setSelectedIds([]);
+                }
+              },
+              canViewStudents && {
+                label: 'View in Excel',
+                icon: <Download size={15} />,
+                onClick: () => setIsExcelViewOpen(true)
+              },
+              {
+                label: 'History',
+                icon: <History size={15} />,
+                onClick: () => setActiveTab('archives')
+              }
+            ]}
+          />
         </div>
       </div>
 

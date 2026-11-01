@@ -1,7 +1,14 @@
 import React, { useState, useMemo } from 'react';
 import { useLibrary } from '../context/LibraryContext';
-import { CreditCard, Printer, Search, DollarSign, Calendar, UserCheck, Filter } from 'lucide-react';
+import { CreditCard, Printer, Search, DollarSign, Calendar, UserCheck, Filter, X } from 'lucide-react';
 import { motion } from 'framer-motion';
+
+const DetailRow = ({ label, value }) => (
+  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', fontSize: '13px' }}>
+    <span style={{ color: 'var(--text-secondary)', flexShrink: 0 }}>{label}</span>
+    <div style={{ fontWeight: 600, color: 'var(--text-primary)', textAlign: 'right', minWidth: 0, overflowWrap: 'anywhere' }}>{value}</div>
+  </div>
+);
 
 export const PaymentManager = ({ onPrintReceipt }) => {
   const { payments, branches, activeBranchId } = useLibrary();
@@ -11,6 +18,7 @@ export const PaymentManager = ({ onPrintReceipt }) => {
   const [datePreset, setDatePreset] = useState('All Dates');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
+  const [viewPayment, setViewPayment] = useState(null);
 
   const uniqueStaff = useMemo(() => {
     return Array.from(new Set(payments.map(p => p.staffName).filter(Boolean)));
@@ -110,6 +118,9 @@ export const PaymentManager = ({ onPrintReceipt }) => {
   const totalCollectedAmount = useMemo(() => {
     return filteredPayments.reduce((sum, p) => sum + getEffectivePortion(p, methodFilter), 0);
   }, [filteredPayments, methodFilter]);
+
+  const selectedPortion = viewPayment ? getEffectivePortion(viewPayment, methodFilter) : 0;
+  const selectedNetTotal = viewPayment ? Number(viewPayment.netTotal || 0) : 0;
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -220,8 +231,29 @@ export const PaymentManager = ({ onPrintReceipt }) => {
         )}
       </div>
 
+      {/* Mobile compact list (BUG-07) */}
+      <div className="compact-list mobile-only">
+        {filteredPayments.length === 0 ? (
+          <div className="compact-empty">No payment transactions matching your filter criteria.</div>
+        ) : (
+          filteredPayments.map(pay => (
+            <div className="compact-row" key={pay.receiptNo} onClick={() => setViewPayment(pay)}>
+              <span className="c-main">{pay.studentName}</span>
+              <span className="c-amount">₹{getEffectivePortion(pay, methodFilter).toLocaleString()}</span>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={(e) => { e.stopPropagation(); setViewPayment(pay); }}
+              >
+                View
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+
       {/* Ledger Table */}
-      <div className="table-container">
+      <div className="table-container desktop-only">
         <table className="data-grid">
           <thead>
             <tr>
@@ -318,6 +350,90 @@ export const PaymentManager = ({ onPrintReceipt }) => {
           </tbody>
         </table>
       </div>
+
+      {/* Payment details modal */}
+      {viewPayment && (
+        <div className="modal-overlay" onClick={() => setViewPayment(null)}>
+          <div className="modal-content" style={{ maxWidth: '460px' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <CreditCard size={20} color="var(--brand-primary)" />
+                <h3 style={{ fontSize: '18px', fontWeight: 600 }}>Payment Details</h3>
+              </div>
+              <button
+                type="button"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', color: 'var(--text-secondary)' }}
+                onClick={() => setViewPayment(null)}
+                title="Close"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <DetailRow label="Receipt" value={viewPayment.receiptNo} />
+              <DetailRow
+                label="Student"
+                value={
+                  <div>
+                    <div>{viewPayment.studentName}</div>
+                    <div style={{ fontSize: '12px', fontWeight: 400, color: 'var(--text-tertiary)' }}>{viewPayment.studentId}</div>
+                  </div>
+                }
+              />
+              <DetailRow label="Branch" value={viewPayment.branchName || getBranchCode(viewPayment.branchId)} />
+              <DetailRow label="Plan" value={viewPayment.planName} />
+              <DetailRow
+                label="Mode"
+                value={
+                  viewPayment.method === 'Split' && Array.isArray(viewPayment.breakdown) ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <div>Split</div>
+                      {viewPayment.breakdown.map((b, idx) => (
+                        <div key={idx} style={{ fontSize: '12px', fontWeight: 400, color: 'var(--text-secondary)' }}>
+                          {b.method}: ₹{b.amount}
+                        </div>
+                      ))}
+                    </div>
+                  ) : viewPayment.method
+                }
+              />
+              <DetailRow label="Date" value={viewPayment.date} />
+              <DetailRow
+                label="Amount"
+                value={
+                  <div>
+                    <div style={{ color: '#10b981' }}>₹{selectedPortion.toLocaleString()}</div>
+                    {selectedPortion !== selectedNetTotal && (
+                      <div style={{ fontSize: '11px', fontWeight: 400, color: 'var(--text-tertiary)' }}>
+                        Total: ₹{selectedNetTotal.toLocaleString()}
+                      </div>
+                    )}
+                  </div>
+                }
+              />
+              <DetailRow label="Discount" value={`₹${Number(viewPayment.discount || 0).toLocaleString()}`} />
+              <DetailRow label="Fine" value={`₹${Number(viewPayment.fine || 0).toLocaleString()}`} />
+              <DetailRow label="Staff" value={viewPayment.staffName || '—'} />
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setViewPayment(null)}>Close</button>
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  const pay = viewPayment;
+                  setViewPayment(null);
+                  onPrintReceipt(pay);
+                }}
+              >
+                <Printer size={16} />
+                <span>Print</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </motion.div>
   );
 };

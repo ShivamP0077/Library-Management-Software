@@ -14,6 +14,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Toaster } from 'react-hot-toast';
 import { ShieldAlert, ArrowLeft, LogOut, Eye, WifiOff, Cloud } from 'lucide-react';
 import { NotificationsCenter } from './components/NotificationsCenter';
+import { SupportCenter } from './components/SupportCenter';
 import { PreviousStudentRecords } from './components/PreviousStudentRecords';
 import { SetupWizard } from './components/SetupWizard';
 import { useLibrary } from './context/LibraryContext';
@@ -88,7 +89,7 @@ export const AppContent = () => {
                 style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
               >
                 <ErrorBoundary componentName="Active Module">
-            {!hasPermission(activeTab, 'view') && activeTab !== 'dashboard' && activeTab !== 'archives' && activeTab !== 'notifications' ? (
+            {!hasPermission(activeTab, 'view') && activeTab !== 'dashboard' && activeTab !== 'archives' && activeTab !== 'notifications' && activeTab !== 'support' ? (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '64px 24px', textAlign: 'center', minHeight: '400px' }}>
                 <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#fee2e2', color: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px' }}>
                   <ShieldAlert size={32} />
@@ -104,6 +105,7 @@ export const AppContent = () => {
             ) : (
               <>
                 {activeTab === 'notifications' && <NotificationsCenter setActiveTab={setActiveTab} />}
+                {activeTab === 'support' && <SupportCenter />}
 
                 {activeTab === 'dashboard' && (
                   <Dashboard

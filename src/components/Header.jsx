@@ -16,7 +16,8 @@ import {
   ShieldCheck,
   Menu,
   X,
-  RefreshCw
+  RefreshCw,
+  LifeBuoy,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
@@ -56,11 +57,12 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
     { id: 'payments', label: 'Payments & Fees', icon: CreditCard },
     { id: 'expenses', label: 'Expenses', icon: Receipt },
     { id: 'reports', label: 'Reports & P&L', icon: BarChart3 },
-    { id: 'settings', label: 'Library Settings', icon: Settings }
+    { id: 'settings', label: 'Library Settings', icon: Settings },
+    { id: 'support', label: 'Help & Support', icon: LifeBuoy }
   ];
 
   const visibleTabs = tabs.filter(t => {
-    if (t.id === 'dashboard') return true;
+    if (t.id === 'dashboard' || t.id === 'support') return true;
     return hasPermission(t.id, 'view');
   });
 

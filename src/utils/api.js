@@ -53,6 +53,10 @@ export const api = {
   seatAllocations: (params = '') => apiRequest(`/seat-allocations${params}`),
   assignSeat: (body) => apiRequest('/seat-allocations/assign', { method: 'POST', body }),
   setSeatMaintenance: (seatId, isMaintenance) => apiRequest(`/seats/${encodeURIComponent(seatId)}/maintenance`, { method: 'PATCH', body: { isMaintenance } }),
+  // Students
+  studentsSummary: (branchId = 'all') => apiRequest(`/students-summary?branchId=${encodeURIComponent(branchId)}`),
+  studentHistory: (id) => apiRequest(`/students/${encodeURIComponent(id)}/history`),
+  deleteArchivedStudent: (id, reason) => apiRequest(`/archived-students/${encodeURIComponent(id)}`, { method: 'DELETE', body: { confirm: id, reason } }),
   // Finance
   feeSuggest: (base, tiers) => apiRequest(`/fees/suggest?base=${encodeURIComponent(base)}&tiers=${encodeURIComponent(tiers)}`),
   recurringExpenses: () => apiRequest('/recurring-expenses'),

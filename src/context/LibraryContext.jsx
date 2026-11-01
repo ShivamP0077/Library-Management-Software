@@ -2034,8 +2034,11 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
     setArchivedStudents(prev => prev.filter(s => s.id !== studentId));
   };
 
-  const permanentlyDeleteStudent = (studentId) => {
+  const permanentlyDeleteStudent = async (studentId) => {
+    // Server records an audited snapshot; payment records are kept.
+    try { await api.deleteArchivedStudent(studentId); } catch (e) { if (e?.status && e.status !== 404) { toast.error(e.message || 'Could not delete'); return false; } }
     setArchivedStudents(prev => prev.filter(s => s.id !== studentId));
+    return true;
   };
 
   const clearArchivedHistory = () => {

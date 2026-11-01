@@ -1,0 +1,10 @@
+import express from 'express'; import mongoose from 'mongoose'; import { MongoMemoryServer } from 'mongodb-memory-server';
+import path from 'node:path';
+process.env.JWT_SECRET='dev'; process.env.JOBS_DISABLED='true';
+const { createApp } = await import('./src/app.js'); const { ensureSuperAdmin } = await import('./src/seed.js');
+const m = await MongoMemoryServer.create(); await mongoose.connect(m.getUri(), { dbName: 'dev' });
+await Promise.all(Object.values(mongoose.models).map(x => x.syncIndexes()));
+await ensureSuperAdmin({ SUPERADMIN_EMAIL: 'super@test.local', SUPERADMIN_PASSWORD: 'SuperSecret#123' });
+const app = express(); app.use(createApp());
+const dist = path.resolve('../dist'); app.use(express.static(dist)); app.get(/.*/, (q, r) => r.sendFile(dist + '/index.html'));
+app.listen(5055, () => console.log('READY'));

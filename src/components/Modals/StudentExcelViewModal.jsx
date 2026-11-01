@@ -25,8 +25,10 @@ export const StudentExcelViewModal = ({ isOpen, onClose, studentsData, title = "
   }, [isOpen, onClose]);
 
   const filteredStudents = useMemo(() => {
+    if (!studentsData || !Array.isArray(studentsData)) return [];
     return studentsData.filter(s => {
-      const q = searchTerm.toLowerCase().trim();
+      if (!s) return false;
+      const q = (searchTerm || '').toLowerCase().trim();
       const normalizeSeat = (seat) => {
         if (!seat) return '';
         const match = String(seat).match(/^([a-zA-Z]+)\s*-?\s*0*(\d+)$/);
@@ -34,15 +36,17 @@ export const StudentExcelViewModal = ({ isOpen, onClose, studentsData, title = "
       };
       const normQ = normalizeSeat(q);
       const normSeat = normalizeSeat(s.seatNo);
-      const matchesSeat = normSeat.startsWith(normQ);
+      const matchesSeat = normSeat ? normSeat.startsWith(normQ) : false;
       
       const isShortSeatPrefix = /^[a-z]{1,2}\s*-?\s*\d{1,2}$/.test(q);
-      const matchesId = isShortSeatPrefix ? false : s.id.toLowerCase().includes(q);
+      const sId = String(s.id || '').toLowerCase();
+      const matchesId = isShortSeatPrefix ? false : sId.includes(q);
       
-      const matchesSearch = !q || s.name.toLowerCase().includes(q) || matchesId || s.phone.includes(q) || matchesSeat;
+      const sName = String(s.name || '').toLowerCase();
+      const sPhone = String(s.phone || '');
+      const matchesSearch = !q || sName.includes(q) || matchesId || sPhone.includes(q) || matchesSeat;
       
-      const status = s.status;
-      
+      const status = s.status || '';
       const matchesStatus = statusFilter === 'All' || status === statusFilter;
       const matchesShift = shiftFilter === 'All' || s.shift === shiftFilter;
 

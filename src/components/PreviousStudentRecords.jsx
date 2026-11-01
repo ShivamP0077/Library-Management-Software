@@ -8,9 +8,10 @@ import {
 } from 'lucide-react';
 import { StudentExcelViewModal } from './Modals/StudentExcelViewModal';
 import { RestoreStudentModal } from './Modals/RestoreStudentModal';
+import { getCanonicalShifts, matchesShiftFilter } from '../utils/shiftUtils';
 
 export const PreviousStudentRecords = ({ setActiveTab }) => {
-  const { archivedStudents, permanentlyDeleteStudent, clearArchivedHistory, branches, activeBranchId, plans, shifts } = useLibrary();
+  const { archivedStudents, permanentlyDeleteStudent, clearArchivedHistory, branches, activeBranchId, plans, shifts, payments } = useLibrary();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [shiftFilter, setShiftFilter] = useState('All');
@@ -19,6 +20,62 @@ export const PreviousStudentRecords = ({ setActiveTab }) => {
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [isExcelViewOpen, setIsExcelViewOpen] = useState(false);
   const [isRestoreModalOpen, setIsRestoreModalOpen] = useState(false);
+
+  const canonicalShifts = React.useMemo(() => {
+    return getCanonicalShifts(shifts);
+  }, [shifts]);
+
+  // Combined & deduplicated payment records (Stable ID-first deduplication)
+  const studentPayments = React.useMemo(() => {
+    if (!selectedStudent) return [];
+    const directHistory = selectedStudent.paymentHistory || [];
+    const contextList = (payments || []).filter(p => p && p.studentId === selectedStudent.id);
+
+    const seenIds = new Set();
+    const seenIdlessKeys = new Set();
+    const combined = [];
+
+    const processRecord = (rec) => {
+      if (!rec) return;
+      const stableId = rec.receiptNo || rec.transactionId || rec.id || rec.paymentId;
+      if (stableId) {
+        const idStr = String(stableId);
+        if (!seenIds.has(idStr)) {
+          seenIds.add(idStr);
+          combined.push(rec);
+        }
+      } else {
+        // Fallback applied ONLY for ID-less records
+        const idlessKey = `${rec.date || ''}_${rec.netTotal || rec.amount || ''}_${rec.method || ''}_${rec.type || ''}`;
+        if (!seenIdlessKeys.has(idlessKey)) {
+          seenIdlessKeys.add(idlessKey);
+          combined.push(rec);
+        }
+      }
+    };
+
+    directHistory.forEach(processRecord);
+    contextList.forEach(processRecord);
+
+    return combined;
+  }, [selectedStudent, payments]);
+
+  // Combined cancellation records
+  const studentCancellations = React.useMemo(() => {
+    if (!selectedStudent) return [];
+    const history = selectedStudent.cancellationHistory || [];
+    if (history.length > 0) return history;
+    if (selectedStudent.cancellationReason || selectedStudent.cancellationDate || selectedStudent.cancelledDate) {
+      return [{
+        cancellationId: selectedStudent.cancellationId || `CAN-${selectedStudent.id}`,
+        date: selectedStudent.cancellationDate || selectedStudent.cancelledDate || 'Recorded on exit',
+        reason: selectedStudent.cancellationReason || 'Admission cancelled',
+        refundAmount: selectedStudent.refundAmount !== undefined ? selectedStudent.refundAmount : 0,
+        staffName: selectedStudent.cancellationStaff || selectedStudent.cancelledBy || 'Staff Member'
+      }];
+    }
+    return [];
+  }, [selectedStudent]);
 
   // Filter Logic
   const filteredStudents = archivedStudents.filter(s => {
@@ -37,7 +94,7 @@ export const PreviousStudentRecords = ({ setActiveTab }) => {
     
     const matchesSearch = !q || s.name.toLowerCase().includes(q) || matchesId || s.phone.includes(q) || matchesSeat;
     const matchesBranch = activeBranchId === 'all' || s.branchId === activeBranchId;
-    const matchesShift = shiftFilter === 'All' || s.shiftId === shiftFilter;
+    const matchesShift = shiftFilter === 'All' || matchesShiftFilter(shifts, s, shiftFilter);
     return matchesSearch && matchesBranch && matchesShift;
   });
 
@@ -102,7 +159,7 @@ export const PreviousStudentRecords = ({ setActiveTab }) => {
         <div style={{ width: '160px' }}>
           <select className="form-select" value={shiftFilter} onChange={(e) => setShiftFilter(e.target.value)}>
             <option value="All">All Shifts</option>
-            {shifts && shifts.map(sh => <option key={sh.id} value={sh.id}>{sh.name}</option>)}
+            {canonicalShifts.map(sh => <option key={sh.id} value={sh.name}>{sh.name}</option>)}
           </select>
         </div>
       </div>
@@ -152,7 +209,14 @@ export const PreviousStudentRecords = ({ setActiveTab }) => {
                     <td><div style={{ fontWeight: 600 }}>{student.seatNo}</div></td>
                     <td><div style={{ fontSize: '13px', background: 'var(--bg-secondary)', padding: '4px 8px', borderRadius: '4px', display: 'inline-block' }}>{student.shift}</div></td>
                     <td>
-                      <span className="badge badge-error">Archived</span>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <span className="badge badge-error">Archived</span>
+                        {student.cancellationHistory && student.cancellationHistory.length > 0 && (
+                          <span style={{ fontSize: '11px', color: '#b91c1c', fontWeight: 500 }}>
+                            Reason: {student.cancellationHistory[0].reason}
+                          </span>
+                        )}
+                      </div>
                     </td>
                   </motion.tr>
                 );
@@ -182,12 +246,13 @@ export const PreviousStudentRecords = ({ setActiveTab }) => {
               <div className="modal-header">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                   <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--text-tertiary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '18px' }}>
-                    {selectedStudent.name.charAt(0)}
+                    {(selectedStudent.name || 'S').charAt(0)}
                   </div>
                   <div>
-                    <h3 style={{ fontSize: '20px', fontWeight: 700, letterSpacing: '-0.02em' }}>{selectedStudent.name}</h3>
+                    <h3 style={{ fontSize: '20px', fontWeight: 700, letterSpacing: '-0.02em' }}>{selectedStudent.name || 'Student'}</h3>
                     <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                      {selectedStudent.id} • {selectedStudent.phone}
+                      {selectedStudent.id} • {selectedStudent.phone || 'No Phone'}
+                      {selectedStudent.emergencyPhone && <span> • 🚨 Emergency: {selectedStudent.emergencyPhone}</span>}
                     </div>
                   </div>
                 </div>
@@ -197,11 +262,11 @@ export const PreviousStudentRecords = ({ setActiveTab }) => {
               <div style={{ padding: '24px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', background: 'var(--bg-main)' }}>
                 <div>
                   <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>PREVIOUS DESK</span>
-                  <div style={{ fontSize: '18px', fontWeight: 700, marginTop: '4px' }}>{selectedStudent.seatNo}</div>
+                  <div style={{ fontSize: '18px', fontWeight: 700, marginTop: '4px' }}>{selectedStudent.seatNo || 'None'}</div>
                 </div>
                 <div>
                   <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>SHIFT</span>
-                  <div style={{ fontSize: '16px', fontWeight: 500, marginTop: '4px' }}>{selectedStudent.shift}</div>
+                  <div style={{ fontSize: '16px', fontWeight: 500, marginTop: '4px' }}>{selectedStudent.shift || 'None'}</div>
                 </div>
                 <div>
                   <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>STATUS</span>
@@ -210,6 +275,26 @@ export const PreviousStudentRecords = ({ setActiveTab }) => {
                   </div>
                 </div>
               </div>
+
+              {studentCancellations.length > 0 && (
+                <div style={{ margin: '0 24px 16px 24px', padding: '14px 18px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <strong style={{ fontSize: '13px', color: '#b91c1c', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <AlertTriangle size={15} /> Cancellation Details
+                    </strong>
+                    <span style={{ fontSize: '12px', color: '#7f1d1d' }}>{studentCancellations[0].date}</span>
+                  </div>
+                  <div style={{ fontSize: '13px', color: '#991b1b', lineHeight: 1.4 }}>
+                    <strong>Reason:</strong> {studentCancellations[0].reason}
+                  </div>
+                  <div style={{ display: 'flex', gap: '16px', marginTop: '6px', fontSize: '12px', color: '#b91c1c' }}>
+                    <span>Processed By: <strong>{studentCancellations[0].staffName || 'Admin'}</strong></span>
+                    {studentCancellations[0].refundAmount > 0 && (
+                      <span>Refund: <strong>₹{studentCancellations[0].refundAmount?.toLocaleString()}</strong></span>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div style={{ padding: '16px 24px', display: 'flex', gap: '12px', borderTop: '1px solid var(--border-light)', borderBottom: '1px solid var(--border-light)' }}>
                 <button className="btn btn-primary" onClick={() => setIsRestoreModalOpen(true)}>
@@ -226,7 +311,7 @@ export const PreviousStudentRecords = ({ setActiveTab }) => {
               </div>
 
               <div style={{ display: 'flex', borderBottom: '1px solid var(--border-light)', padding: '0 24px' }}>
-                {['history', 'seats', 'payments'].map(tab => (
+                {['history', 'seats', 'payments', 'cancellations'].map(tab => (
                   <button key={tab} onClick={() => setActiveDrawerTab(tab)} style={{ 
                     padding: '16px 24px', background: 'transparent', border: 'none', cursor: 'pointer',
                     fontSize: '14px', fontWeight: 600, color: activeDrawerTab === tab ? 'var(--brand-primary)' : 'var(--text-secondary)',
@@ -292,27 +377,82 @@ export const PreviousStudentRecords = ({ setActiveTab }) => {
 
                 {activeDrawerTab === 'payments' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    {selectedStudent.payments?.map(payment => (
-                      <div key={payment.receiptNo} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', background: 'var(--bg-main)', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                          <div style={{ width: '40px', height: '40px', borderRadius: '8px', background: '#ecfdf5', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <CreditCard size={18} />
+                    {studentPayments.map((payment, pIdx) => {
+                      const txId = payment.receiptNo || payment.transactionId || payment.id || `TXN-${pIdx + 1}`;
+                      const amount = payment.netTotal !== undefined ? payment.netTotal : (payment.amount !== undefined ? payment.amount : 0);
+                      const isRefund = payment.type === 'Refund' || amount < 0 || payment.status === 'Refunded';
+                      return (
+                        <div key={txId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', background: 'var(--bg-main)', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <div style={{ width: '40px', height: '40px', borderRadius: '8px', background: isRefund ? '#fef2f2' : '#ecfdf5', color: isRefund ? '#ef4444' : '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              <CreditCard size={18} />
+                            </div>
+                            <div>
+                              <div style={{ fontWeight: 600, fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span>{txId}</span>
+                                {isRefund && (
+                                  <span style={{ fontSize: '11px', background: '#fee2e2', color: '#b91c1c', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>Refund</span>
+                                )}
+                              </div>
+                              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                                {payment.date || 'N/A'} • {payment.method || 'Standard'} {payment.staffName ? `• by ${payment.staffName}` : ''}
+                              </div>
+                              {payment.reason && (
+                                <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '2px' }}>Reason: {payment.reason}</div>
+                              )}
+                            </div>
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontWeight: 700, fontSize: '15px', color: isRefund ? '#ef4444' : 'var(--text-primary)' }}>
+                              {isRefund ? `-₹${Math.abs(amount)}` : `₹${amount}`}
+                            </div>
+                            <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '2px' }}>
+                              {payment.status || 'Completed'}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {studentPayments.length === 0 && (
+                      <div style={{ color: 'var(--text-secondary)', fontSize: '14px', textAlign: 'center', padding: '24px 0' }}>
+                        No payments recorded for this student.
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {activeDrawerTab === 'cancellations' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {studentCancellations.map((can, cIdx) => (
+                      <div key={can.cancellationId || `can-${cIdx}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '16px', background: 'var(--bg-main)', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                          <div style={{ width: '40px', height: '40px', borderRadius: '8px', background: '#fef2f2', color: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: '2px' }}>
+                            <AlertTriangle size={18} />
                           </div>
                           <div>
-                            <div style={{ fontWeight: 600, fontSize: '14px' }}>{payment.receiptNo}</div>
-                            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>{payment.date} • {payment.method}</div>
+                            <div style={{ fontWeight: 600, fontSize: '14px' }}>
+                              {can.cancellationId || 'Admission Cancellation'}
+                            </div>
+                            <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                              Reason: <strong style={{ color: 'var(--text-primary)' }}>{can.reason || 'No reason specified'}</strong>
+                            </div>
+                            <div style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '4px' }}>
+                              Processed on {can.date || 'N/A'} {can.staffName ? `by ${can.staffName}` : ''}
+                            </div>
                           </div>
                         </div>
                         <div style={{ textAlign: 'right' }}>
-                          <div style={{ fontWeight: 700, fontSize: '15px' }}>₹{payment.netTotal}</div>
-                          <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'flex-end', marginTop: '2px' }}>
-                            <FileText size={10} /> View Receipt
+                          <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', fontWeight: 600 }}>REFUND AMOUNT</div>
+                          <div style={{ fontWeight: 700, fontSize: '15px', color: can.refundAmount > 0 ? '#ef4444' : 'var(--text-secondary)', marginTop: '2px' }}>
+                            {can.refundAmount > 0 ? `₹${can.refundAmount}` : '₹0 (No Refund)'}
                           </div>
                         </div>
                       </div>
                     ))}
-                    {(!selectedStudent.payments || selectedStudent.payments.length === 0) && (
-                      <div style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>No payments recorded.</div>
+                    {studentCancellations.length === 0 && (
+                      <div style={{ color: 'var(--text-secondary)', fontSize: '14px', textAlign: 'center', padding: '24px 0' }}>
+                        No cancellation records found for this student.
+                      </div>
                     )}
                   </div>
                 )}

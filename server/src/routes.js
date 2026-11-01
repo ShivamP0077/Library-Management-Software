@@ -10,6 +10,7 @@ import { createWhatsappRouter } from './whatsapp.js';
 import { createFinanceRouter, validatePaymentBatch } from './finance.js';
 import { createStudentRouter, recordStudentDiff, recordArchiveDiff, checkCapacity } from './students.js';
 import { audit } from './audit.js';
+import { createPublicAccountRouter, createTenantAccountRouter, auditSuperadminAccess } from './accounts.js';
 import { createSeatRouter, reconcileStudents, releaseForStudents, validateSeatSync, SeatAllocation, seatMatchesAllocation, SeatConflictError } from './seats.js';
 
 const router = express.Router();
@@ -182,6 +183,8 @@ router.post('/auth/google', wrap(async (req, res) => {
   return issueSession(user, res);
 }));
 
+router.use(createPublicAccountRouter({ issueSession }));
+
 router.use(requireAuth);
 
 router.get('/auth/me', wrap(async (req, res) => {
@@ -199,6 +202,7 @@ router.post('/auth/change-password', wrap(async (req, res) => {
   user.passwordHash = await hashPassword(newPassword);
   user.authProviders = [...new Set([...(user.authProviders || []), 'password'])];
   await user.save();
+  await audit(req, 'password.changed', { tenantId: user.tenantId || null });
   res.json({ ok: true });
 }));
 
@@ -270,7 +274,14 @@ admin.patch('/users/:id', wrap(async (req, res) => {
     user.authProviders = [...new Set([...(user.authProviders || []), 'password'])];
   }
   await user.save();
+  await audit(req, req.body?.password ? 'superadmin.password_set' : 'superadmin.user_update', { tenantId: user.tenantId || null, target: user.email, detail: { status: req.body?.status } });
   res.json(user.toSafeJSON());
+}));
+
+admin.get('/audit-logs', wrap(async (req, res) => {
+  const { AuditLog, pubAudit } = await import('./audit.js');
+  const q = {}; if (req.query.libraryId) q.tenantId = String(req.query.libraryId); if (req.query.action) q.action = String(req.query.action);
+  res.json((await AuditLog.find(q).sort({ at: -1 }).limit(Math.min(Number(req.query.limit || 200), 1000)).lean()).map(pubAudit));
 }));
 
 router.use('/admin', admin);
@@ -278,6 +289,8 @@ router.use('/admin', admin);
 // ---------------------------------------------------------------- Tenant data (scoped)
 const tenant = express.Router();
 tenant.use(tenantScope);
+tenant.use(auditSuperadminAccess);
+tenant.use(createTenantAccountRouter());
 
 // Client admins manage login accounts for their own library (staff / co-admins)
 tenant.get('/users', requireRole('client_admin', 'superadmin'), wrap(async (req, res) => {
@@ -286,6 +299,7 @@ tenant.get('/users', requireRole('client_admin', 'superadmin'), wrap(async (req,
 tenant.post('/users', requireRole('client_admin', 'superadmin'), wrap(async (req, res) => {
   const role = req.body?.role === 'client_admin' ? 'client_admin' : 'staff';
   const r = await createUser({ ...req.body, role, tenantId: req.tenantId, libraryId: req.tenantId });
+  await audit(req, 'user.create', { target: r.user.email, detail: { role } });
   res.status(201).json({ user: r.user.toSafeJSON(), generatedPassword: r.generatedPassword || undefined });
 }));
 tenant.patch('/users/:id', requireRole('client_admin', 'superadmin'), wrap(async (req, res) => {
@@ -295,6 +309,7 @@ tenant.patch('/users/:id', requireRole('client_admin', 'superadmin'), wrap(async
   if (req.body?.name !== undefined) user.name = req.body.name;
   if (req.body?.staffId !== undefined) user.staffId = req.body.staffId;
   await user.save();
+  await audit(req, 'user.update', { target: user.email, detail: { status: req.body?.status, staffId: req.body?.staffId } });
   res.json(user.toSafeJSON());
 }));
 
@@ -438,6 +453,6 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
 }));
 
 // WhatsApp (Evolution API) is proxied server-side; mounted before the generic /:col routes
-router.use('/whatsapp', tenantScope, createWhatsappRouter());
+router.use('/whatsapp', tenantScope, auditSuperadminAccess, createWhatsappRouter());
 router.use('/', tenant);
 export default router;

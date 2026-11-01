@@ -53,6 +53,15 @@ export const api = {
   seatAllocations: (params = '') => apiRequest(`/seat-allocations${params}`),
   assignSeat: (body) => apiRequest('/seat-allocations/assign', { method: 'POST', body }),
   setSeatMaintenance: (seatId, isMaintenance) => apiRequest(`/seats/${encodeURIComponent(seatId)}/maintenance`, { method: 'PATCH', body: { isMaintenance } }),
+  // Accounts
+  forgotPassword: (email) => apiRequest('/auth/forgot-password', { method: 'POST', body: { email } }),
+  resetPassword: (email, otp, newPassword) => apiRequest('/auth/reset-password', { method: 'POST', body: { email, otp, newPassword } }),
+  inviteInfo: (token) => apiRequest(`/auth/invite/${encodeURIComponent(token)}`),
+  acceptInvite: async (body) => { const r = await apiRequest('/auth/invite/accept', { method: 'POST', body }); setToken(r.token); return r; },
+  invites: () => apiRequest('/invites'),
+  createInvite: (body) => apiRequest('/invites', { method: 'POST', body }),
+  revokeInvite: (id) => apiRequest(`/invites/${encodeURIComponent(id)}/revoke`, { method: 'POST' }),
+  auditLogs: (q = '') => apiRequest(`/audit-logs${q}`),
   // Students
   studentsSummary: (branchId = 'all') => apiRequest(`/students-summary?branchId=${encodeURIComponent(branchId)}`),
   studentHistory: (id) => apiRequest(`/students/${encodeURIComponent(id)}/history`),

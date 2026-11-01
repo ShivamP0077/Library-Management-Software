@@ -70,7 +70,7 @@ export function AuthProvider({ children }) {
   const loginWithGoogle = async (credential) => completeLogin(await api.loginWithGoogle(credential));
 
   return (
-    <AuthContext.Provider value={{ ...session, status, oauthError, loginWithPassword, loginWithGoogle, logout }}>
+    <AuthContext.Provider value={{ ...session, status, oauthError, completeLogin, loginWithPassword, loginWithGoogle, logout }}>
       {children}
     </AuthContext.Provider>
   );

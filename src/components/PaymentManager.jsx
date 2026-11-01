@@ -231,22 +231,16 @@ export const PaymentManager = ({ onPrintReceipt }) => {
         )}
       </div>
 
-      {/* Mobile compact list (BUG-07) */}
+      {/* Compact mobile list: Student Name | Amount | View */}
       <div className="compact-list mobile-only">
         {filteredPayments.length === 0 ? (
           <div className="compact-empty">No payment transactions matching your filter criteria.</div>
         ) : (
           filteredPayments.map(pay => (
             <div className="compact-row" key={pay.receiptNo} onClick={() => setViewPayment(pay)}>
-              <span className="c-main">{pay.studentName}</span>
+              <span className="c-main" title={pay.studentName}>{pay.studentName}</span>
               <span className="c-amount">₹{getEffectivePortion(pay, methodFilter).toLocaleString()}</span>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={(e) => { e.stopPropagation(); setViewPayment(pay); }}
-              >
-                View
-              </button>
+              <button type="button" className="btn btn-ghost" onClick={(e) => { e.stopPropagation(); setViewPayment(pay); }}>View</button>
             </div>
           ))
         )}
@@ -282,26 +276,30 @@ export const PaymentManager = ({ onPrintReceipt }) => {
                 return (
                   <tr key={pay.receiptNo}>
                     <td>
-                      <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '13px' }}>{pay.receiptNo}</span>
-                      {pay.staffName && (
-                        <div style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>By: {pay.staffName}</div>
-                      )}
+                      <span className="cell-inline">
+                        <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '13px' }}>{pay.receiptNo}</span>
+                        {pay.staffName && (
+                          <span className="cell-meta">By: {pay.staffName}</span>
+                        )}
+                      </span>
                     </td>
                     <td>
-                      <div style={{ fontWeight: 600 }}>{pay.studentName}</div>
-                      <div style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>{pay.studentId}</div>
+                      <span className="cell-inline">
+                        <span className="cell-truncate" style={{ fontWeight: 600 }}>{pay.studentName}</span>
+                        <span className="cell-meta">{pay.studentId}</span>
+                      </span>
                     </td>
                     <td>
                       <span style={{ fontSize: '13px', fontWeight: 500 }}>
                         {pay.branchName || getBranchCode(pay.branchId)}
                       </span>
                     </td>
-                    <td><span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{pay.planName}</span></td>
+                    <td><span className="cell-truncate" style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{pay.planName}</span></td>
                     <td>
                       {pay.method === 'Split' && pay.breakdown ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                          <span style={{ background: '#f3f4f6', padding: '3px 8px', borderRadius: '4px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '12px', display: 'inline-block', width: 'fit-content' }}>
-                            Split Payment
+                        <span className="cell-inline">
+                          <span style={{ background: '#f3f4f6', padding: '3px 8px', borderRadius: '4px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '12px' }}>
+                            Split
                           </span>
                           {pay.breakdown.map((b, idx) => (
                             <span
@@ -315,7 +313,7 @@ export const PaymentManager = ({ onPrintReceipt }) => {
                               {b.method}: ₹{b.amount}
                             </span>
                           ))}
-                        </div>
+                        </span>
                       ) : (
                         <span style={{ background: '#f3f4f6', padding: '4px 8px', borderRadius: '4px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '12px' }}>
                           {pay.method}
@@ -324,19 +322,21 @@ export const PaymentManager = ({ onPrintReceipt }) => {
                     </td>
                     <td><span style={{ fontSize: '13px' }}>{pay.date}</span></td>
                     <td>
-                      <div style={{ fontWeight: 700, color: '#10b981', fontSize: '14px' }}>
-                        ₹{effectivePortion.toLocaleString()}
-                      </div>
-                      {isPortionDifferent && (
-                        <div style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
-                          Total: ₹{pay.netTotal.toLocaleString()}
-                        </div>
-                      )}
-                      {(pay.discount > 0 || pay.fine > 0) && (
-                        <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '2px' }}>
-                          Disc: ₹{pay.discount} | Fine: ₹{pay.fine}
-                        </div>
-                      )}
+                      <span className="cell-inline">
+                        <span style={{ fontWeight: 700, color: '#10b981', fontSize: '14px' }}>
+                          ₹{effectivePortion.toLocaleString()}
+                        </span>
+                        {isPortionDifferent && (
+                          <span className="cell-meta">
+                            Total: ₹{pay.netTotal.toLocaleString()}
+                          </span>
+                        )}
+                        {(pay.discount > 0 || pay.fine > 0) && (
+                          <span className="cell-meta">
+                            Disc: ₹{pay.discount} | Fine: ₹{pay.fine}
+                          </span>
+                        )}
+                      </span>
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <button className="btn btn-ghost" style={{ padding: '6px 12px' }} onClick={() => onPrintReceipt(pay)}>

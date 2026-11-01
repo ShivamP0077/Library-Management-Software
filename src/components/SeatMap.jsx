@@ -374,18 +374,25 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
       if (menuTriggerEl?.contains(e.target)) return;
       closeBulkMenu();
     };
-    const handleViewportChange = () => closeBulkMenu();
+    const handleResize = () => closeBulkMenu();
+    const handleScroll = (e) => {
+      // Scrolling the menu itself must not dismiss it.
+      if (bulkMenuRef.current?.contains(e.target)) return;
+      closeBulkMenu();
+    };
 
     document.addEventListener('mousedown', handleOutside);
     document.addEventListener('touchstart', handleOutside, { passive: true });
-    window.addEventListener('resize', handleViewportChange);
-    window.addEventListener('scroll', handleViewportChange, true);
+    document.addEventListener('click', handleOutside);
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('scroll', handleScroll, true);
 
     return () => {
       document.removeEventListener('mousedown', handleOutside);
       document.removeEventListener('touchstart', handleOutside);
-      window.removeEventListener('resize', handleViewportChange);
-      window.removeEventListener('scroll', handleViewportChange, true);
+      document.removeEventListener('click', handleOutside);
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('scroll', handleScroll, true);
     };
   }, [showBulkMenuForSection, menuTriggerEl, closeBulkMenu]);
 
@@ -630,6 +637,8 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
                         }}
                         title="Section Seat Actions"
                         aria-label="Section Seat Actions"
+                        aria-haspopup="menu"
+                        aria-expanded={showBulkMenuForSection === section.id}
                       >
                         <MoreVertical size={20} strokeWidth={2.8} color="#0f172a" />
                       </button>
@@ -647,15 +656,16 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
                             marginTop: 0,
                             zIndex: 2000,
                             maxHeight: 'calc(100vh - 16px)',
+                            maxWidth: 'calc(100vw - 16px)',
                             overflowY: 'auto',
                             visibility: bulkMenuPosition ? 'visible' : 'hidden'
                           }}
                         >
-                          <button type="button" className="dropdown-item" onClick={() => { setSelectionModeSectionId(section.id); closeBulkMenu(); }}>
+                          <button type="button" role="menuitem" className="dropdown-item" onClick={() => { setSelectionModeSectionId(section.id); closeBulkMenu(); }}>
                             <CheckCircle2 size={15} color="#2563eb" />
                             <span>Select Desks</span>
                           </button>
-                          <button type="button" className="dropdown-item" onClick={() => { setSelectionModeSectionId(section.id); handleSelectAll(sectionSeats); closeBulkMenu(); }}>
+                          <button type="button" role="menuitem" className="dropdown-item" onClick={() => { setSelectionModeSectionId(section.id); handleSelectAll(sectionSeats); closeBulkMenu(); }}>
                             <CheckCircle2 size={15} color="#16a34a" />
                             <span>Select All Desks ({sectionSeats.length})</span>
                           </button>
@@ -663,20 +673,20 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
                           <div className="dropdown-header">
                             Bulk Status Actions
                           </div>
-                          <button type="button" className="dropdown-item" onClick={() => handleMarkStatus({ isMaintenance: true, isUnavailable: false })}>
+                          <button type="button" role="menuitem" className="dropdown-item" onClick={() => handleMarkStatus({ isMaintenance: true, isUnavailable: false })}>
                             <Settings size={15} color="#d97706" />
                             <span>Mark Maintenance</span>
                           </button>
-                          <button type="button" className="dropdown-item" onClick={() => handleMarkStatus({ isMaintenance: false, isUnavailable: false })}>
+                          <button type="button" role="menuitem" className="dropdown-item" onClick={() => handleMarkStatus({ isMaintenance: false, isUnavailable: false })}>
                             <CheckCircle2 size={15} color="#16a34a" />
                             <span>Mark Available</span>
                           </button>
-                          <button type="button" className="dropdown-item" onClick={() => handleMarkStatus({ isUnavailable: true, isMaintenance: false })}>
+                          <button type="button" role="menuitem" className="dropdown-item" onClick={() => handleMarkStatus({ isUnavailable: true, isMaintenance: false })}>
                             <Ban size={15} color="#64748b" />
                             <span>Mark Unavailable</span>
                           </button>
                           <div className="dropdown-divider" />
-                          <button type="button" className="dropdown-item danger" onClick={handleBulkRemove}>
+                          <button type="button" role="menuitem" className="dropdown-item danger" onClick={handleBulkRemove}>
                             <Trash2 size={15} />
                             <span>Remove Unoccupied Desks</span>
                           </button>

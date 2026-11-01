@@ -32,6 +32,21 @@ export async function apiRequest(path, { method = 'GET', body, signal } = {}) {
   return data;
 }
 
+/** Download an authenticated file (CSV etc.) from the API and save it in the browser. */
+export async function downloadFile(path, fallbackName = 'export.csv') {
+  const headers = {};
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (tenantContext.libraryId) headers['X-Library-Id'] = tenantContext.libraryId;
+  if (tenantContext.readOnly) headers['X-Read-Only'] = '1';
+  const res = await fetch(`${API_BASE}${path}`, { headers });
+  if (!res.ok) { let msg = `Download failed (${res.status})`; try { msg = (await res.json()).error || msg; } catch { /* not json */ } throw new Error(msg); }
+  const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '')?.[1] || fallbackName;
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export const api = {
   health: () => apiRequest('/health'),
   getState: () => apiRequest('/state'),
@@ -100,6 +115,8 @@ export const api = {
   // Super admin
   adminLibraries: () => apiRequest('/admin/libraries'),
   adminMetrics: () => apiRequest('/admin/metrics'),
+  adminSaasSummary: () => apiRequest('/admin/saas-summary'),
+  adminInsights: (q = '') => apiRequest(`/admin/insights${q}`),
   adminCreateLibrary: (body) => apiRequest('/admin/libraries', { method: 'POST', body }),
   adminUpdateLibrary: (libraryId, body) => apiRequest(`/admin/libraries/${encodeURIComponent(libraryId)}`, { method: 'PATCH', body }),
   adminAddLibraryUser: (libraryId, body) => apiRequest(`/admin/libraries/${encodeURIComponent(libraryId)}/users`, { method: 'POST', body }),

@@ -16,6 +16,7 @@ export const Library = mongoose.model('Library', new mongoose.Schema({
   contactEmail: { type: String, trim: true, lowercase: true },
   createdBy: String,
   isDefault: { type: Boolean, default: false },
+  city: { type: String, trim: true, default: null }, // used for Library Insights location filters
   studentLimit: { type: Number, default: null }, // active + expired cap (null = unlimited)
 }, { timestamps: true }));
 

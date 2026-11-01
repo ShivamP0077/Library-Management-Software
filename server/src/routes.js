@@ -1,10 +1,11 @@
+import crypto from 'crypto';
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
 import { COLLECTIONS, models, Settings, StudentDocument, Library, User, keyOf, clean } from './models.js';
 import { signToken, requireAuth, requireRole, tenantScope } from './auth.js';
 import { createLibrary, createUser, computeMetrics, hashPassword, validatePassword } from './services.js';
-import { verifyGoogleIdToken, googleEnabled } from './google.js';
+import { verifyGoogleIdToken, googleEnabled, googleConfig, buildAuthUrl, exchangeCode } from './google.js';
 
 const router = express.Router();
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -27,16 +28,131 @@ export const healthHandler = wrap(async (req, res) => {
 router.get('/health', healthHandler);
 
 // ---------------------------------------------------------------- Auth
-async function issueSession(user, res) {
-  if (user.status !== 'Active') return res.status(403).json({ error: 'Account is disabled' });
+async function resolveSession(user) {
+  if (user.status !== 'Active') {
+    return { denial: { status: 403, code: 'account_disabled', message: 'Account is disabled' } };
+  }
   let library = null;
   if (user.role !== 'superadmin') {
     library = await Library.findOne({ libraryId: tenantOfUser(user) }).lean();
-    if (!library || library.status !== 'Active') return res.status(403).json({ error: 'Library is disabled' });
+    if (!library || library.status !== 'Active') {
+      return { denial: { status: 403, code: 'library_disabled', message: 'Library is disabled' } };
+    }
   }
+  return { library };
+}
+
+async function issueSession(user, res) {
+  const { library, denial } = await resolveSession(user);
+  if (denial) return res.status(denial.status).json({ error: denial.message });
   await User.updateOne({ _id: user._id }, { $set: { lastLoginAt: new Date() } });
   res.json({ token: signToken(user), user: user.toSafeJSON(), library: library && { libraryId: library.libraryId, name: library.name, status: library.status } });
 }
+
+// ---------------------------------------------------------------- Server-side Google OAuth
+const GOOGLE_COOKIE = 'lms_g_oauth';
+const GOOGLE_COOKIE_PATH = '/api/auth/google';
+const googleCookieOptions = () => ({
+  httpOnly: true,
+  sameSite: 'lax',
+  secure: process.env.NODE_ENV === 'production',
+  path: GOOGLE_COOKIE_PATH,
+});
+
+const googleNoStore = (res) => {
+  res.set('Cache-Control', 'no-store');
+  res.set('Referrer-Policy', 'no-referrer');
+};
+
+function parseCookies(header) {
+  const out = {};
+  String(header || '').split(';').forEach(part => {
+    const i = part.indexOf('=');
+    if (i < 0) return;
+    const name = part.slice(0, i).trim();
+    if (!name) return;
+    let value = part.slice(i + 1).trim();
+    try { value = decodeURIComponent(value); } catch { /* keep the raw value */ }
+    out[name] = value;
+  });
+  return out;
+}
+
+function safeEqual(a, b) {
+  const left = Buffer.from(String(a || ''));
+  const right = Buffer.from(String(b || ''));
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+router.get('/auth/google/start', (req, res) => {
+  googleNoStore(res);
+  const { frontendUrl } = googleConfig();
+  if (!googleEnabled()) {
+    if (!frontendUrl) return res.status(501).json({ error: 'Google sign-in is not configured' });
+    return res.redirect(302, `${frontendUrl}/#google_error=not_configured`);
+  }
+
+  const state = crypto.randomBytes(32).toString('base64url');
+  const codeVerifier = crypto.randomBytes(32).toString('base64url');
+  const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+  const cookieValue = Buffer.from(JSON.stringify({ s: state, v: codeVerifier }), 'utf8').toString('base64url');
+
+  res.cookie(GOOGLE_COOKIE, cookieValue, { ...googleCookieOptions(), maxAge: 600 * 1000 });
+  return res.redirect(302, buildAuthUrl({ state, codeChallenge }));
+});
+
+router.get('/auth/google/callback', wrap(async (req, res) => {
+  googleNoStore(res);
+  const { frontendUrl } = googleConfig();
+  const fail = (code) => res.redirect(302, `${frontendUrl}/#google_error=${code}`);
+
+  // Always clear the short-lived state/PKCE cookie, even on malformed requests.
+  const rawCookie = parseCookies(req.headers.cookie)[GOOGLE_COOKIE];
+  res.clearCookie(GOOGLE_COOKIE, googleCookieOptions());
+
+  if (!frontendUrl) return res.status(501).json({ error: 'Google sign-in is not configured' });
+
+  try {
+    if (req.query.error) return fail('access_denied');
+
+    let cookieData = null;
+    try {
+      if (rawCookie) cookieData = JSON.parse(Buffer.from(rawCookie, 'base64url').toString('utf8'));
+    } catch { cookieData = null; }
+
+    const state = String(req.query.state || '');
+    if (!cookieData?.s || !cookieData?.v || !state || !safeEqual(cookieData.s, state)) return fail('invalid_state');
+    if (!req.query.code) return fail('invalid_request');
+
+    let identity;
+    try {
+      identity = await exchangeCode({ code: String(req.query.code), codeVerifier: String(cookieData.v) });
+    } catch (err) {
+      if (err?.code === 'email_unverified') return fail('email_unverified');
+      throw err;
+    }
+
+    const user = await User.findOne({ email: identity.email });
+    if (!user) return fail('not_registered'); // Google identity never creates users or grants roles
+    if (user.googleSub && user.googleSub !== identity.sub) return fail('account_mismatch');
+
+    const { denial } = await resolveSession(user);
+    if (denial) return fail(denial.code);
+
+    if (!user.googleSub) user.googleSub = identity.sub;
+    if (!Array.isArray(user.authProviders)) user.authProviders = [];
+    if (!user.authProviders.includes('google')) user.authProviders = [...user.authProviders, 'google'];
+    if (!user.name && identity.name) user.name = identity.name;
+    user.lastLoginAt = new Date();
+    await user.save();
+
+    const token = signToken(user);
+    return res.redirect(302, `${frontendUrl}/#google_token=${encodeURIComponent(token)}`);
+  } catch (err) {
+    console.error('[auth] google callback failed:', err?.code || 'error');
+    return fail('google_failed');
+  }
+}));
 
 router.get('/auth/config', (_req, res) => res.json({ googleEnabled: googleEnabled(), passwordLogin: true }));
 

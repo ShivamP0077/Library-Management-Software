@@ -11,6 +11,13 @@ import { createFinanceRouter, validatePaymentBatch } from './finance.js';
 import { createStudentRouter, recordStudentDiff, recordArchiveDiff, checkCapacity } from './students.js';
 import { audit } from './audit.js';
 import { createNotificationRouter } from './notifications.js';
+import { createReminderRouter, autoSendReceipts } from './reminders.js';
+
+// Auto-receipts never block or fail the save; in tests we await so results are observable.
+const sendReceiptsAfterSave = async (tenantId, payments) => {
+  const p = autoSendReceipts(tenantId, payments).catch(e => console.error('[receipts]', e.message));
+  if (process.env.NODE_ENV === 'test') await p;
+};
 import { createPublicAccountRouter, createTenantAccountRouter, auditSuperadminAccess } from './accounts.js';
 import { createSeatRouter, reconcileStudents, releaseForStudents, validateSeatSync, SeatAllocation, seatMatchesAllocation, SeatConflictError } from './seats.js';
 
@@ -354,6 +361,7 @@ tenant.use(createSeatRouter());
 tenant.use(createFinanceRouter());
 tenant.use(createStudentRouter());
 tenant.use(createNotificationRouter());
+tenant.use(createReminderRouter());
 
 // Generic REST for each entity collection, always filtered by req.tenantId
 const colParam = (req, res, next) => {
@@ -386,6 +394,7 @@ tenant.post('/:col', colParam, wrap(async (req, res) => {
   if (req.params.col === 'payments') validatePaymentBatch([body]);
   const d = await req.Model.create({ ...body, _key, tenantId: req.tenantId, libraryId: req.tenantId });
   if (req.params.col === 'students') await recordStudentDiff(req.tenantId, new Map(), [{ ...body, id: _key }], req.user.email);
+  if (req.params.col === 'payments') await sendReceiptsAfterSave(req.tenantId, [{ ...body, _key }]);
   res.status(201).json(clean(d));
 }));
 
@@ -424,9 +433,12 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
   const col = req.params.col;
   const prevArchived = col === 'archivedStudents' ? await req.Model.find({ tenantId: req.tenantId }).lean() : null;
   if (col === 'seats') await validateSeatSync(req.tenantId, req.body.map(stripMeta));
+  let newPayments = null;
   if (col === 'payments') {
     const prevDocs = await req.Model.find({ tenantId: req.tenantId }).lean();
     validatePaymentBatch(req.body.map(stripMeta), new Map(prevDocs.map(d => [String(d._key), d])));
+    const had = new Set(prevDocs.map(d => String(d._key)));
+    newPayments = req.body.map(stripMeta).map(b => ({ ...b, _key: keyOf(col, b) })).filter(b => b._key && !had.has(String(b._key)));
   }
   if (col === 'students') {
     const prevDocs = await req.Model.find({ tenantId: req.tenantId }).lean();
@@ -450,6 +462,7 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
   if (ops.length) await req.Model.bulkWrite(ops, { ordered: false });
   const del = await req.Model.deleteMany({ tenantId: req.tenantId, _key: { $nin: [...seen] } });
   if (req.studentDiff) await recordStudentDiff(req.tenantId, req.studentDiff.previous, req.studentDiff.incoming, req.user.email);
+  if (newPayments?.length) await sendReceiptsAfterSave(req.tenantId, newPayments);
   if (prevArchived) await recordArchiveDiff(req, prevArchived, req.body.map(stripMeta).filter(b => keyOf(col, b)));
   res.json({ ok: true, upserted: ops.length, deleted: del.deletedCount });
 }));

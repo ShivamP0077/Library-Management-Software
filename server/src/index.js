@@ -6,6 +6,7 @@ import { registerJob, startScheduler } from './jobs.js';
 import { runDailyFinanceJob } from './finance.js';
 import { Library } from './models.js';
 import { runDailyNotificationJob } from './notifications.js';
+import { runReminderJob } from './reminders.js';
 
 const PORT = Number(process.env.PORT || 4000);
 const RETRY_MS = Number(process.env.DB_RETRY_MS || 30000);
@@ -20,6 +21,7 @@ async function connectWithRetry() {
     await ensureSuperAdmin().catch(e => console.error('[seed] super admin seed failed:', redact(e.message)));
     registerJob('recurring-expenses', () => runDailyFinanceJob(Library));
     registerJob('notifications', () => runDailyNotificationJob(Library)); // after bills are generated
+    registerJob('whatsapp-reminders', () => runReminderJob()); // no-op unless Evolution API is configured
     startScheduler();
   } catch (err) {
     console.error(`[db] Connection failed (retrying in ${RETRY_MS / 1000}s):`, redact(err.message));

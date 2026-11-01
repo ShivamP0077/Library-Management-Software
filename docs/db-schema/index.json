@@ -1,0 +1,23 @@
+{
+  "database": "library_management",
+  "collections": [
+    "archivedstudents",
+    "branches",
+    "expenses",
+    "libraries",
+    "payments",
+    "plans",
+    "seats",
+    "seattypes",
+    "sections",
+    "settings",
+    "shifts",
+    "staffs",
+    "studentdocuments",
+    "students",
+    "users",
+    "waitinglistentries",
+    "whatsappconfigs",
+    "whatsappmessages"
+  ]
+}

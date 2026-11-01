@@ -1,10 +1,64 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useLibrary } from '../context/LibraryContext';
-import { BarChart3, TrendingUp, TrendingDown, DollarSign, Receipt, PieChart, Users, Grid } from 'lucide-react';
+import { BarChart3, TrendingUp, TrendingDown, DollarSign, Receipt, PieChart, Users, Grid, Download } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { api } from '../utils/api';
+import toast from 'react-hot-toast';
+
+const firstOfMonth = (dateStr) => {
+  const d = dateStr ? new Date(`${dateStr}T00:00:00`) : new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+};
 
 export const ReportsManager = () => {
-  const { payments, expenses, students, branches, activeBranchId } = useLibrary();
+  const { payments, expenses, students, branches, activeBranchId, todayStr } = useLibrary();
+
+  const [fromDate, setFromDate] = useState(() => firstOfMonth(todayStr));
+  const [toDate, setToDate] = useState(() => todayStr || new Date().toISOString().split('T')[0]);
+  const [serverPnl, setServerPnl] = useState(null);
+  const [pnlLoading, setPnlLoading] = useState(false);
+  const [pnlError, setPnlError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setPnlLoading(true);
+    setPnlError(false);
+    api.pnl(`?from=${encodeURIComponent(fromDate)}&to=${encodeURIComponent(toDate)}&branchId=${encodeURIComponent(activeBranchId)}`)
+      .then(data => {
+        if (!cancelled) setServerPnl(data);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setServerPnl(null);
+          setPnlError(true);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPnlLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [fromDate, toDate, activeBranchId]);
+
+  const handleDownloadCsv = async () => {
+    try {
+      await api.downloadCsv(
+        `/reports/pnl.csv?from=${encodeURIComponent(fromDate)}&to=${encodeURIComponent(toDate)}&branchId=${encodeURIComponent(activeBranchId)}`,
+        'pnl.csv'
+      );
+    } catch (e) {
+      toast.error(e.message || 'Download failed');
+    }
+  };
+
+  const pnlMetrics = serverPnl ? [
+    { label: 'FEE COLLECTIONS', value: serverPnl.feeCollections, color: '#10b981' },
+    { label: 'REFUNDS', value: serverPnl.refunds, color: '#ef4444' },
+    { label: 'NET FEES', value: serverPnl.netFees, color: 'var(--text-primary)' },
+    { label: 'ONE-TIME EXPENSES', value: serverPnl.expenses?.oneTime, color: '#ef4444' },
+    { label: 'RECURRING BILLS PAID', value: serverPnl.expenses?.recurringPaid, color: '#ef4444' },
+    { label: 'NET COLLECTIONS', value: serverPnl.netCollections, color: Number(serverPnl.netCollections) >= 0 ? '#10b981' : '#ef4444' },
+    { label: 'RECURRING BILLS OUTSTANDING', value: serverPnl.recurringOutstanding, color: '#f59e0b' },
+  ] : [];
 
   const filteredPayments = payments.filter(p => activeBranchId === 'all' || p.branchId === activeBranchId);
   const filteredExpenses = expenses.filter(e => activeBranchId === 'all' || e.branchId === activeBranchId);
@@ -36,14 +90,58 @@ export const ReportsManager = () => {
   });
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ display: 'flex', flexDirection: 'column', gap: '24px', minWidth: 0 }}>
       
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+        <div style={{ minWidth: 0 }}>
           <h2 style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>Financial Reports</h2>
           <p style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>Profit & Loss statement and financial breakdown</p>
         </div>
+      </div>
+
+      {/* Server P&L */}
+      <div className="premium-card" style={{ background: 'linear-gradient(135deg, var(--bg-surface) 0%, #f8fafc 100%)', minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap', marginBottom: '16px', minWidth: 0 }}>
+          <div style={{ minWidth: 0 }}>
+            <h3 style={{ fontSize: '16px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <TrendingUp size={20} color="var(--brand-primary)" />
+              <span>Profit &amp; Loss (server)</span>
+            </h3>
+            <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '4px' }}>{"This is your library's income and expenses."}</p>
+          </div>
+          <button type="button" className="btn btn-secondary" onClick={handleDownloadCsv} style={{ flexShrink: 0 }}>
+            <Download size={16} /> Download CSV
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '12px', flexWrap: 'wrap', marginBottom: '20px', minWidth: 0 }}>
+          <div className="form-group" style={{ marginBottom: 0, minWidth: '140px', flex: '1 1 140px' }}>
+            <label className="form-label">From</label>
+            <input type="date" className="form-input" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+          </div>
+          <div className="form-group" style={{ marginBottom: 0, minWidth: '140px', flex: '1 1 140px' }}>
+            <label className="form-label">To</label>
+            <input type="date" className="form-input" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+          </div>
+        </div>
+
+        {pnlLoading ? (
+          <div style={{ fontSize: '13px', color: 'var(--text-tertiary)' }}>Loading server report…</div>
+        ) : pnlError ? (
+          <div style={{ fontSize: '13px', color: 'var(--text-tertiary)' }}>Server report unavailable</div>
+        ) : serverPnl ? (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '16px', minWidth: 0 }}>
+            {pnlMetrics.map(metric => (
+              <div key={metric.label} style={{ padding: '16px', background: 'var(--bg-surface)', borderRadius: '10px', border: '1px solid var(--border-light)', minWidth: 0 }}>
+                <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>{metric.label}</div>
+                <div style={{ fontSize: '22px', fontWeight: 800, color: metric.color, marginTop: '6px', overflowWrap: 'anywhere' }}>
+                  ₹{Number(metric.value || 0).toLocaleString()}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       {/* P&L Executive Summary */}

@@ -7,6 +7,7 @@ import { signToken, requireAuth, requireRole, tenantScope } from './auth.js';
 import { createLibrary, createUser, computeMetrics, hashPassword, validatePassword } from './services.js';
 import { verifyGoogleIdToken, googleEnabled, googleConfig, buildAuthUrl, exchangeCode } from './google.js';
 import { createWhatsappRouter } from './whatsapp.js';
+import { createFinanceRouter, validatePaymentBatch } from './finance.js';
 import { createSeatRouter, reconcileStudents, releaseForStudents, validateSeatSync, SeatAllocation, seatMatchesAllocation, SeatConflictError } from './seats.js';
 
 const router = express.Router();
@@ -330,6 +331,7 @@ tenant.delete('/documents/:key', wrap(async (req, res) => {
 }));
 
 tenant.use(createSeatRouter());
+tenant.use(createFinanceRouter());
 
 // Generic REST for each entity collection, always filtered by req.tenantId
 const colParam = (req, res, next) => {
@@ -355,6 +357,7 @@ tenant.post('/:col', colParam, wrap(async (req, res) => {
   if (!_key) return res.status(400).json({ error: `Missing key field (${COLLECTIONS[req.params.col].keys.join(' or ')})` });
   if (await req.Model.exists({ tenantId: req.tenantId, _key })) return res.status(409).json({ error: 'Already exists' });
   if (req.params.col === 'students') await reconcileStudents(req.tenantId, [body], { actor: req.user.email });
+  if (req.params.col === 'payments') validatePaymentBatch([body]);
   const d = await req.Model.create({ ...body, _key, tenantId: req.tenantId, libraryId: req.tenantId });
   res.status(201).json(clean(d));
 }));
@@ -365,6 +368,10 @@ tenant.put('/:col/:key', colParam, wrap(async (req, res) => {
     if (!prev) return res.status(404).json({ error: 'Not found' });
     const merged = { ...clean(prev), ...stripMeta(req.body), id: prev.id ?? req.params.key };
     await reconcileStudents(req.tenantId, [merged], { actor: req.user.email, previous: new Map([[String(merged.id), prev]]) });
+  }
+  if (req.params.col === 'payments') {
+    const prev = await req.Model.findOne({ tenantId: req.tenantId, _key: req.params.key }).lean();
+    if (prev) validatePaymentBatch([{ ...clean(prev), ...stripMeta(req.body) }], new Map([[req.params.key, prev]]));
   }
   const d = await req.Model.findOneAndUpdate({ tenantId: req.tenantId, _key: req.params.key }, { $set: stripMeta(req.body) }, { new: true, lean: true });
   d ? res.json(clean(d)) : res.status(404).json({ error: 'Not found' });
@@ -387,6 +394,10 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
   if (!Array.isArray(req.body)) return res.status(400).json({ error: 'Body must be an array' });
   const col = req.params.col;
   if (col === 'seats') await validateSeatSync(req.tenantId, req.body.map(stripMeta));
+  if (col === 'payments') {
+    const prevDocs = await req.Model.find({ tenantId: req.tenantId }).lean();
+    validatePaymentBatch(req.body.map(stripMeta), new Map(prevDocs.map(d => [String(d._key), d])));
+  }
   if (col === 'students') {
     const prevDocs = await req.Model.find({ tenantId: req.tenantId }).lean();
     const previous = new Map(prevDocs.map(d => [String(d._key), d]));

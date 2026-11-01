@@ -1,26 +1,39 @@
 import mongoose from 'mongoose';
+import tenantGuard, { applyBulkWriteGuard } from './tenantGuard.js';
 
 /* ---------------------------------------------------------------------------
  * Platform (non-tenant) models
  * ------------------------------------------------------------------------- */
 
-/** A client library (tenant). libraryId is the tenant id carried by every tenant document. */
+/**
+ * A client library (tenant). `libraryId` is the canonical tenant identifier;
+ * tenant collections store it as `tenantId`.
+ */
 export const Library = mongoose.model('Library', new mongoose.Schema({
   libraryId: { type: String, required: true, unique: true, index: true },
   name: { type: String, required: true, trim: true },
   status: { type: String, enum: ['Active', 'Disabled'], default: 'Active' },
   contactEmail: { type: String, trim: true, lowercase: true },
   createdBy: String,
+  isDefault: { type: Boolean, default: false },
 }, { timestamps: true }));
 
 export const ROLES = ['superadmin', 'client_admin', 'staff'];
 
-/** Login accounts. superadmin has no libraryId; client_admin/staff belong to exactly one library. */
+/**
+ * Login accounts. superadmin has no tenant; client_admin/staff belong to exactly
+ * one tenant. `tenantId` is the source of truth, `libraryId` is kept as a legacy
+ * mirror so older documents keep working during migration.
+ */
 const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   name: { type: String, trim: true, default: '' },
   passwordHash: { type: String, select: false }, // optional: Google-only accounts have none
   role: { type: String, enum: ROLES, required: true },
+  tenantId: {
+    type: String, index: true,
+    required: function () { return this.role !== 'superadmin'; },
+  },
   libraryId: {
     type: String, index: true,
     required: function () { return this.role !== 'superadmin'; },
@@ -31,9 +44,16 @@ const userSchema = new mongoose.Schema({
   googleSub: { type: String, index: true, sparse: true },
   authProviders: { type: [String], default: [] }, // e.g. ['password', 'google']
 }, { timestamps: true });
+// Keep the legacy libraryId mirror in sync when only one of the two is supplied.
+userSchema.pre('validate', function syncTenantFields() {
+  if (!this.tenantId && this.libraryId) this.tenantId = this.libraryId;
+  if (!this.libraryId && this.tenantId) this.libraryId = this.tenantId;
+});
 userSchema.methods.toSafeJSON = function () {
-  const { _id, email, name, role, libraryId, staffId, status, lastLoginAt, createdAt, authProviders } = this;
-  return { id: String(_id), email, name, role, libraryId: libraryId || null, staffId: staffId || null, status, lastLoginAt, createdAt, authProviders };
+  const { _id, email, name, role, staffId, status, lastLoginAt, createdAt, authProviders } = this;
+  const tenantId = this.tenantId || this.libraryId || null;
+  // Both fields are exposed for compatibility; the frontend still reads libraryId.
+  return { id: String(_id), email, name, role, libraryId: tenantId, tenantId, staffId: staffId || null, status, lastLoginAt, createdAt, authProviders };
 };
 export const User = mongoose.model('User', userSchema);
 
@@ -41,14 +61,17 @@ export const User = mongoose.model('User', userSchema);
  * Tenant-scoped models
  * The frontend owns rich, evolving documents, so each collection uses a flexible
  * schema (strict: false) keyed by the UI's business id (_key) and ALWAYS scoped by
- * libraryId. Uniqueness is per tenant: { libraryId, _key }.
+ * tenantId. Uniqueness is per tenant: { tenantId, _key }.
  * ------------------------------------------------------------------------- */
 const tenantSchema = (fields = {}) => {
   const s = new mongoose.Schema(
-    { libraryId: { type: String, required: true, index: true }, _key: { type: String, required: true }, ...fields },
+    { tenantId: { type: String, required: true, index: true }, _key: { type: String, required: true }, ...fields },
     { strict: false, timestamps: true, minimize: false }
   );
-  s.index({ libraryId: 1, _key: 1 }, { unique: true });
+  // Unique per tenant. The partial filter lets pre-migration documents (which
+  // have no tenantId yet) coexist until migrate-tenants backfills them.
+  s.index({ tenantId: 1, _key: 1 }, { unique: true, partialFilterExpression: { tenantId: { $type: 'string' } } });
+  s.plugin(tenantGuard);
   return s;
 };
 
@@ -71,35 +94,43 @@ export const COLLECTIONS = {
 export const models = {};
 for (const [col, def] of Object.entries(COLLECTIONS)) {
   const schema = tenantSchema(def.fields);
-  if (col === 'payments') schema.index({ libraryId: 1, studentId: 1 });
-  if (col === 'students') schema.index({ libraryId: 1, branchId: 1, status: 1 });
-  models[col] = mongoose.model(def.name, schema);
+  if (col === 'payments') schema.index({ tenantId: 1, studentId: 1 });
+  if (col === 'students') schema.index({ tenantId: 1, branchId: 1, status: 1 });
+  models[col] = applyBulkWriteGuard(mongoose.model(def.name, schema));
 }
 
-/** One settings document per library (the frontend's `settings` object). */
-export const Settings = mongoose.model('Settings', new mongoose.Schema(
-  { libraryId: { type: String, required: true, unique: true } },
+/** One settings document per tenant (the frontend's `settings` object). */
+const settingsSchema = new mongoose.Schema(
+  { tenantId: { type: String, required: true } },
   { strict: false, timestamps: true, minimize: false }
-));
+);
+settingsSchema.index({ tenantId: 1 }, { unique: true, partialFilterExpression: { tenantId: { $type: 'string' } } });
+settingsSchema.plugin(tenantGuard);
+export const Settings = applyBulkWriteGuard(mongoose.model('Settings', settingsSchema));
 
 /** Student document scans (base64 data URLs), previously IndexedDB-only. */
 const docSchema = new mongoose.Schema({
-  libraryId: { type: String, required: true },
+  tenantId: { type: String, required: true, index: true },
+  libraryId: String, // legacy mirror of tenantId (rollback only, never queried)
   storageKey: { type: String, required: true },
   data: { type: String, required: true },
 }, { timestamps: true });
-docSchema.index({ libraryId: 1, storageKey: 1 }, { unique: true });
-export const StudentDocument = mongoose.model('StudentDocument', docSchema);
+docSchema.index({ tenantId: 1, storageKey: 1 }, { unique: true, partialFilterExpression: { tenantId: { $type: 'string' } } });
+docSchema.plugin(tenantGuard);
+export const StudentDocument = applyBulkWriteGuard(mongoose.model('StudentDocument', docSchema));
 
 export const keyOf = (col, doc) => {
   for (const k of COLLECTIONS[col].keys) if (doc && doc[k] != null && doc[k] !== '') return String(doc[k]);
   return null;
 };
 
-const INTERNAL = ['_id', '_key', '_order', '__v', 'createdAt', 'updatedAt'];
+const INTERNAL = ['_id', '_key', '_order', '__v', 'createdAt', 'updatedAt', 'tenantId'];
 export const clean = (doc) => {
   if (!doc) return doc;
   const o = typeof doc.toObject === 'function' ? doc.toObject() : { ...doc };
+  const tenantId = o.tenantId;
   for (const f of INTERNAL) delete o[f];
+  // API output keeps the historical `libraryId` field name.
+  if (tenantId !== undefined && tenantId !== null) o.libraryId = tenantId;
   return o;
 };

@@ -8,8 +8,11 @@ import { verifyGoogleIdToken, googleEnabled } from './google.js';
 
 const router = express.Router();
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
-// libraryId is stripped from all client input: the tenant always comes from req.libraryId
-const stripMeta = (body) => { const o = { ...(body || {}) }; for (const f of ['_id', '_key', '_order', '__v', 'createdAt', 'updatedAt', 'libraryId']) delete o[f]; return o; };
+// Tenant identity is stripped from all client input: it always comes from req.tenantId.
+// Writes also mirror it into the legacy libraryId field (rollback + legacy indexes).
+const stripMeta = (body) => { const o = { ...(body || {}) }; for (const f of ['_id', '_key', '_order', '__v', 'createdAt', 'updatedAt', 'tenantId', 'libraryId']) delete o[f]; return o; };
+
+const tenantOfUser = (user) => user.tenantId || user.libraryId || null;
 
 // ---------------------------------------------------------------- Health
 export const healthHandler = wrap(async (req, res) => {
@@ -28,7 +31,7 @@ async function issueSession(user, res) {
   if (user.status !== 'Active') return res.status(403).json({ error: 'Account is disabled' });
   let library = null;
   if (user.role !== 'superadmin') {
-    library = await Library.findOne({ libraryId: user.libraryId }).lean();
+    library = await Library.findOne({ libraryId: tenantOfUser(user) }).lean();
     if (!library || library.status !== 'Active') return res.status(403).json({ error: 'Library is disabled' });
   }
   await User.updateOne({ _id: user._id }, { $set: { lastLoginAt: new Date() } });
@@ -62,7 +65,8 @@ router.use(requireAuth);
 
 router.get('/auth/me', wrap(async (req, res) => {
   const user = await User.findById(req.user.id);
-  const library = user.libraryId ? await Library.findOne({ libraryId: user.libraryId }).lean() : null;
+  const tenantId = tenantOfUser(user);
+  const library = tenantId ? await Library.findOne({ libraryId: tenantId }).lean() : null;
   res.json({ user: user.toSafeJSON(), library: library && { libraryId: library.libraryId, name: library.name, status: library.status } });
 }));
 
@@ -88,7 +92,7 @@ admin.get('/libraries', wrap(async (_req, res) => {
   const m = Object.fromEntries(perLibrary.map(x => [x.libraryId, x]));
   res.json(libs.map(l => ({
     libraryId: l.libraryId, name: l.name, status: l.status, contactEmail: l.contactEmail, createdAt: l.createdAt,
-    admins: admins.filter(a => a.libraryId === l.libraryId).map(a => ({ id: String(a._id), email: a.email, name: a.name, status: a.status })),
+    admins: admins.filter(a => tenantOfUser(a) === l.libraryId).map(a => ({ id: String(a._id), email: a.email, name: a.name, status: a.status })),
     metrics: m[l.libraryId],
   })));
 }));
@@ -121,14 +125,14 @@ admin.get('/metrics', wrap(async (_req, res) => {
 }));
 
 admin.get('/libraries/:libraryId/users', wrap(async (req, res) => {
-  res.json((await User.find({ libraryId: req.params.libraryId })).map(u => u.toSafeJSON()));
+  res.json((await User.find({ tenantId: req.params.libraryId })).map(u => u.toSafeJSON()));
 }));
 
 // Pre-provision a client admin (or staff) by email; Google sign-in then works for them.
 admin.post('/libraries/:libraryId/users', wrap(async (req, res) => {
   if (!(await Library.exists({ libraryId: req.params.libraryId }))) return res.status(404).json({ error: 'Library not found' });
   const role = req.body?.role === 'staff' ? 'staff' : 'client_admin';
-  const r = await createUser({ ...req.body, role, libraryId: req.params.libraryId });
+  const r = await createUser({ ...req.body, role, tenantId: req.params.libraryId, libraryId: req.params.libraryId });
   res.status(201).json({ user: r.user.toSafeJSON(), generatedPassword: r.generatedPassword || undefined });
 }));
 
@@ -154,15 +158,15 @@ tenant.use(tenantScope);
 
 // Client admins manage login accounts for their own library (staff / co-admins)
 tenant.get('/users', requireRole('client_admin', 'superadmin'), wrap(async (req, res) => {
-  res.json((await User.find({ libraryId: req.libraryId })).map(u => u.toSafeJSON()));
+  res.json((await User.find({ tenantId: req.tenantId })).map(u => u.toSafeJSON()));
 }));
 tenant.post('/users', requireRole('client_admin', 'superadmin'), wrap(async (req, res) => {
   const role = req.body?.role === 'client_admin' ? 'client_admin' : 'staff';
-  const r = await createUser({ ...req.body, role, libraryId: req.libraryId });
+  const r = await createUser({ ...req.body, role, tenantId: req.tenantId, libraryId: req.tenantId });
   res.status(201).json({ user: r.user.toSafeJSON(), generatedPassword: r.generatedPassword || undefined });
 }));
 tenant.patch('/users/:id', requireRole('client_admin', 'superadmin'), wrap(async (req, res) => {
-  const user = await User.findOne({ _id: req.params.id, libraryId: req.libraryId });
+  const user = await User.findOne({ _id: req.params.id, tenantId: req.tenantId });
   if (!user) return res.status(404).json({ error: 'User not found' });
   if (req.body?.status) user.status = req.body.status === 'Disabled' ? 'Disabled' : 'Active';
   if (req.body?.name !== undefined) user.name = req.body.name;
@@ -175,39 +179,39 @@ tenant.patch('/users/:id', requireRole('client_admin', 'superadmin'), wrap(async
 tenant.get('/state', wrap(async (req, res) => {
   const out = {};
   await Promise.all(Object.keys(COLLECTIONS).map(async col => {
-    out[col] = (await models[col].find({ libraryId: req.libraryId }).sort({ _order: 1, createdAt: 1 }).lean()).map(clean);
+    out[col] = (await models[col].find({ tenantId: req.tenantId }).sort({ _order: 1, createdAt: 1 }).lean()).map(clean);
   }));
-  const s = await Settings.findOne({ libraryId: req.libraryId }).lean();
+  const s = await Settings.findOne({ tenantId: req.tenantId }).lean();
   out.settings = s && Object.keys(clean(s)).length > 1 ? clean(s) : null;
-  out.libraryId = req.libraryId;
+  out.libraryId = req.tenantId; // public API shape: tenant id is still exposed as libraryId
   out.readOnly = req.readOnly;
   res.json(out);
 }));
 
 tenant.get('/settings', wrap(async (req, res) => {
-  const s = await Settings.findOne({ libraryId: req.libraryId }).lean();
+  const s = await Settings.findOne({ tenantId: req.tenantId }).lean();
   res.json(s ? clean(s) : null);
 }));
 tenant.put('/settings', requireRole('client_admin', 'superadmin', 'staff'), wrap(async (req, res) => {
-  const s = await Settings.findOneAndReplace({ libraryId: req.libraryId }, { ...stripMeta(req.body), libraryId: req.libraryId }, { upsert: true, new: true, lean: true });
+  const s = await Settings.findOneAndReplace({ tenantId: req.tenantId }, { ...stripMeta(req.body), tenantId: req.tenantId, libraryId: req.tenantId }, { upsert: true, new: true, lean: true });
   res.json(clean(s));
 }));
 
 tenant.get('/documents/:key', wrap(async (req, res) => {
-  const d = await StudentDocument.findOne({ libraryId: req.libraryId, storageKey: req.params.key }).lean();
+  const d = await StudentDocument.findOne({ tenantId: req.tenantId, storageKey: req.params.key }).lean();
   d ? res.json({ storageKey: d.storageKey, data: d.data }) : res.status(404).json({ error: 'Not found' });
 }));
 tenant.put('/documents/:key', wrap(async (req, res) => {
   if (!req.body?.data) return res.status(400).json({ error: 'data is required' });
-  await StudentDocument.updateOne({ libraryId: req.libraryId, storageKey: req.params.key }, { $set: { data: req.body.data } }, { upsert: true });
+  await StudentDocument.updateOne({ tenantId: req.tenantId, storageKey: req.params.key }, { $set: { data: req.body.data, libraryId: req.tenantId } }, { upsert: true });
   res.json({ ok: true });
 }));
 tenant.delete('/documents/:key', wrap(async (req, res) => {
-  await StudentDocument.deleteOne({ libraryId: req.libraryId, storageKey: req.params.key });
+  await StudentDocument.deleteOne({ tenantId: req.tenantId, storageKey: req.params.key });
   res.json({ ok: true });
 }));
 
-// Generic REST for each entity collection, always filtered by req.libraryId
+// Generic REST for each entity collection, always filtered by req.tenantId
 const colParam = (req, res, next) => {
   if (!COLLECTIONS[req.params.col]) return res.status(404).json({ error: `Unknown collection "${req.params.col}"` });
   req.Model = models[req.params.col];
@@ -215,13 +219,13 @@ const colParam = (req, res, next) => {
 };
 
 tenant.get('/:col', colParam, wrap(async (req, res) => {
-  const filter = { libraryId: req.libraryId };
+  const filter = { tenantId: req.tenantId };
   for (const f of ['branchId', 'status', 'studentId']) if (req.query[f]) filter[f] = String(req.query[f]);
   res.json((await req.Model.find(filter).sort({ _order: 1, createdAt: 1 }).lean()).map(clean));
 }));
 
 tenant.get('/:col/:key', colParam, wrap(async (req, res) => {
-  const d = await req.Model.findOne({ libraryId: req.libraryId, _key: req.params.key }).lean();
+  const d = await req.Model.findOne({ tenantId: req.tenantId, _key: req.params.key }).lean();
   d ? res.json(clean(d)) : res.status(404).json({ error: 'Not found' });
 }));
 
@@ -229,18 +233,18 @@ tenant.post('/:col', colParam, wrap(async (req, res) => {
   const body = stripMeta(req.body);
   const _key = keyOf(req.params.col, body);
   if (!_key) return res.status(400).json({ error: `Missing key field (${COLLECTIONS[req.params.col].keys.join(' or ')})` });
-  if (await req.Model.exists({ libraryId: req.libraryId, _key })) return res.status(409).json({ error: 'Already exists' });
-  const d = await req.Model.create({ ...body, _key, libraryId: req.libraryId });
+  if (await req.Model.exists({ tenantId: req.tenantId, _key })) return res.status(409).json({ error: 'Already exists' });
+  const d = await req.Model.create({ ...body, _key, tenantId: req.tenantId, libraryId: req.tenantId });
   res.status(201).json(clean(d));
 }));
 
 tenant.put('/:col/:key', colParam, wrap(async (req, res) => {
-  const d = await req.Model.findOneAndUpdate({ libraryId: req.libraryId, _key: req.params.key }, { $set: stripMeta(req.body) }, { new: true, lean: true });
+  const d = await req.Model.findOneAndUpdate({ tenantId: req.tenantId, _key: req.params.key }, { $set: stripMeta(req.body) }, { new: true, lean: true });
   d ? res.json(clean(d)) : res.status(404).json({ error: 'Not found' });
 }));
 
 tenant.delete('/:col/:key', colParam, wrap(async (req, res) => {
-  const r = await req.Model.deleteOne({ libraryId: req.libraryId, _key: req.params.key });
+  const r = await req.Model.deleteOne({ tenantId: req.tenantId, _key: req.params.key });
   r.deletedCount ? res.json({ ok: true }) : res.status(404).json({ error: 'Not found' });
 }));
 
@@ -256,10 +260,10 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
     const _key = keyOf(col, body);
     if (!_key || seen.has(_key)) return;
     seen.add(_key);
-    ops.push({ replaceOne: { filter: { libraryId: req.libraryId, _key }, replacement: { ...body, _key, _order: i, libraryId: req.libraryId }, upsert: true } });
+    ops.push({ replaceOne: { filter: { tenantId: req.tenantId, _key }, replacement: { ...body, _key, _order: i, tenantId: req.tenantId, libraryId: req.tenantId }, upsert: true } });
   });
   if (ops.length) await req.Model.bulkWrite(ops, { ordered: false });
-  const del = await req.Model.deleteMany({ libraryId: req.libraryId, _key: { $nin: [...seen] } });
+  const del = await req.Model.deleteMany({ tenantId: req.tenantId, _key: { $nin: [...seen] } });
   res.json({ ok: true, upserted: ops.length, deleted: del.deletedCount });
 }));
 

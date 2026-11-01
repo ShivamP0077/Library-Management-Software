@@ -43,6 +43,18 @@ export async function ensureSuperAdmin(env = process.env) {
   return user;
 }
 
+/** Ensures the default tenant library exists (idempotent). */
+export async function ensureDefaultLibrary(env = process.env) {
+  const libraryId = env.DEFAULT_TENANT_ID || 'lib-default';
+  const name = env.DEFAULT_TENANT_NAME || 'Default Library';
+  const existing = await Library.findOne({ libraryId });
+  if (existing) {
+    if (!existing.isDefault) { existing.isDefault = true; await existing.save(); }
+    return existing;
+  }
+  return Library.create({ libraryId, name, status: 'Active', createdBy: 'seed', isDefault: true });
+}
+
 /** Creates a demo client library + client admin (idempotent). Credentials go to a 600 file. */
 export async function ensureDemoClient(env = process.env) {
   const libraryId = env.DEMO_LIBRARY_ID || 'lib-demo';

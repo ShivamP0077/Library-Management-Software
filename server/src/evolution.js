@@ -29,6 +29,15 @@ export const normalizePhone = (raw, defaultCountry = '91') => {
   return d.length >= 11 && d.length <= 15 ? d : null;
 };
 
+/** Short, human-readable reason from an Evolution error response (never includes secrets). */
+export function upstreamReason(status, data) {
+  const pick = (v) => Array.isArray(v) ? v.map(pick).filter(Boolean).join('; ') : v && typeof v === 'object' ? pick(v.message ?? v.error ?? (v.exists === false ? `number ${v.number || ''} is not on WhatsApp` : "")) : v ? String(v) : '';
+  let msg = pick(data?.response?.message ?? data?.message ?? data?.error ?? data?.raw);
+  if (!msg && status === 429) msg = 'service is busy or still starting up';
+  msg = String(msg || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+  return `HTTP ${status}${msg ? ': ' + msg : ''}`;
+}
+
 export function createEvolutionClient({ baseUrl = process.env.EVOLUTION_API_URL, apiKey = process.env.EVOLUTION_API_KEY, fetchImpl = globalThis.fetch, timeoutMs = 20000 } = {}) {
   const base = String(baseUrl || '').replace(/\/+$/, '');
   async function call(method, path, body, callTimeoutMs = timeoutMs) {
@@ -48,8 +57,10 @@ export function createEvolutionClient({ baseUrl = process.env.EVOLUTION_API_URL,
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
     if (!res.ok) {
-      const err = new EvolutionError(res.status === 404 ? 'WhatsApp instance not found' : 'WhatsApp service request failed', res.status === 404 ? 404 : 502);
+      const reason = upstreamReason(res.status, data);
+      const err = new EvolutionError(res.status === 404 ? 'WhatsApp instance not found' : `WhatsApp service request failed (${reason})`, res.status === 404 ? 404 : 502);
       err.upstreamStatus = res.status;
+      err.upstreamBody = data;
       throw err;
     }
     return data;

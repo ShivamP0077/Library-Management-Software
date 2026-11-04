@@ -2,6 +2,9 @@
 
 ## 2026-11-04 (IST)
 
+- **WhatsApp phase 1: WhatsApp section, send button on every student, bulk send, disconnected banner** ([PR #28](https://github.com/ShivamP0077/Library-Management-Software/pull/28), merge commit [`a835fd2`](https://github.com/ShivamP0077/Library-Management-Software/commit/a835fd2), 19:00 IST).
+  New "WhatsApp" menu section with Messages, Templates (coming soon), Auto reminders (coming soon) and WhatsApp Login (QR connect, moved from Settings; Settings now links there). Students list: Status, Branch and Shift are dropdowns, one student per row at every width (checkbox, name, seat, status and WhatsApp always on one line, extra columns appear on bigger screens), the View button is gone (tap the row), "Select all" and a "N selected · Clear · Send WhatsApp" bar. The send window has Fee reminder, Fee receipt (pick any past payment), Renewal reminder, Seat/shift info and Custom, with {name} {amount} {month} {dueDate} {seat}, a live WhatsApp preview and the student's recent messages. Bulk send sends the chosen message to each selected student one by one and shows who failed, with Retry failed. New tenant-scoped endpoint `POST /api/whatsapp/students/:id/send` logs every send and reuses the wake/retry logic. A red banner shows when WhatsApp is disconnected, and Send is disabled with the reason.
+
 - **WhatsApp Resend no longer fails while the WhatsApp server is starting up** ([PR #26](https://github.com/ShivamP0077/Library-Management-Software/pull/26), commit [`24e1e0c`](https://github.com/ShivamP0077/Library-Management-Software/commit/24e1e0c)).
   At 16:33 IST the Resend failed because the sleeping Evolution server answered HTTP 429 ("busy, starting up"), which was treated as a permanent error. The number was fine. Sends now treat 429 as temporary, wait until the WhatsApp session is "open", and the Messages screen shows the real reason from the WhatsApp server.
 

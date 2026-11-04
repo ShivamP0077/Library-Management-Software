@@ -14,7 +14,7 @@ import express from 'express';
 import tenantGuard, { applyBulkWriteGuard } from './tenantGuard.js';
 import { models, Library } from './models.js';
 import { todayIn } from './finance.js';
-import { WhatsappConfig, sendWhatsappMessage, buildReceiptText, logSkipped, canManageWhatsapp } from './whatsapp.js';
+import { WhatsappConfig, sendWhatsappMessage, buildReceiptText, logSkipped, canManageWhatsapp, retryFailedReceipts } from './whatsapp.js';
 import { evolutionConfigured } from './evolution.js';
 
 const schema = new mongoose.Schema({
@@ -139,6 +139,12 @@ export async function runReminderJob(deps = {}) {
     try { await planReminders(l.libraryId); if (sendNow) await sendDueReminders(l.libraryId, { deps }); }
     catch (e) { console.error('[reminders] failed for', l.libraryId, e.message); }
   }
+}
+
+/** Every ~3 min: re-send receipts that failed because Evolution was asleep (no time window for receipts). */
+export async function runReceiptRetryJob(deps = {}) {
+  if (!evolutionConfigured() && !deps.client) return null;
+  return retryFailedReceipts(deps);
 }
 
 /* ---------------------------------------------------------------- auto receipts */

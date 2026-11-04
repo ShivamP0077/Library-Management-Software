@@ -14,11 +14,11 @@ import { createNotificationRouter } from './notifications.js';
 import { createInsightsRouter } from './insights.js';
 import { createSupportRouter, createSupportAdminRouter } from './support.js';
 import { createPartnerAdminRouter, createPartnerPortalRouter } from './partners.js';
-import { createReminderRouter, autoSendReceipts } from './reminders.js';
+import { createReminderRouter, autoSendReceipts, receiptsForNewStudents } from './reminders.js';
 
 // Auto-receipts never block or fail the save; in tests we await so results are observable.
-const sendReceiptsAfterSave = async (tenantId, payments) => {
-  const p = autoSendReceipts(tenantId, payments).catch(e => console.error('[receipts]', e.message));
+const sendReceiptsAfterSave = async (tenantId, payments, newStudentKeys) => {
+  const p = (newStudentKeys ? receiptsForNewStudents(tenantId, newStudentKeys) : autoSendReceipts(tenantId, payments)).catch(e => console.error('[receipts]', e.message));
   if (process.env.NODE_ENV === 'test') await p;
 };
 import { createPublicAccountRouter, createTenantAccountRouter, auditSuperadminAccess } from './accounts.js';
@@ -473,6 +473,10 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
   const del = await req.Model.deleteMany({ tenantId: req.tenantId, _key: { $nin: [...seen] } });
   if (req.studentDiff) await recordStudentDiff(req.tenantId, req.studentDiff.previous, req.studentDiff.incoming, req.user.email);
   if (newPayments?.length) await sendReceiptsAfterSave(req.tenantId, newPayments);
+  if (req.studentDiff) {
+    const added = [...new Set(req.studentDiff.incoming.map(b => keyOf(col, b)))].filter(k => !req.studentDiff.previous.has(String(k)));
+    if (added.length) await sendReceiptsAfterSave(req.tenantId, null, added);
+  }
   if (prevArchived) await recordArchiveDiff(req, prevArchived, req.body.map(stripMeta).filter(b => keyOf(col, b)));
   res.json({ ok: true, upserted: ops.length, deleted: del.deletedCount });
 }));

@@ -14,7 +14,7 @@ import express from 'express';
 import tenantGuard, { applyBulkWriteGuard } from './tenantGuard.js';
 import { models, Library } from './models.js';
 import { todayIn } from './finance.js';
-import { WhatsappConfig, sendWhatsappMessage, buildReceiptText, canManageWhatsapp } from './whatsapp.js';
+import { WhatsappConfig, sendWhatsappMessage, buildReceiptText, logSkipped, canManageWhatsapp } from './whatsapp.js';
 import { evolutionConfigured } from './evolution.js';
 
 const schema = new mongoose.Schema({
@@ -145,22 +145,42 @@ export async function runReminderJob(deps = {}) {
 let receiptDeps = {};
 export const setReceiptDeps = (d) => { receiptDeps = d || {}; };
 
-/** Fire-and-forget after new payments are saved. Admission vs renewal by prior payment history. */
-export async function autoSendReceipts(tenantId, payments) {
+// The UI syncs payments and students in parallel, so a new admission's payment can land before its student.
+const RECEIPT_RETRY_MS = [1000, 2000, 4000, 8000]; // ~15s total
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+/** Fire-and-forget after new payments are saved. Admission vs renewal by prior payment history.
+ *  opts.retry=false skips the student lookup retries (used when the student was just written). */
+export async function autoSendReceipts(tenantId, payments, { retry = true } = {}) {
   if (!payments?.length || (!evolutionConfigured() && !receiptDeps.client)) return [];
+  const delays = retry ? (receiptDeps.retryMs || RECEIPT_RETRY_MS) : [];
   const out = [];
   for (const p of payments) {
     if (!p?.studentId || Number(p.netTotal ?? p.amount ?? 0) <= 0 || p.method === 'Refund') continue;
     const key = String(p._key ?? p.receiptNo ?? p.id);
-    const s = await models.students.findOne({ tenantId, _key: String(p.studentId) }).lean();
-    if (!s?.phone) continue;
+    const find = () => models.students.findOne({ tenantId, _key: String(p.studentId) }).lean();
+    let s = await find();
+    for (const ms of delays) { if (s?.phone) break; await sleep(ms); s = await find(); }
     const earlier = await models.payments.countDocuments({ tenantId, studentId: String(p.studentId), _key: { $ne: key } });
     const type = earlier > 0 || /renew/i.test(p.planName || p.type || '') ? 'renewal_receipt' : 'admission_receipt';
+    if (!s?.phone) {
+      const reason = s ? 'no_phone' : 'no_student';
+      await logSkipped({ libraryId: tenantId, type, dedupeKey: `receipt:${key}`, reason }, receiptDeps.Message);
+      out.push({ status: 'skipped', reason });
+      continue;
+    }
     try {
       out.push(await sendWhatsappMessage({ libraryId: tenantId, type, to: s.phone, text: buildReceiptText(p, s), dedupeKey: `receipt:${key}`, consent: s.whatsappOptOut !== true }, receiptDeps));
     } catch (e) { console.error('[receipts] send failed:', e.message); }
   }
   return out;
+}
+
+/** After a students sync: send receipts for the new students' payments that have no sent receipt yet. */
+export async function receiptsForNewStudents(tenantId, studentKeys) {
+  if (!studentKeys?.length || (!evolutionConfigured() && !receiptDeps.client)) return [];
+  const payments = await models.payments.find({ tenantId, studentId: { $in: studentKeys.map(String) } }).lean();
+  return autoSendReceipts(tenantId, payments, { retry: false }); // sendWhatsappMessage dedupes on receipt:<key>
 }
 
 /* ---------------------------------------------------------------- routes */

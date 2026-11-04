@@ -30,6 +30,7 @@ const msgSchema = new mongoose.Schema({
   status: { type: String, enum: ['queued', 'sent', 'failed', 'skipped'], default: 'queued' },
   providerMessageId: String,
   error: String,
+  reason: String, // why a message was skipped: no_student, no_phone, disabled, no_consent, invalid_number
   attempts: { type: Number, default: 0 },
 }, { timestamps: true });
 msgSchema.index({ libraryId: 1, dedupeKey: 1 }, { unique: true });
@@ -66,21 +67,28 @@ export async function sendWhatsappMessage({ libraryId, type, to, text, dedupeKey
   if (!dedupeKey) throw Object.assign(new Error('dedupeKey is required'), { status: 400 });
   const cfg = { ...DEFAULT_TOGGLES, ...((await Config.findOne({ libraryId }).lean()) || {}) };
   const toggle = TOGGLE_FOR_TYPE[type];
-  if (!cfg.enabled || (toggle && !cfg[toggle])) return { status: 'skipped', reason: 'disabled' };
-  if (!consent) return { status: 'skipped', reason: 'no_consent' };
   const number = normalizePhone(to);
-  if (!number) return { status: 'skipped', reason: 'invalid_number' };
+  const reason = !cfg.enabled || (toggle && !cfg[toggle]) ? 'disabled' : !consent ? 'no_consent' : !number ? 'invalid_number' : null;
+  if (reason) { await logSkipped({ libraryId, type, to, dedupeKey, reason }, Message); return { status: 'skipped', reason }; }
 
   const existing = await Message.findOne({ libraryId, dedupeKey }).lean();
   if (existing && ['sent', 'queued'].includes(existing.status)) return { status: 'duplicate', id: String(existing._id) };
   const lib = await Lib.findOne({ libraryId }).lean();
   const body = `*${lib?.name || 'Your library'}*\n${String(text || '').trim()}`;
 
-  const log = await Message.findOneAndUpdate(
-    { libraryId, dedupeKey },
-    { $set: { type, to: number, status: 'queued', error: null }, $inc: { attempts: 1 } },
-    { upsert: true, new: true }
-  );
+  // Atomic claim: only one caller can move a key to 'queued'; a sent/queued row makes the upsert hit the unique index.
+  let log;
+  try {
+    log = await Message.findOneAndUpdate(
+      { libraryId, dedupeKey, status: { $nin: ['sent', 'queued'] } },
+      { $set: { type, to: number, status: 'queued', error: null, reason: null }, $inc: { attempts: 1 } },
+      { upsert: true, new: true }
+    );
+  } catch (e) {
+    if (e?.code !== 11000) throw e;
+    const dup = await Message.findOne({ libraryId, dedupeKey }).lean();
+    return { status: 'duplicate', id: String(dup?._id) };
+  }
   try {
     const r = await client.sendText(instanceNameFor(libraryId), number, body);
     await Message.updateOne({ _id: log._id }, { $set: { status: 'sent', providerMessageId: r?.key?.id || null } });
@@ -89,6 +97,14 @@ export async function sendWhatsappMessage({ libraryId, type, to, text, dedupeKey
     await Message.updateOne({ _id: log._id }, { $set: { status: 'failed', error: String(e.message).slice(0, 300) } });
     return { status: 'failed', error: e.message, id: String(log._id) };
   }
+}
+
+/** Log a skipped message (never overwrites a sent/queued row for the same key). */
+export async function logSkipped({ libraryId, type, to, dedupeKey, reason }, Message = WhatsappMessage) {
+  try {
+    await Message.updateOne({ libraryId, dedupeKey, status: { $nin: ['sent', 'queued'] } },
+      { $set: { type, to: to ? String(to) : null, status: 'skipped', reason } }, { upsert: true });
+  } catch (e) { if (e?.code !== 11000) throw e; }
 }
 
 const money = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;

@@ -5,7 +5,9 @@ import crypto from 'crypto';
 import { createEvolutionClient, evolutionConfigured, instanceNameFor, normalizePhone, webhookTokenFor } from './evolution.js';
 
 /* ---------------------------------------------------------------- Models */
-export const MESSAGE_TYPES = ['otp', 'admission_receipt', 'renewal_receipt', 'fee_reminder', 'expiry_reminder', 'test'];
+export const MESSAGE_TYPES = ['otp', 'admission_receipt', 'renewal_receipt', 'fee_reminder', 'expiry_reminder', 'test', 'fee_receipt', 'renewal_reminder', 'seat_info', 'custom'];
+/** Types a staff member can send by hand from the per-student WhatsApp window. */
+export const MANUAL_TYPES = ['fee_reminder', 'fee_receipt', 'renewal_reminder', 'seat_info', 'custom'];
 const DEFAULT_TOGGLES = { enabled: true, otp: false, receipts: true, feeReminders: false, expiryReminders: false };
 
 /** Per-library WhatsApp preferences (owner opt-out + per-type toggles). */
@@ -48,7 +50,7 @@ export const WhatsappMessage = mongoose.models.WhatsappMessage || mongoose.model
 
 /** Statuses that mean the message already went out (never re-sent, never overwritten). */
 const DONE = ['queued', 'sent', 'delivered', 'read'];
-const TOGGLE_FOR_TYPE = { otp: 'otp', admission_receipt: 'receipts', renewal_receipt: 'receipts', fee_reminder: 'feeReminders', expiry_reminder: 'expiryReminders', test: null };
+const TOGGLE_FOR_TYPE = { otp: 'otp', admission_receipt: 'receipts', renewal_receipt: 'receipts', fee_reminder: 'feeReminders', expiry_reminder: 'expiryReminders', test: null, fee_receipt: null, renewal_reminder: null, seat_info: null, custom: null };
 
 /* ---------------------------------------------------------------- Permissions */
 /**
@@ -73,12 +75,12 @@ export async function canManageWhatsapp(user, libraryId, { Staff = models.staffM
  * per-type toggles, requires recipient consent (opt-in), prevents duplicates and logs
  * the provider result. Messages are prefixed with the library name (spec §6).
  */
-export async function sendWhatsappMessage({ libraryId, type, to, text, dedupeKey, consent = true, studentId, studentName }, deps = {}) {
+export async function sendWhatsappMessage({ libraryId, type, to, text, dedupeKey, consent = true, studentId, studentName, manual = false }, deps = {}) {
   const { client = createEvolutionClient(), Config = WhatsappConfig, Message = WhatsappMessage, Lib = Library } = deps;
   if (!MESSAGE_TYPES.includes(type)) throw Object.assign(new Error('Unknown message type'), { status: 400 });
   if (!dedupeKey) throw Object.assign(new Error('dedupeKey is required'), { status: 400 });
   const cfg = { ...DEFAULT_TOGGLES, ...((await Config.findOne({ libraryId }).lean()) || {}) };
-  const toggle = TOGGLE_FOR_TYPE[type];
+  const toggle = manual ? null : TOGGLE_FOR_TYPE[type]; // hand-sent messages only honor the master switch
   const number = normalizePhone(to);
   const reason = !cfg.enabled || (toggle && !cfg[toggle]) ? 'disabled' : !consent ? 'no_consent' : !number ? 'invalid_number' : null;
   const who = { ...(studentId != null ? { studentId: String(studentId) } : {}), ...(studentName ? { studentName } : {}) };
@@ -302,7 +304,37 @@ export function createWhatsappRouter({ client = createEvolutionClient(), isConfi
     res.status(out.status === 'failed' ? 502 : 200).json({ ...out, message: fresh ? publicMessage(fresh) : null });
   }));
 
+  // Send a hand-written / typed message to one student (per-student WhatsApp window).
+  r.post('/students/:studentId/send', wrap(async (req, res) => {
+    if (req.readOnly) return res.status(403).json({ error: 'Read-only access' });
+    const out = await sendManualMessage({ tenantId: req.tenantId || req.libraryId, libraryId: req.libraryId, studentId: req.params.studentId, ...(req.body || {}) }, { client });
+    if (out.httpStatus) return res.status(out.httpStatus).json({ error: out.error });
+    const fresh = out.id ? await WhatsappMessage.findOne({ _id: out.id, libraryId: req.libraryId }).lean() : null;
+    res.status(out.status === 'failed' ? 502 : 200).json({ ...out, message: fresh ? publicMessage(fresh) : null });
+  }));
+
   return r;
+}
+
+/** Validate and send one manual message for a student. Every send gets its own log row (never deduped). */
+export async function sendManualMessage({ tenantId, libraryId, studentId, type, text, receiptNo }, { client, Students = models.students, Payments = models.payments, send = sendWhatsappMessage } = {}) {
+  if (!MANUAL_TYPES.includes(type)) return { httpStatus: 400, error: 'Unknown message type' };
+  const body = String(text || '').trim();
+  if (!body && type !== 'fee_receipt') return { httpStatus: 400, error: 'Message text is required' };
+  if (body.length > 2000) return { httpStatus: 400, error: 'Message is too long (max 2000 characters)' };
+  const student = await Students.findOne({ tenantId, _key: String(studentId) }).lean();
+  if (!student) return { httpStatus: 404, error: 'Student not found' };
+  if (!student.phone) return { httpStatus: 400, error: 'Student has no phone number' };
+  let finalText = body;
+  if (type === 'fee_receipt') {
+    if (!receiptNo) return { httpStatus: 400, error: 'Pick a receipt to send' };
+    const payment = await Payments.findOne({ tenantId, _key: String(receiptNo) }).lean();
+    if (!payment || String(payment.studentId) !== String(studentId)) return { httpStatus: 404, error: 'Payment not found for this student' };
+    if (!finalText) finalText = buildReceiptText(payment, student);
+  }
+  const dedupeKey = `manual:${type}:${studentId}:${Date.now()}:${crypto.randomBytes(3).toString('hex')}`;
+  const out = await send({ libraryId, type, to: student.phone, text: finalText, dedupeKey, consent: student.whatsappOptOut !== true, studentId: String(studentId), studentName: student.name, manual: true }, { client });
+  return out;
 }
 
 const STATUSES = ['queued', 'sent', 'delivered', 'read', 'failed', 'skipped'];

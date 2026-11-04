@@ -68,6 +68,7 @@ export const api = {
   reminders: (q = '') => apiRequest(`/reminders${q}`),
   whatsappMessages: (q = '') => apiRequest(`/whatsapp/messages${q}`),
   whatsappResend: (id) => apiRequest(`/whatsapp/messages/${encodeURIComponent(id)}/resend`, { method: 'POST' }),
+  whatsappSendToStudent: (studentId, body) => apiRequest(`/whatsapp/students/${encodeURIComponent(studentId)}/send`, { method: 'POST', body }),
   whatsappSendReceipt: (receiptNo, type) => apiRequest(`/whatsapp/receipts/${encodeURIComponent(receiptNo)}`, { method: 'POST', body: { type } }),
   // Seats (server-side atomic allocation)
   seatAllocations: (params = '') => apiRequest(`/seat-allocations${params}`),

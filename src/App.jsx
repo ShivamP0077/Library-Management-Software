@@ -24,6 +24,8 @@ import { LoginScreen } from './auth/LoginScreen';
 import { SuperAdminDashboard } from './auth/SuperAdminDashboard';
 import { PartnerPortal } from './auth/PartnerPortal';
 import { setTenantContext } from './utils/api';
+import { WhatsAppHub } from './components/WhatsAppHub';
+import { WhatsAppBanner } from './components/WhatsAppBanner';
 
 const pageVariants = {
   initial: { opacity: 0 },
@@ -32,8 +34,16 @@ const pageVariants = {
 };
 
 export const AppContent = () => {
-  const { settings, hasPermission } = useLibrary();
+  const { settings, hasPermission, currentStaff } = useLibrary();
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [whatsappPage, setWhatsappPage] = useState('messages');
+  const canManageWhatsapp = !currentStaff || currentStaff.role === 'Admin' || currentStaff.role === 'Manager' || hasPermission('settings', 'manage') || hasPermission('settings', 'edit');
+  // Deep links from anywhere (banner Reconnect, Settings shortcuts): navigateTo(tab, sub)
+  React.useEffect(() => {
+    const onNav = (e) => { const { tab, sub } = e.detail || {}; if (tab === 'whatsapp' && sub) setWhatsappPage(sub); if (tab) setActiveTab(tab); };
+    window.addEventListener('libos:navigate', onNav);
+    return () => window.removeEventListener('libos:navigate', onNav);
+  }, []);
   const [isNewStudentModalOpen, setIsNewStudentModalOpen] = useState(false);
   const [waitlistPayload, setWaitlistPayload] = useState(null);
   const [selectedStudent, setSelectedStudent] = useState(null);
@@ -72,6 +82,7 @@ export const AppContent = () => {
         }}
       />
 
+      <WhatsAppBanner />
       {/* Main Page Body Container */}
       <div className="page-body-wrapper" style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         
@@ -89,7 +100,7 @@ export const AppContent = () => {
                 style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
               >
                 <ErrorBoundary componentName="Active Module">
-            {!hasPermission(activeTab, 'view') && activeTab !== 'dashboard' && activeTab !== 'archives' && activeTab !== 'notifications' && activeTab !== 'support' ? (
+            {!hasPermission(activeTab, 'view') && activeTab !== 'dashboard' && activeTab !== 'archives' && activeTab !== 'notifications' && activeTab !== 'support' && activeTab !== 'whatsapp' ? (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '64px 24px', textAlign: 'center', minHeight: '400px' }}>
                 <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#fee2e2', color: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px' }}>
                   <ShieldAlert size={32} />
@@ -174,6 +185,9 @@ export const AppContent = () => {
                   />
                 )}
 
+                {activeTab === 'whatsapp' && (
+                  <WhatsAppHub page={whatsappPage} setPage={setWhatsappPage} canManage={canManageWhatsapp} />
+                )}
                 {activeTab === 'archives' && (
                   <PreviousStudentRecords setActiveTab={setActiveTab} />
                 )}

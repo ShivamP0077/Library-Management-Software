@@ -113,15 +113,24 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 /** Provider asleep / unreachable / timed out / 502-503-504: worth retrying later. */
 export function isTransientError(e) {
   const up = e?.upstreamStatus;
-  return e?.status === 503 || [502, 503, 504].includes(up) || /unreachable|timed? ?out|waking/i.test(String(e?.message || ''));
+  return e?.status === 503 || [429, 502, 503, 504].includes(up) || /unreachable|timed? ?out|waking|connection closed|not connected|connecting/i.test(String(e?.message || ''));
 }
 
 /** Wake Evolution, send with backoff on transient errors, and record the outcome on the log row. */
 export async function deliver(log, { libraryId, number, body }, { client, Message = WhatsappMessage, delaysMs = SEND_RETRY_MS }) {
   const instance = instanceNameFor(libraryId);
   if (client.wake) {
-    try { await client.wake(instance); }
-    catch (e) { console.error(`[whatsapp] wake failed for ${instance} (status ${e?.upstreamStatus || e?.status}): ${e?.message}`); }
+    // After a cold start Evolution answers 429 and then reports "connecting" while it restores the WhatsApp
+    // session; sending before it is "open" fails. Wait (bounded) for the session to be open.
+    for (let w = 0; w < (delaysMs.length ? 6 : 1); w++) {
+      try {
+        const st = await client.wake(instance);
+        const state = st?.instance?.state;
+        if (!state || state === 'open') break;
+        console.log(`[whatsapp] ${instance} state ${state}, waiting before send`);
+      } catch (e) { console.error(`[whatsapp] wake failed for ${instance} (status ${e?.upstreamStatus || e?.status}): ${e?.message}`); }
+      if (delaysMs.length) await sleep(Math.min(10000, delaysMs[0] * 2));
+    }
   }
   let lastErr;
   for (let i = 0; i <= delaysMs.length; i++) {

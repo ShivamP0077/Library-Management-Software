@@ -2,6 +2,8 @@
 
 ## 2026-11-04 (IST)
 
+- **WhatsApp receipts survive the Evolution server waking up** ([PR #25](https://github.com/ShivamP0077/Library-Management-Software/pull/25), commit [`4ffcc6b`](https://github.com/ShivamP0077/Library-Management-Software/commit/4ffcc6b)).
+  A renewal receipt failed at 14:53 IST because the free-plan WhatsApp (Evolution) server was asleep and the send gave up after 20 seconds. Sends now wake the server first and retry for about 90 seconds. A new background job runs every 3 minutes, at any hour, and resends receipts that failed this way, up to 3 attempts in total, without ever sending twice. lms-api also pings the WhatsApp server every 10 minutes to keep it awake. Both services are on Render's free plan, so a paid plan is the real fix.
 - **WhatsApp Messages screen** ([PR #24](https://github.com/ShivamP0077/Library-Management-Software/pull/24), commit [`e41772d`](https://github.com/ShivamP0077/Library-Management-Software/commit/e41772d)).
   New "Messages" tab in Settings (next to WhatsApp) and a "WhatsApp" tab on each student's profile list every receipt and reminder with its text, time and status (Sent, Delivered, Read, Failed, Not sent) plus the reason, and a Resend button for failed or not-sent messages. Delivery and read ticks come from an Evolution MESSAGES_UPDATE webhook, secured with a per-instance token derived from the existing Evolution key, so no new setting was needed. In Local Offline Mode the screen asks the user to sign in.
 - **WhatsApp admission receipts no longer skipped for new students** ([PR #23](https://github.com/ShivamP0077/Library-Management-Software/pull/23), commit [`c511374`](https://github.com/ShivamP0077/Library-Management-Software/commit/c511374)).

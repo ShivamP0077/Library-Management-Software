@@ -10,6 +10,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { NumericInput } from './NumericInput';
 import { SetupWizard } from './SetupWizard';
 import { WhatsAppSettings } from './WhatsAppSettings';
+import { WhatsAppMessages } from './WhatsAppMessages';
 import { TeamAccess } from './TeamAccess';
 import { resolveConfigurationScope, matchesScope } from '../utils/scopeResolver';
 import { 
@@ -901,6 +902,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
               { id: 'admission', label: '📄 Document Requirements' },
               { id: 'billing', label: '⚙️ General & Billing Settings' },
               { id: 'whatsapp', label: '💬 WhatsApp' },
+              { id: 'whatsappMessages', label: '📨 Messages' },
               { id: 'staff', label: '👥 Staff Permissions' },
               { id: 'data', label: '💾 Data Hub & Testing' }
             ].map(tab => (
@@ -1658,6 +1660,13 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
       {/* ======================================================== */}
       {activeTab === 'whatsapp' && (
         <WhatsAppSettings canManage={canManageWhatsapp} />
+      )}
+      {activeTab === 'whatsappMessages' && (
+        canManageWhatsapp ? <WhatsAppMessages /> : (
+          <div className="premium-card" style={{ padding: '20px', fontSize: '14px', color: 'var(--text-secondary)' }}>
+            You don't have permission to view WhatsApp messages.
+          </div>
+        )
       )}
 
       {/* ======================================================== */}

@@ -18,7 +18,7 @@ export function createApp() {
     // Never log query strings for OAuth routes (they can contain codes/state).
     morgan.token('safe-url', (req) => {
       const url = req.originalUrl || req.url || '';
-      return url.startsWith('/api/auth/google') ? url.split('?')[0] : url;
+      return url.startsWith('/api/auth/google') || url.startsWith('/api/whatsapp/webhook') ? url.split('?')[0] : url;
     });
     app.use(morgan(':method :safe-url :status :response-time ms'));
   }

@@ -118,7 +118,7 @@ export async function sendDueReminders(tenantId, { today = todayIn(), deps = {} 
       : `Hi ${s.name || 'there'}, your plan at ${lib?.name || 'the library'} ends on ${expiryOf(s)}. Please renew to keep your seat.`;
     let out;
     try {
-      out = await sendWhatsappMessage({ libraryId: tenantId, type: r.type, to: s.phone, text, dedupeKey: `reminder:${r.key}`, consent: s.whatsappOptOut !== true }, deps);
+      out = await sendWhatsappMessage({ libraryId: tenantId, type: r.type, to: s.phone, text, dedupeKey: `reminder:${r.key}`, consent: s.whatsappOptOut !== true, studentId: r.studentId, studentName: s.name }, deps);
     } catch (e) { out = { status: 'failed', error: e.message }; }
     const status = out.status === 'sent' || out.status === 'duplicate' ? 'sent' : out.status === 'failed' ? 'failed' : 'skipped';
     await ReminderSchedule.updateOne({ tenantId, _id: r._id }, { $set: { status, reason: out.reason || out.error || (out.status === 'duplicate' ? 'already_sent' : null), ...(status === 'sent' ? { sentAt: new Date() } : {}) } });
@@ -165,12 +165,12 @@ export async function autoSendReceipts(tenantId, payments, { retry = true } = {}
     const type = earlier > 0 || /renew/i.test(p.planName || p.type || '') ? 'renewal_receipt' : 'admission_receipt';
     if (!s?.phone) {
       const reason = s ? 'no_phone' : 'no_student';
-      await logSkipped({ libraryId: tenantId, type, dedupeKey: `receipt:${key}`, reason }, receiptDeps.Message);
+      await logSkipped({ libraryId: tenantId, type, dedupeKey: `receipt:${key}`, reason, studentId: p.studentId, studentName: s?.name }, receiptDeps.Message);
       out.push({ status: 'skipped', reason });
       continue;
     }
     try {
-      out.push(await sendWhatsappMessage({ libraryId: tenantId, type, to: s.phone, text: buildReceiptText(p, s), dedupeKey: `receipt:${key}`, consent: s.whatsappOptOut !== true }, receiptDeps));
+      out.push(await sendWhatsappMessage({ libraryId: tenantId, type, to: s.phone, text: buildReceiptText(p, s), dedupeKey: `receipt:${key}`, consent: s.whatsappOptOut !== true, studentId: p.studentId, studentName: s.name }, receiptDeps));
     } catch (e) { console.error('[receipts] send failed:', e.message); }
   }
   return out;

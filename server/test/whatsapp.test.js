@@ -142,3 +142,97 @@ test('routes: staff without permission gets 403 and Evolution is never called', 
   });
   assert.equal(called, false);
 });
+
+/* ---------------------------------------------------------------- Messages screen + delivery webhook */
+import { WhatsappMessage, mapAckStatus, applyStatusUpdate, createWhatsappWebhookRouter, registerWebhook, webhookUrlFor } from '../src/whatsapp.js';
+import { webhookTokenFor } from '../src/evolution.js';
+
+test('send: stores student, name and message text on the log row', async () => {
+  const d = deps(); let claimed;
+  d.Message.findOneAndUpdate = async (_f, u) => { claimed = u.$set; return { _id: 'log1' }; };
+  await sendWhatsappMessage({ ...msg, studentId: 7, studentName: 'Asha' }, d);
+  assert.equal(claimed.studentId, '7'); assert.equal(claimed.studentName, 'Asha');
+  assert.match(claimed.text, /Sunrise Library\*\nPaid/);
+});
+
+test('send: delivered/read rows count as already sent; failed/skipped rows can be resent', async () => {
+  for (const status of ['delivered', 'read']) assert.equal((await sendWhatsappMessage(msg, deps({ existing: { _id: 'x', status } }))).status, 'duplicate');
+  for (const status of ['failed', 'skipped']) assert.equal((await sendWhatsappMessage(msg, deps({ existing: { _id: 'x', status } }))).status, 'sent');
+});
+
+test('webhook: ack mapping to sent, delivered, read, failed', () => {
+  assert.equal(mapAckStatus('SERVER_ACK'), 'sent');
+  assert.equal(mapAckStatus('DELIVERY_ACK'), 'delivered');
+  assert.equal(mapAckStatus('READ'), 'read');
+  assert.equal(mapAckStatus('PLAYED'), 'read');
+  assert.equal(mapAckStatus('ERROR'), 'failed');
+  assert.equal(mapAckStatus(3), 'delivered');
+  assert.equal(mapAckStatus('weird'), null);
+});
+
+function memMessages(rows) {
+  return {
+    rows,
+    findOne: (q) => lean(rows.find(r => r.providerMessageId === q.providerMessageId) || null),
+    updateOne: async (q, u) => { const r = rows.find(x => x._id === q._id); Object.assign(r, u.$set); },
+  };
+}
+
+test('webhook: status only moves forward and is tenant-checked by instance', async () => {
+  const M = memMessages([{ _id: 'a', libraryId: 'lib-a', providerMessageId: 'P1', status: 'sent' }]);
+  assert.equal(await applyStatusUpdate('libos-lib-b', { keyId: 'P1', status: 'READ' }, M), false); // other library's instance
+  assert.equal(await applyStatusUpdate('libos-lib-a', { keyId: 'P1', status: 'DELIVERY_ACK' }, M), true);
+  assert.equal(M.rows[0].status, 'delivered');
+  assert.equal(await applyStatusUpdate('libos-lib-a', { key: { id: 'P1' }, status: 'READ' }, M), true);
+  assert.equal(M.rows[0].status, 'read');
+  assert.equal(await applyStatusUpdate('libos-lib-a', { keyId: 'P1', status: 'DELIVERY_ACK' }, M), false);
+  assert.equal(await applyStatusUpdate('libos-lib-a', { keyId: 'P1', status: 'ERROR' }, M), false); // already read
+  assert.equal(M.rows[0].status, 'read');
+});
+
+test('webhook route: rejects bad tokens, accepts the derived token', async () => {
+  const prev = process.env.EVOLUTION_API_KEY; process.env.EVOLUTION_API_KEY = 'test-key';
+  const M = memMessages([{ _id: 'a', libraryId: 'lib-a', providerMessageId: 'P1', status: 'sent' }]);
+  const app = express(); app.use(express.json()); app.use('/wa', createWhatsappWebhookRouter({ Message: M }));
+  const server = app.listen(0); const base = `http://127.0.0.1:${server.address().port}/wa/webhook/libos-lib-a`;
+  const post = (q, body) => fetch(base + q, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  try {
+    const body = { event: 'messages.update', instance: 'libos-lib-a', data: { keyId: 'P1', status: 'DELIVERY_ACK' } };
+    assert.equal((await post('', body)).status, 401);
+    assert.equal((await post('?token=nope', body)).status, 401);
+    assert.equal((await post(`?token=${webhookTokenFor('libos-lib-b')}`, body)).status, 401);
+    const ok = await post(`?token=${webhookTokenFor('libos-lib-a')}`, body);
+    assert.equal(ok.status, 200); assert.equal((await ok.json()).updated, 1);
+    assert.equal(M.rows[0].status, 'delivered');
+  } finally { server.close(); process.env.EVOLUTION_API_KEY = prev; }
+});
+
+test('registerWebhook points MESSAGES_UPDATE at our route and never throws', async () => {
+  const prev = process.env.EVOLUTION_API_KEY; process.env.EVOLUTION_API_KEY = 'test-key';
+  try {
+    const calls = [];
+    assert.equal(await registerWebhook({ setWebhook: async (...a) => calls.push(a) }, 'libos-lib-a', 'https://api.test'), true);
+    assert.equal(calls[0][1], webhookUrlFor('https://api.test', 'libos-lib-a'));
+    assert.match(calls[0][1], /^https:\/\/api\.test\/api\/whatsapp\/webhook\/libos-lib-a\?token=[0-9a-f]{40}$/);
+    assert.equal(await registerWebhook({ setWebhook: async () => { throw new Error('x'); } }, 'libos-lib-a', 'https://api.test'), false);
+  } finally { process.env.EVOLUTION_API_KEY = prev; }
+});
+
+test('routes: messages list is tenant-scoped and filtered; resend only for failed/skipped', async () => {
+  const orig = { find: WhatsappMessage.find, countDocuments: WhatsappMessage.countDocuments, findOne: WhatsappMessage.findOne };
+  let lastQuery;
+  WhatsappMessage.find = (q) => { lastQuery = q; const c = { sort: () => c, skip: () => c, limit: () => c, lean: async () => [{ _id: 'm1', type: 'admission_receipt', status: 'failed', studentId: 's1', studentName: 'Asha', text: 'hi', dedupeKey: 'receipt:R1' }] }; return c; };
+  WhatsappMessage.countDocuments = async () => 1;
+  WhatsappMessage.findOne = () => lean({ _id: '507f1f77bcf86cd799439011', libraryId: 'lib-a', status: 'sent', dedupeKey: 'receipt:R1' });
+  try {
+    await withApp({ role: 'client_admin', email: 'o@x' }, {}, async (base) => {
+      const r = await (await fetch(base + '/messages?studentId=s1&status=failed&type=bogus&libraryId=lib-b')).json();
+      assert.deepEqual(lastQuery, { libraryId: 'lib-a', studentId: 's1', status: 'failed' });
+      assert.equal(r.total, 1); assert.equal(r.items[0].canResend, true); assert.equal(r.items[0].studentName, 'Asha');
+      const res = await fetch(base + '/messages/507f1f77bcf86cd799439011/resend', { method: 'POST' });
+      assert.equal(res.status, 409); // already sent
+      assert.equal((await fetch(base + '/messages/not-an-id/resend', { method: 'POST' })).status, 404);
+    });
+    await withApp({ role: 'staff' }, {}, async (base) => assert.equal((await fetch(base + '/messages')).status, 403));
+  } finally { Object.assign(WhatsappMessage, orig); }
+});

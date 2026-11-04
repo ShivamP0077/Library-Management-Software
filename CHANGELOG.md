@@ -2,6 +2,8 @@
 
 ## 2026-11-04 (IST)
 
+- **WhatsApp Messages screen** ([PR #24](https://github.com/ShivamP0077/Library-Management-Software/pull/24), commit [`e41772d`](https://github.com/ShivamP0077/Library-Management-Software/commit/e41772d)).
+  New "Messages" tab in Settings (next to WhatsApp) and a "WhatsApp" tab on each student's profile list every receipt and reminder with its text, time and status (Sent, Delivered, Read, Failed, Not sent) plus the reason, and a Resend button for failed or not-sent messages. Delivery and read ticks come from an Evolution MESSAGES_UPDATE webhook, secured with a per-instance token derived from the existing Evolution key, so no new setting was needed. In Local Offline Mode the screen asks the user to sign in.
 - **WhatsApp admission receipts no longer skipped for new students** ([PR #23](https://github.com/ShivamP0077/Library-Management-Software/pull/23), commit [`c511374`](https://github.com/ShivamP0077/Library-Management-Software/commit/c511374)).
   When a student was admitted, the payment was saved a moment before the student, so the receipt check found no phone number and quietly gave up. The server now waits up to about 15 seconds for the student, and saving new students also sends any receipt still waiting for them (never twice). Every skipped message is now logged with a reason (no student, no phone, disabled, no consent, invalid number).
 - **WhatsApp settings: clear sign-in message in Local Offline Mode** ([PR #22](https://github.com/ShivamP0077/Library-Management-Software/pull/22), commit [`b18a822`](https://github.com/ShivamP0077/Library-Management-Software/commit/b18a822)).

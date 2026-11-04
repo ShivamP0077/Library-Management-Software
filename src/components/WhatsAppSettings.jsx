@@ -3,7 +3,7 @@ import {
   MessageCircle, QrCode, LogOut, RefreshCw, CheckCircle2, Smartphone
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { api } from '../utils/api';
+import { api, getToken } from '../utils/api';
 
 const DEFAULT_TOGGLES = {
   enabled: true,
@@ -526,6 +526,21 @@ export const WhatsAppSettings = ({ canManage }) => {
           <h3 style={{ fontSize: '16px', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>WhatsApp</h3>
           <p style={{ fontSize: '14px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
             You don't have permission to manage WhatsApp.
+          </p>
+        </div>
+      </div>
+    );
+  }
+  // WhatsApp runs through the cloud backend, so it needs a signed-in session.
+  // In Local Offline Mode there is no token and every call would fail with 401.
+  if (!getToken()) {
+    return (
+      <div className="premium-card" style={{ padding: '20px', display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+        <MessageCircle size={20} color="var(--text-secondary)" style={{ flexShrink: 0, marginTop: '2px' }} />
+        <div>
+          <h3 style={{ fontSize: '16px', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>WhatsApp</h3>
+          <p style={{ fontSize: '14px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
+            WhatsApp needs a cloud account. Tap "Connect / Sign In" at the top and sign in to connect your WhatsApp number.
           </p>
         </div>
       </div>

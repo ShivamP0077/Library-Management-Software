@@ -1,7 +1,8 @@
 import express from 'express';
 import mongoose from 'mongoose';
 import { Library, models } from './models.js';
-import { createEvolutionClient, evolutionConfigured, instanceNameFor, normalizePhone } from './evolution.js';
+import crypto from 'crypto';
+import { createEvolutionClient, evolutionConfigured, instanceNameFor, normalizePhone, webhookTokenFor } from './evolution.js';
 
 /* ---------------------------------------------------------------- Models */
 export const MESSAGE_TYPES = ['otp', 'admission_receipt', 'renewal_receipt', 'fee_reminder', 'expiry_reminder', 'test'];
@@ -27,15 +28,24 @@ const msgSchema = new mongoose.Schema({
   type: { type: String, enum: MESSAGE_TYPES, required: true },
   to: String,
   dedupeKey: { type: String, required: true },
-  status: { type: String, enum: ['queued', 'sent', 'failed', 'skipped'], default: 'queued' },
+  status: { type: String, enum: ['queued', 'sent', 'delivered', 'read', 'failed', 'skipped'], default: 'queued' },
+  studentId: { type: String, index: true },
+  studentName: String,
+  text: String,
+  deliveredAt: Date,
+  readAt: Date,
   providerMessageId: String,
   error: String,
   reason: String, // why a message was skipped: no_student, no_phone, disabled, no_consent, invalid_number
   attempts: { type: Number, default: 0 },
 }, { timestamps: true });
 msgSchema.index({ libraryId: 1, dedupeKey: 1 }, { unique: true });
+msgSchema.index({ libraryId: 1, createdAt: -1 });
+msgSchema.index({ providerMessageId: 1 }, { sparse: true });
 export const WhatsappMessage = mongoose.models.WhatsappMessage || mongoose.model('WhatsappMessage', msgSchema);
 
+/** Statuses that mean the message already went out (never re-sent, never overwritten). */
+const DONE = ['queued', 'sent', 'delivered', 'read'];
 const TOGGLE_FOR_TYPE = { otp: 'otp', admission_receipt: 'receipts', renewal_receipt: 'receipts', fee_reminder: 'feeReminders', expiry_reminder: 'expiryReminders', test: null };
 
 /* ---------------------------------------------------------------- Permissions */
@@ -61,7 +71,7 @@ export async function canManageWhatsapp(user, libraryId, { Staff = models.staffM
  * per-type toggles, requires recipient consent (opt-in), prevents duplicates and logs
  * the provider result. Messages are prefixed with the library name (spec §6).
  */
-export async function sendWhatsappMessage({ libraryId, type, to, text, dedupeKey, consent = true }, deps = {}) {
+export async function sendWhatsappMessage({ libraryId, type, to, text, dedupeKey, consent = true, studentId, studentName }, deps = {}) {
   const { client = createEvolutionClient(), Config = WhatsappConfig, Message = WhatsappMessage, Lib = Library } = deps;
   if (!MESSAGE_TYPES.includes(type)) throw Object.assign(new Error('Unknown message type'), { status: 400 });
   if (!dedupeKey) throw Object.assign(new Error('dedupeKey is required'), { status: 400 });
@@ -69,10 +79,11 @@ export async function sendWhatsappMessage({ libraryId, type, to, text, dedupeKey
   const toggle = TOGGLE_FOR_TYPE[type];
   const number = normalizePhone(to);
   const reason = !cfg.enabled || (toggle && !cfg[toggle]) ? 'disabled' : !consent ? 'no_consent' : !number ? 'invalid_number' : null;
-  if (reason) { await logSkipped({ libraryId, type, to, dedupeKey, reason }, Message); return { status: 'skipped', reason }; }
+  const who = { ...(studentId != null ? { studentId: String(studentId) } : {}), ...(studentName ? { studentName } : {}) };
+  if (reason) { await logSkipped({ libraryId, type, to, dedupeKey, reason, text, ...who }, Message); return { status: 'skipped', reason }; }
 
   const existing = await Message.findOne({ libraryId, dedupeKey }).lean();
-  if (existing && ['sent', 'queued'].includes(existing.status)) return { status: 'duplicate', id: String(existing._id) };
+  if (existing && DONE.includes(existing.status)) return { status: 'duplicate', id: String(existing._id) };
   const lib = await Lib.findOne({ libraryId }).lean();
   const body = `*${lib?.name || 'Your library'}*\n${String(text || '').trim()}`;
 
@@ -80,8 +91,8 @@ export async function sendWhatsappMessage({ libraryId, type, to, text, dedupeKey
   let log;
   try {
     log = await Message.findOneAndUpdate(
-      { libraryId, dedupeKey, status: { $nin: ['sent', 'queued'] } },
-      { $set: { type, to: number, status: 'queued', error: null, reason: null }, $inc: { attempts: 1 } },
+      { libraryId, dedupeKey, status: { $nin: DONE } },
+      { $set: { type, to: number, status: 'queued', error: null, reason: null, text: body, ...who }, $inc: { attempts: 1 } },
       { upsert: true, new: true }
     );
   } catch (e) {
@@ -100,10 +111,11 @@ export async function sendWhatsappMessage({ libraryId, type, to, text, dedupeKey
 }
 
 /** Log a skipped message (never overwrites a sent/queued row for the same key). */
-export async function logSkipped({ libraryId, type, to, dedupeKey, reason }, Message = WhatsappMessage) {
+export async function logSkipped({ libraryId, type, to, dedupeKey, reason, text, studentId, studentName }, Message = WhatsappMessage) {
+  const extra = { ...(text ? { text: String(text) } : {}), ...(studentId != null ? { studentId: String(studentId) } : {}), ...(studentName ? { studentName } : {}) };
   try {
-    await Message.updateOne({ libraryId, dedupeKey, status: { $nin: ['sent', 'queued'] } },
-      { $set: { type, to: to ? String(to) : null, status: 'skipped', reason } }, { upsert: true });
+    await Message.updateOne({ libraryId, dedupeKey, status: { $nin: DONE } },
+      { $set: { type, to: to ? String(to) : null, status: 'skipped', reason, ...extra } }, { upsert: true });
   } catch (e) { if (e?.code !== 11000) throw e; }
 }
 
@@ -155,6 +167,7 @@ export function createWhatsappRouter({ client = createEvolutionClient(), isConfi
   r.post('/connect', wrap(async (req, res) => {
     let created = null;
     if (!(await client.findInstance(req.instance))) created = await client.createInstance(req.instance);
+    await registerWebhook(client, req.instance, webhookBaseUrl(req));
     const s = await status(req.instance);
     if (s.state === 'connected') return res.json(s);
     const c = await client.connect(req.instance);
@@ -176,15 +189,129 @@ export function createWhatsappRouter({ client = createEvolutionClient(), isConfi
 
   // Send the receipt for an existing payment to the student's phone (admission/renewal receipts).
   r.post('/receipts/:receiptNo', wrap(async (req, res) => {
-    const payment = await models.payments.findOne({ tenantId: req.tenantId || req.libraryId, _key: req.params.receiptNo }).lean();
-    if (!payment) return res.status(404).json({ error: 'Payment not found' });
-    const student = payment.studentId ? await models.students.findOne({ tenantId: req.tenantId || req.libraryId, _key: String(payment.studentId) }).lean() : null;
-    if (!student?.phone) return res.status(400).json({ error: 'Student has no phone number' });
     const type = req.body?.type === 'renewal_receipt' ? 'renewal_receipt' : 'admission_receipt';
-    const out = await sendWhatsappMessage({ libraryId: req.libraryId, type, to: student.phone, text: buildReceiptText(payment, student), dedupeKey: `receipt:${payment._key}`, consent: student.whatsappOptOut !== true }, { client });
-    res.status(out.status === 'failed' ? 502 : 200).json(out);
+    const out = await sendReceipt({ tenantId: req.tenantId || req.libraryId, libraryId: req.libraryId, receiptNo: req.params.receiptNo, type, client });
+    res.status(out.httpStatus || (out.status === 'failed' ? 502 : 200)).json(out.httpStatus ? { error: out.error } : out);
   }));
 
+  // Message log for the Messages screen (tenant-scoped, newest first).
+  r.get('/messages', wrap(async (req, res) => {
+    const q = { libraryId: req.libraryId };
+    if (req.query.studentId) q.studentId = String(req.query.studentId);
+    if (req.query.type && MESSAGE_TYPES.includes(String(req.query.type))) q.type = String(req.query.type);
+    if (req.query.status && STATUSES.includes(String(req.query.status))) q.status = String(req.query.status);
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 25));
+    const [items, total] = await Promise.all([
+      WhatsappMessage.find(q).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+      WhatsappMessage.countDocuments(q),
+    ]);
+    res.json({ items: items.map(publicMessage), total, page, pages: Math.max(1, Math.ceil(total / limit)) });
+  }));
+
+  // Resend a failed or skipped message. Receipts are rebuilt from the payment; others reuse the stored text.
+  r.post('/messages/:id/resend', wrap(async (req, res) => {
+    if (req.readOnly) return res.status(403).json({ error: 'Read-only access' });
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ error: 'Message not found' });
+    const m = await WhatsappMessage.findOne({ _id: req.params.id, libraryId: req.libraryId }).lean();
+    if (!m) return res.status(404).json({ error: 'Message not found' });
+    if (!['failed', 'skipped'].includes(m.status)) return res.status(409).json({ error: 'Only failed or skipped messages can be resent' });
+    const tenantId = req.tenantId || req.libraryId;
+    let out;
+    if (m.dedupeKey.startsWith('receipt:')) {
+      out = await sendReceipt({ tenantId, libraryId: req.libraryId, receiptNo: m.dedupeKey.slice('receipt:'.length), type: m.type, client });
+      if (out.httpStatus) return res.status(out.httpStatus).json({ error: out.error });
+    } else {
+      const student = m.studentId ? await models.students.findOne({ tenantId, _key: m.studentId }).lean() : null;
+      const to = student?.phone || m.to;
+      if (!to) return res.status(400).json({ error: 'Student has no phone number' });
+      const lib = await Library.findOne({ libraryId: req.libraryId }).lean();
+      const prefix = `*${lib?.name || 'Your library'}*\n`;
+      const text = String(m.text || '').startsWith(prefix) ? m.text.slice(prefix.length) : m.text;
+      if (!text) return res.status(400).json({ error: 'Nothing to resend for this message' });
+      out = await sendWhatsappMessage({ libraryId: req.libraryId, type: m.type, to, text, dedupeKey: m.dedupeKey, consent: student ? student.whatsappOptOut !== true : true, studentId: m.studentId, studentName: student?.name || m.studentName }, { client });
+    }
+    const fresh = await WhatsappMessage.findOne({ _id: m._id }).lean();
+    res.status(out.status === 'failed' ? 502 : 200).json({ ...out, message: fresh ? publicMessage(fresh) : null });
+  }));
+
+  return r;
+}
+
+const STATUSES = ['queued', 'sent', 'delivered', 'read', 'failed', 'skipped'];
+
+function publicMessage(m) {
+  return {
+    id: String(m._id), type: m.type, status: m.status, to: m.to || null,
+    studentId: m.studentId || null, studentName: m.studentName || null, text: m.text || '',
+    reason: m.reason || null, error: m.error || null, attempts: m.attempts || 0,
+    createdAt: m.createdAt, updatedAt: m.updatedAt, deliveredAt: m.deliveredAt || null, readAt: m.readAt || null,
+    canResend: m.status === 'failed' || m.status === 'skipped',
+  };
+}
+
+/** Send (or resend) the receipt for one payment. Same dedupe key as auto-receipts, so a failed/skipped row is retried in place. */
+export async function sendReceipt({ tenantId, libraryId, receiptNo, type = 'admission_receipt', client }) {
+  const payment = await models.payments.findOne({ tenantId, _key: String(receiptNo) }).lean();
+  if (!payment) return { httpStatus: 404, error: 'Payment not found' };
+  const student = payment.studentId ? await models.students.findOne({ tenantId, _key: String(payment.studentId) }).lean() : null;
+  if (!student?.phone) return { httpStatus: 400, error: 'Student has no phone number' };
+  return sendWhatsappMessage({ libraryId, type, to: student.phone, text: buildReceiptText(payment, student), dedupeKey: `receipt:${payment._key}`, consent: student.whatsappOptOut !== true, studentId: payment.studentId, studentName: student.name }, { client });
+}
+
+/* ---------------------------------------------------------------- Delivery webhook */
+/** Public base URL of this API, used for the Evolution webhook. */
+export function webhookBaseUrl(req) {
+  const env = process.env.WEBHOOK_BASE_URL || process.env.RENDER_EXTERNAL_URL;
+  if (env) return env.replace(/\/+$/, '');
+  return req ? `${req.protocol}://${req.get('host')}` : null;
+}
+export const webhookUrlFor = (base, instance) => `${base}/api/whatsapp/webhook/${encodeURIComponent(instance)}?token=${webhookTokenFor(instance)}`;
+
+/** Point the instance's MESSAGES_UPDATE webhook at us. Never fails the caller. */
+export async function registerWebhook(client, instance, base) {
+  if (!base || !webhookTokenFor(instance) || !client.setWebhook) return false;
+  try { await client.setWebhook(instance, webhookUrlFor(base, instance)); return true; }
+  catch (e) { console.error('[whatsapp] webhook register failed:', e.message); return false; }
+}
+
+// Evolution/Baileys ack names (and numeric acks) -> our statuses.
+const ACK = { ERROR: 'failed', PENDING: 'sent', SERVER_ACK: 'sent', DELIVERY_ACK: 'delivered', READ: 'read', PLAYED: 'read', 0: 'failed', 1: 'sent', 2: 'sent', 3: 'delivered', 4: 'read', 5: 'read' };
+export const mapAckStatus = (s) => ACK[typeof s === 'string' ? s.toUpperCase() : s] || null;
+const RANK = { queued: 0, skipped: 0, failed: 1, sent: 2, delivered: 3, read: 4 };
+
+/** Apply one MESSAGES_UPDATE item. Status only moves forward (read never goes back to delivered). */
+export async function applyStatusUpdate(instance, item, Message = WhatsappMessage) {
+  const id = item?.keyId || item?.key?.id || item?.messageId || item?.id;
+  const status = mapAckStatus(item?.status ?? item?.update?.status);
+  if (!id || !status) return false;
+  const m = await Message.findOne({ providerMessageId: String(id) }).lean();
+  if (!m || instanceNameFor(m.libraryId) !== instance) return false; // tenant check: the update must come from the library's own instance
+  if (status === 'failed' ? RANK[m.status] >= RANK.delivered : RANK[status] <= RANK[m.status]) return false;
+  const set = { status };
+  if (status === 'delivered') set.deliveredAt = new Date();
+  if (status === 'read') { set.readAt = new Date(); if (!m.deliveredAt) set.deliveredAt = new Date(); }
+  if (status === 'failed') set.error = 'WhatsApp reported the message as not delivered';
+  await Message.updateOne({ _id: m._id }, { $set: set });
+  return true;
+}
+
+const safeEqual = (a, b) => { const x = Buffer.from(String(a || '')); const y = Buffer.from(String(b || '')); return x.length === y.length && crypto.timingSafeEqual(x, y); };
+
+/** Public (no login) router: POST /webhook/:instance?token=... from Evolution. */
+export function createWhatsappWebhookRouter({ Message = WhatsappMessage } = {}) {
+  const r = express.Router();
+  r.post('/webhook/:instance', wrap(async (req, res) => {
+    const expected = webhookTokenFor(req.params.instance);
+    if (!expected) return res.status(503).json({ error: 'WhatsApp integration is not configured on the server' });
+    if (!safeEqual(req.query.token || req.get('x-webhook-token'), expected)) return res.status(401).json({ error: 'Invalid webhook token' });
+    const ev = String(req.body?.event || '').toLowerCase().replace(/_/g, '.');
+    if (ev && ev !== 'messages.update') return res.json({ ok: true, ignored: true });
+    const data = req.body?.data;
+    let updated = 0;
+    for (const item of Array.isArray(data) ? data : [data]) if (await applyStatusUpdate(req.params.instance, item, Message)) updated++;
+    res.json({ ok: true, updated });
+  }));
   return r;
 }
 

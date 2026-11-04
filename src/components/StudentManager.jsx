@@ -8,6 +8,7 @@ import {
   ArrowRightLeft, CreditCard, FileText, X, CheckCircle, AlertCircle, Trash2, Archive, Download, Clock, Building2
 } from 'lucide-react';
 import { ErrorBoundary } from './ErrorBoundary';
+import { WhatsAppMessages } from './WhatsAppMessages';
 import { NumericInput } from './NumericInput';
 import { ShiftManagerModal } from './Modals/ShiftManagerModal';
 import { StudentExcelViewModal } from './Modals/StudentExcelViewModal';
@@ -1491,16 +1492,16 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                 )}
               </div>
 
-              <div style={{ display: 'flex', borderBottom: '1px solid var(--border-light)', padding: '0 24px' }}>
-                {['history', 'relocations', 'payments', 'documents'].map(tab => (
+              <div style={{ display: 'flex', borderBottom: '1px solid var(--border-light)', padding: '0 24px', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                {['history', 'relocations', 'payments', 'documents', 'whatsapp'].map(tab => (
                   <button key={tab} onClick={() => setActiveDrawerTab(tab)} style={{ 
                     padding: '16px 24px', background: 'transparent', border: 'none', cursor: 'pointer',
                     color: activeDrawerTab === tab ? 'var(--text-primary)' : 'var(--text-secondary)',
                     fontWeight: activeDrawerTab === tab ? 600 : 500,
                     borderBottom: activeDrawerTab === tab ? '2px solid var(--brand-primary)' : '2px solid transparent',
-                    textTransform: 'capitalize'
+                    textTransform: 'capitalize', whiteSpace: 'nowrap', flexShrink: 0
                   }}>
-                    {tab}
+                    {tab === 'whatsapp' ? 'WhatsApp' : tab}
                   </button>
                 ))}
               </div>
@@ -1638,6 +1639,9 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                       </div>
                     ))}
                   </div>
+                )}
+                {activeDrawerTab === 'whatsapp' && (
+                  <WhatsAppMessages studentId={selectedStudent.id} compact />
                 )}
                 {activeDrawerTab === 'documents' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>

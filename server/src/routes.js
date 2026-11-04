@@ -6,7 +6,7 @@ import { COLLECTIONS, models, Settings, StudentDocument, Library, User, keyOf, c
 import { signToken, requireAuth, requireRole, tenantScope } from './auth.js';
 import { createLibrary, createUser, computeMetrics, hashPassword, validatePassword } from './services.js';
 import { verifyGoogleIdToken, googleEnabled, googleConfig, buildAuthUrl, exchangeCode } from './google.js';
-import { createWhatsappRouter } from './whatsapp.js';
+import { createWhatsappRouter, createWhatsappWebhookRouter } from './whatsapp.js';
 import { createFinanceRouter, validatePaymentBatch } from './finance.js';
 import { createStudentRouter, recordStudentDiff, recordArchiveDiff, checkCapacity } from './students.js';
 import { audit } from './audit.js';
@@ -195,6 +195,9 @@ router.post('/auth/google', wrap(async (req, res) => {
 }));
 
 router.use(createPublicAccountRouter({ issueSession }));
+
+// Evolution delivery webhook: no login, verified by a per-instance HMAC token.
+router.use('/whatsapp', createWhatsappWebhookRouter());
 
 router.use(requireAuth);
 

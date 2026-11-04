@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 /**
  * Minimal Evolution API (v2) client. Server-side only: the API key never leaves the backend.
  * Env: EVOLUTION_API_URL, EVOLUTION_API_KEY. `fetchImpl` is injectable for tests.
@@ -14,6 +15,10 @@ export const instanceNameFor = (libraryId) => {
   if (!slug) throw new EvolutionError('Invalid libraryId', 400);
   return `libos-${slug}`;
 };
+
+/** Per-instance webhook secret derived from EVOLUTION_API_KEY (no extra env var needed). */
+export const webhookTokenFor = (instance, key = process.env.EVOLUTION_API_KEY) =>
+  key ? crypto.createHmac('sha256', String(key)).update(`libos-webhook:${instance}`).digest('hex').slice(0, 40) : null;
 
 /** Digits only, with an Indian (+91) default for bare 10-digit numbers. */
 export const normalizePhone = (raw, defaultCountry = '91') => {
@@ -60,6 +65,7 @@ export function createEvolutionClient({ baseUrl = process.env.EVOLUTION_API_URL,
     connect: (name) => call('GET', `/instance/connect/${enc(name)}`),
     connectionState: (name) => call('GET', `/instance/connectionState/${enc(name)}`),
     logout: (name) => call('DELETE', `/instance/logout/${enc(name)}`),
+    setWebhook: (name, url) => call('POST', `/webhook/set/${enc(name)}`, { webhook: { enabled: true, url, byEvents: false, base64: false, events: ['MESSAGES_UPDATE'] } }),
     sendText: (name, number, text) => call('POST', `/message/sendText/${enc(name)}`, { number, text }),
   };
 }

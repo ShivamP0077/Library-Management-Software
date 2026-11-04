@@ -66,6 +66,8 @@ export const api = {
   reminderSettings: () => apiRequest('/reminders/settings'),
   saveReminderSettings: (body) => apiRequest('/reminders/settings', { method: 'PUT', body }),
   reminders: (q = '') => apiRequest(`/reminders${q}`),
+  whatsappMessages: (q = '') => apiRequest(`/whatsapp/messages${q}`),
+  whatsappResend: (id) => apiRequest(`/whatsapp/messages/${encodeURIComponent(id)}/resend`, { method: 'POST' }),
   whatsappSendReceipt: (receiptNo, type) => apiRequest(`/whatsapp/receipts/${encodeURIComponent(receiptNo)}`, { method: 'POST', body: { type } }),
   // Seats (server-side atomic allocation)
   seatAllocations: (params = '') => apiRequest(`/seat-allocations${params}`),

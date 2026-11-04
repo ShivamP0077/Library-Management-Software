@@ -9,8 +9,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { NumericInput } from './NumericInput';
 import { SetupWizard } from './SetupWizard';
-import { WhatsAppSettings } from './WhatsAppSettings';
-import { WhatsAppMessages } from './WhatsAppMessages';
+import { navigateTo } from '../utils/whatsappStatus';
 import { TeamAccess } from './TeamAccess';
 import { resolveConfigurationScope, matchesScope } from '../utils/scopeResolver';
 import { 
@@ -1658,15 +1657,14 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
       {/* ======================================================== */}
       {/* TAB 4.5: WHATSAPP INTEGRATION */}
       {/* ======================================================== */}
-      {activeTab === 'whatsapp' && (
-        <WhatsAppSettings canManage={canManageWhatsapp} />
-      )}
-      {activeTab === 'whatsappMessages' && (
-        canManageWhatsapp ? <WhatsAppMessages /> : (
-          <div className="premium-card" style={{ padding: '20px', fontSize: '14px', color: 'var(--text-secondary)' }}>
-            You don't have permission to view WhatsApp messages.
-          </div>
-        )
+      {(activeTab === 'whatsapp' || activeTab === 'whatsappMessages') && (
+        <div className="premium-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'flex-start' }}>
+          <h3 style={{ fontSize: '16px', fontWeight: 700, margin: 0 }}>WhatsApp has moved</h3>
+          <p style={{ fontSize: '14px', color: 'var(--text-secondary)', margin: 0 }}>WhatsApp login, messages, templates and reminders now have their own WhatsApp section in the menu.</p>
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => navigateTo('whatsapp', activeTab === 'whatsapp' ? 'login' : 'messages')}>
+            Open {activeTab === 'whatsapp' ? 'WhatsApp Login' : 'Messages'}
+          </button>
+        </div>
       )}
 
       {/* ======================================================== */}

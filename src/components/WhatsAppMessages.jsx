@@ -8,6 +8,10 @@ export const TYPE_LABELS = {
   renewal_receipt: 'Renewal receipt',
   fee_reminder: 'Fee reminder',
   expiry_reminder: 'Expiry reminder',
+  fee_receipt: 'Fee receipt',
+  renewal_reminder: 'Renewal reminder',
+  seat_info: 'Seat / shift info',
+  custom: 'Custom message',
   otp: 'OTP',
   test: 'Test'
 };

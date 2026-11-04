@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api, getToken } from '../utils/api';
+import { refreshWhatsappStatus } from '../utils/whatsappStatus';
 
 const DEFAULT_TOGGLES = {
   enabled: true,
@@ -147,7 +148,7 @@ const WhatsAppSettingsInner = () => {
           setPairingCode(null);
           setQrDeadline(null);
           setQrExpired(false);
-          toast.success('WhatsApp connected.');
+          toast.success('WhatsApp connected.'); refreshWhatsappStatus();
         }
       } catch {
         // Transient polling errors are ignored; the next tick retries.
@@ -176,7 +177,7 @@ const WhatsAppSettingsInner = () => {
         setPairingCode(null);
         setQrDeadline(null);
         setQrExpired(false);
-        toast.success('WhatsApp connected.');
+        toast.success('WhatsApp connected.'); refreshWhatsappStatus();
         return;
       }
       setStatus(prev => ({ ...(prev || {}), ...data, state: 'connecting' }));
@@ -211,7 +212,7 @@ const WhatsAppSettingsInner = () => {
       setPairingCode(null);
       setQrDeadline(null);
       setQrExpired(false);
-      toast.success('WhatsApp disconnected.');
+      toast.success('WhatsApp disconnected.'); refreshWhatsappStatus();
     } catch (err) {
       toast.error(err?.message || 'Could not log out of WhatsApp.');
     } finally {

@@ -5,10 +5,12 @@ import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Search, UserPlus, Phone, MapPin, History, Edit, RefreshCw, Users, Bell, XCircle,
-  ArrowRightLeft, CreditCard, FileText, X, CheckCircle, AlertCircle, Trash2, Archive, Download, Clock, Building2
+  ArrowRightLeft, CreditCard, FileText, X, CheckCircle, AlertCircle, Trash2, Archive, Download, Clock, Building2,
+  MessageCircle,
 } from 'lucide-react';
 import { ErrorBoundary } from './ErrorBoundary';
 import { WhatsAppMessages } from './WhatsAppMessages';
+import { WhatsAppSendModal } from './WhatsAppSendModal';
 import { NumericInput } from './NumericInput';
 import { ShiftManagerModal } from './Modals/ShiftManagerModal';
 import { StudentExcelViewModal } from './Modals/StudentExcelViewModal';
@@ -226,6 +228,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
 
   const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [waTargets, setWaTargets] = useState(null); // students for the WhatsApp send window
   const [selectedIds, setSelectedIds] = useState([]);
   const [isBulkRenewModalOpen, setIsBulkRenewModalOpen] = useState(false);
   const [bulkRenewTarget, setBulkRenewTarget] = useState([]);
@@ -870,214 +873,41 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
               style={{ paddingLeft: '36px' }}
             />
           </div>
-          <div style={{ width: '160px' }}>
-            <select className="form-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+        </div>
+
+        {/* Status, Branch & Shift dropdowns */}
+        <div className="st-filters">
+          <label className="st-dd">
+            <span>Status</span>
+            <select className="form-select" aria-label="Status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
               <option value="All">All Statuses</option>
               <option value="Active">Active</option>
               <option value="Expiring Soon">Expiring Soon</option>
               <option value="Expired">Expired</option>
               <option value="Pending ID Proof">Pending ID Proof</option>
             </select>
-          </div>
-        </div>
-
-        {/* Scrollable Branch Selector */}
-        {branches && branches.length > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-secondary)', fontSize: '12px', fontWeight: 600, flexShrink: 0 }}>
-              <Building2 size={15} />
-              <span>Branch:</span>
-            </div>
-            <div 
-              style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: '8px', 
-                overflowX: 'auto', 
-                padding: '2px 0 4px 0', 
-                scrollbarWidth: 'none', 
-                msOverflowStyle: 'none',
-                WebkitOverflowScrolling: 'touch',
-                flex: 1
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => setActiveBranchId && setActiveBranchId('all')}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '5px 12px',
-                  borderRadius: '20px',
-                  fontSize: '12px',
-                  fontWeight: activeBranchId === 'all' ? 700 : 500,
-                  cursor: 'pointer',
-                  border: activeBranchId === 'all' ? '1px solid var(--brand-primary, #000)' : '1px solid var(--border-light, #e2e8f0)',
-                  background: activeBranchId === 'all' ? 'var(--brand-primary, #000)' : '#f8fafc',
-                  color: activeBranchId === 'all' ? '#fff' : 'var(--text-secondary, #475569)',
-                  whiteSpace: 'nowrap',
-                  flexShrink: 0,
-                  transition: 'all 0.15s ease'
-                }}
-              >
-                <span>🏢 All Branches</span>
-                <span style={{ 
-                  fontSize: '10px', 
-                  padding: '1px 6px', 
-                  borderRadius: '10px', 
-                  background: activeBranchId === 'all' ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.06)',
-                  color: activeBranchId === 'all' ? '#fff' : 'var(--text-secondary)'
-                }}>
-                  {students.length}
-                </span>
-              </button>
-
-              {branches.map(b => {
-                const isSelected = activeBranchId === b.id;
-                const branchStudentCount = students.filter(s => s.branchId === b.id).length;
-                return (
-                  <button
-                    key={b.id}
-                    type="button"
-                    onClick={() => setActiveBranchId && setActiveBranchId(b.id)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      padding: '5px 12px',
-                      borderRadius: '20px',
-                      fontSize: '12px',
-                      fontWeight: isSelected ? 700 : 500,
-                      cursor: 'pointer',
-                      border: isSelected ? '1px solid var(--brand-primary, #000)' : '1px solid var(--border-light, #e2e8f0)',
-                      background: isSelected ? 'var(--brand-primary, #000)' : '#f8fafc',
-                      color: isSelected ? '#fff' : 'var(--text-secondary, #475569)',
-                      whiteSpace: 'nowrap',
-                      flexShrink: 0,
-                      transition: 'all 0.15s ease'
-                    }}
-                  >
-                    <span>📍 {b.name}</span>
-                    <span style={{ 
-                      fontSize: '10px', 
-                      padding: '1px 6px', 
-                      borderRadius: '10px', 
-                      background: isSelected ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.06)',
-                      color: isSelected ? '#fff' : 'var(--text-secondary)'
-                    }}>
-                      {branchStudentCount}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Scrollable Shift Selector */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', borderTop: '1px solid var(--border-light, #f1f5f9)', paddingTop: '10px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-secondary)', fontSize: '12px', fontWeight: 600, flexShrink: 0 }}>
-            <Clock size={15} />
-            <span>Shift:</span>
-          </div>
-          <div 
-            style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '8px', 
-              overflowX: 'auto', 
-              padding: '2px 0 4px 0', 
-              scrollbarWidth: 'none', 
-              msOverflowStyle: 'none',
-              WebkitOverflowScrolling: 'touch',
-              flex: 1
-            }}
-          >
-            <button
-              type="button"
-              onClick={() => setShiftFilter('All')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '5px',
-                padding: '5px 12px',
-                borderRadius: '20px',
-                fontSize: '12px',
-                fontWeight: shiftFilter === 'All' ? 700 : 500,
-                cursor: 'pointer',
-                border: shiftFilter === 'All' ? '1px solid #2563eb' : '1px solid var(--border-light, #e2e8f0)',
-                background: shiftFilter === 'All' ? '#2563eb' : '#fff',
-                color: shiftFilter === 'All' ? '#fff' : 'var(--text-secondary, #475569)',
-                whiteSpace: 'nowrap',
-                flexShrink: 0,
-                transition: 'all 0.15s ease'
-              }}
-            >
-              All Shifts
-            </button>
-
-            {availableShifts.map(sh => {
-              const isSelected = shiftFilter === sh.name;
-              return (
-                <button
-                  key={sh.id}
-                  type="button"
-                  onClick={() => setShiftFilter(sh.name)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    padding: '5px 12px',
-                    borderRadius: '20px',
-                    fontSize: '12px',
-                    fontWeight: isSelected ? 700 : 500,
-                    cursor: 'pointer',
-                    border: isSelected ? '1px solid #2563eb' : '1px solid var(--border-light, #e2e8f0)',
-                    background: isSelected ? '#2563eb' : '#fff',
-                    color: isSelected ? '#fff' : 'var(--text-secondary, #475569)',
-                    whiteSpace: 'nowrap',
-                    flexShrink: 0,
-                    transition: 'all 0.15s ease'
-                  }}
-                >
-                  <span>{sh.name}</span>
-                  {sh.startTime && sh.endTime && (
-                    <span style={{ 
-                      fontSize: '10px', 
-                      opacity: isSelected ? 0.9 : 0.65,
-                      fontWeight: 400
-                    }}>
-                      {sh.startTime}–{sh.endTime}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-
-            <button
-              type="button"
-              onClick={() => setIsShiftModalOpen(true)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                padding: '5px 10px',
-                borderRadius: '20px',
-                fontSize: '11px',
-                fontWeight: 500,
-                cursor: 'pointer',
-                border: '1px dashed var(--border-strong, #cbd5e1)',
-                background: 'transparent',
-                color: 'var(--text-tertiary, #64748b)',
-                whiteSpace: 'nowrap',
-                flexShrink: 0,
-                marginLeft: 'auto'
-              }}
-            >
-              ⚙ Manage
-            </button>
-          </div>
+          </label>
+          {branches && branches.length > 0 && (
+            <label className="st-dd">
+              <span><Building2 size={13} /> Branch</span>
+              <select className="form-select" aria-label="Branch" value={activeBranchId || 'all'} onChange={(e) => setActiveBranchId && setActiveBranchId(e.target.value)}>
+                <option value="all">All Branches ({students.length})</option>
+                {branches.map(b => (
+                  <option key={b.id} value={b.id}>{b.name} ({students.filter(s => s.branchId === b.id).length})</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label className="st-dd">
+            <span><Clock size={13} /> Shift</span>
+            <select className="form-select" aria-label="Shift" value={shiftFilter} onChange={(e) => setShiftFilter(e.target.value)}>
+              <option value="All">All Shifts</option>
+              {availableShifts.map(sh => (
+                <option key={sh.id} value={sh.name}>{sh.name}{sh.startTime && sh.endTime ? ` (${sh.startTime}–${sh.endTime})` : ''}</option>
+              ))}
+            </select>
+          </label>
+          <button type="button" className="st-manage" onClick={() => setIsShiftModalOpen(true)}>⚙ Manage shifts</button>
         </div>
         
         {/* Bulk Action Bar */}
@@ -1118,136 +948,61 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
         )}
       </div>
 
-      {/* Compact mobile list: Student Name | Seat | Status | View */}
-      <div className="compact-list mobile-only">
+      {/* Student rows: one student per row; extra columns appear as the screen grows */}
+      <div className="st-list" role="table" aria-label="Students">
+        <div className="st-row st-head" role="row">
+          <span className="st-c st-chk"><input type="checkbox" aria-label="Select all shown" checked={filteredStudents.length > 0 && filteredStudents.every(s => selectedIds.includes(s.id))} onChange={handleToggleSelectAll} /></span>
+          <span className="st-c st-name">Student</span>
+          <span className="st-c st-branch">Branch</span>
+          <span className="st-c st-seat">Seat</span>
+          <span className="st-c st-shift">Shift</span>
+          <span className="st-c st-exp">Expiry</span>
+          <span className="st-c st-status">Status</span>
+          <span className="st-c st-wa" aria-label="WhatsApp" />
+        </div>
         {filteredStudents.length === 0 ? (
-          <div className="compact-empty">No student records match your criteria.</div>
+          <div className="compact-empty" style={{ padding: '40px 16px', textAlign: 'center', color: 'var(--text-tertiary)' }}>No student records match your criteria.</div>
         ) : filteredStudents.map(student => {
           const subStatus = getSubscriptionStatus(student, settings?.gracePeriodDays);
           const badgeClass = subStatus.status === 'Expired' ? 'badge-expired' : (subStatus.isGrace ? 'badge-expiring' : 'badge-active');
+          const checked = selectedIds.includes(student.id);
+          const missingSeat = student.seatNo !== 'Non-Fixed Seat' && student.seatNo !== 'None' && (student.status === 'Active' || student.status === 'Expiring Soon') && !getValidDesksList(student.branchId, student.sectionId).includes(student.seatNo);
           return (
-            <div key={student.id} className="compact-row" onClick={() => isSelectionMode ? handleToggleSelect(student.id) : setSelectedStudent(student)}>
-              {isSelectionMode && (
-                <input type="checkbox" checked={selectedIds.includes(student.id)} onChange={() => handleToggleSelect(student.id)} onClick={e => e.stopPropagation()} />
-              )}
-              <span className="c-main" title={student.name}>{student.name}</span>
-              <span className="c-meta">{student.seatNo || '—'}</span>
-              <span className={`badge ${badgeClass}`}>{subStatus.label}</span>
-              <button type="button" className="btn btn-ghost" onClick={(e) => { e.stopPropagation(); setSelectedStudent(student); }}>View</button>
+            <div key={student.id} role="row" className={`st-row${checked ? ' sel' : ''}`} onClick={() => setSelectedStudent(student)}>
+              <span className="st-c st-chk" onClick={e => e.stopPropagation()}>
+                <input type="checkbox" aria-label={`Select ${student.name}`} checked={checked} onChange={() => handleToggleSelect(student.id)} />
+              </span>
+              <span className="st-c st-name">
+                <b title={student.name}>{student.name}</b>
+                <small className="st-meta">{student.id} • {student.phone}</small>
+              </span>
+              <span className="st-c st-branch">{getBranchCode(student.branchId)}</span>
+              <span className="st-c st-seat">
+                <span className="st-seatno" title={missingSeat ? 'Missing from Seat Map' : student.seatNo}>{missingSeat && <AlertCircle size={11} color="#ef4444" />}{student.seatNo || '—'}</span>
+              </span>
+              <span className="st-c st-shift" title={student.shift}>{student.shift}</span>
+              <span className="st-c st-exp">{student.extendedDueDate ? `Ext: ${student.extendedDueDate}` : student.expiryDate}</span>
+              <span className="st-c st-status"><span className={`badge ${badgeClass}`} title={subStatus.label}>{subStatus.label}</span></span>
+              <span className="st-c st-wa">
+                <button type="button" className="wa-row-btn" aria-label={`Send WhatsApp to ${student.name}`} title="Send WhatsApp" onClick={(e) => { e.stopPropagation(); setWaTargets([student]); }}>
+                  <MessageCircle size={16} />
+                </button>
+              </span>
             </div>
           );
         })}
       </div>
 
-      {/* Premium Data Grid */}
-      <div className="table-container desktop-only">
-        <table className="data-grid">
-          <thead>
-            <tr>
-              {isSelectionMode && (
-                <th style={{ width: '40px', textAlign: 'center' }}>
-                  <input 
-                    type="checkbox" 
-                    checked={filteredStudents.length > 0 && selectedIds.length === filteredStudents.length}
-                    onChange={handleToggleSelectAll}
-                    style={{ cursor: 'pointer' }}
-                  />
-                </th>
-              )}
-              <th>STUDENT</th>
-              <th>BRANCH</th>
-              <th>DESK & SHIFT</th>
-              <th>EXPIRY</th>
-              <th>STATUS</th>
-              <th style={{ textAlign: 'right' }}>ACTIONS</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredStudents.length === 0 ? (
-              <tr>
-                <td colSpan="7" style={{ textAlign: 'center', padding: '48px', color: 'var(--text-tertiary)' }}>
-                  No student records match your criteria.
-                </td>
-              </tr>
-            ) : (
-              filteredStudents.map(student => (
-                <tr key={student.id} style={{ cursor: 'pointer' }} onClick={() => setSelectedStudent(student)}>
-                  {isSelectionMode && (
-                    <td style={{ textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
-                      <input 
-                        type="checkbox" 
-                        checked={selectedIds.includes(student.id)}
-                        onChange={() => handleToggleSelect(student.id)}
-                        style={{ cursor: 'pointer' }}
-                      />
-                    </td>
-                  )}
-                  <td>
-                    <span className="cell-inline">
-                      <span className="cell-truncate" style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{student.name}</span>
-                      <span className="cell-meta">{student.id} • {student.phone}</span>
-                    </span>
-                  </td>
-                  <td>
-                    <span style={{ fontSize: '13px', fontWeight: 500 }}>{getBranchCode(student.branchId)}</span>
-                  </td>
-                  <td>
-                    <span className="cell-inline">
-                      <span style={{ background: '#f3f4f6', padding: '4px 8px', borderRadius: '4px', fontWeight: 600, fontSize: '12px' }}>
-                        {student.seatNo}
-                      </span>
-                      <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{student.shift}</span>
-                      {student.seatNo !== 'Non-Fixed Seat' && student.seatNo !== 'None' && (student.status === 'Active' || student.status === 'Expiring Soon') && !getValidDesksList(student.branchId, student.sectionId).includes(student.seatNo) && (
-                        <span className="cell-inline" style={{ background: '#fee2e2', padding: '4px 8px', borderRadius: '4px' }}>
-                          <AlertCircle size={12} color="#ef4444" />
-                          <span style={{ fontSize: '11px', color: '#ef4444', fontWeight: 600 }}>Missing from Seat Map</span>
-                          <button 
-                            style={{ background: 'none', border: 'none', color: '#b91c1c', fontSize: '11px', textDecoration: 'underline', cursor: 'pointer', padding: 0, marginLeft: '4px' }}
-                            onClick={(e) => { e.stopPropagation(); setSelectedStudent(student); setIsSeatModalOpen(true); }}
-                          >
-                            Fix Allocation
-                          </button>
-                        </span>
-                      )}
-                    </span>
-                  </td>
-                  <td>
-                    <span style={{ fontWeight: 500, fontSize: '13px' }}>{student.expiryDate}</span>
-                  </td>
-                  <td>
-                    {(() => {
-                      const subStatus = getSubscriptionStatus(student, settings?.gracePeriodDays);
-                      const badgeClass = subStatus.status === 'Expired' 
-                        ? 'badge-expired' 
-                        : (subStatus.isGrace ? 'badge-expiring' : 'badge-active');
-                      return (
-                        <span className="cell-inline">
-                          <span className={`badge ${badgeClass}`}>
-                            {subStatus.label}
-                          </span>
-                          {student.extendedDueDate && (
-                            <span style={{ fontSize: '10px', color: 'var(--brand-primary)', fontWeight: 600 }}>
-                              Ext: {student.extendedDueDate}
-                            </span>
-                          )}
-                          {!student.id && (
-                            <span className="badge badge-expiring" style={{ fontSize: '10px' }}>ID Pending</span>
-                          )}
-                        </span>
-                      );
-                    })()}
-                  </td>
-                  <td style={{ textAlign: 'right' }}>
-                    <button className="btn btn-ghost" style={{ padding: '6px 12px' }} onClick={(e) => { e.stopPropagation(); setSelectedStudent(student); }}>
-                      View Profile
-                    </button>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      {selectedIds.length > 0 && (
+        <div className="st-selbar" role="region" aria-label="Selected students">
+          <span><b>{selectedIds.length}</b> selected</span>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setSelectedIds([]); setIsSelectionMode(false); }}>Clear</button>
+          <button type="button" className="btn btn-primary btn-sm wa-send-btn" onClick={() => setWaTargets(students.filter(s => selectedIds.includes(s.id)))}>
+            <MessageCircle size={15} /> Send WhatsApp
+          </button>
+        </div>
+      )}
+      {waTargets && <WhatsAppSendModal students={waTargets} onClose={() => setWaTargets(null)} />}
 
       </>
       )}

@@ -2,6 +2,9 @@
 
 ## 2026-11-04 (IST)
 
+- **WhatsApp Resend no longer fails while the WhatsApp server is starting up** ([PR #26](https://github.com/ShivamP0077/Library-Management-Software/pull/26), commit [`24e1e0c`](https://github.com/ShivamP0077/Library-Management-Software/commit/24e1e0c)).
+  At 16:33 IST the Resend failed because the sleeping Evolution server answered HTTP 429 ("busy, starting up"), which was treated as a permanent error. The number was fine. Sends now treat 429 as temporary, wait until the WhatsApp session is "open", and the Messages screen shows the real reason from the WhatsApp server.
+
 - **WhatsApp receipts survive the Evolution server waking up** ([PR #25](https://github.com/ShivamP0077/Library-Management-Software/pull/25), commit [`4ffcc6b`](https://github.com/ShivamP0077/Library-Management-Software/commit/4ffcc6b)).
   A renewal receipt failed at 14:53 IST because the free-plan WhatsApp (Evolution) server was asleep and the send gave up after 20 seconds. Sends now wake the server first and retry for about 90 seconds. A new background job runs every 3 minutes, at any hour, and resends receipts that failed this way, up to 3 attempts in total, without ever sending twice. lms-api also pings the WhatsApp server every 10 minutes to keep it awake. Both services are on Render's free plan, so a paid plan is the real fix.
 - **WhatsApp Messages screen** ([PR #24](https://github.com/ShivamP0077/Library-Management-Software/pull/24), commit [`e41772d`](https://github.com/ShivamP0077/Library-Management-Software/commit/e41772d)).

@@ -38,6 +38,8 @@ const msgSchema = new mongoose.Schema({
   error: String,
   reason: String, // why a message was skipped: no_student, no_phone, disabled, no_consent, invalid_number
   attempts: { type: Number, default: 0 },
+  transient: Boolean, // last failure was the provider being asleep/unreachable (retried by whatsapp-receipt-retry)
+  permanent: Boolean, // gave up after MAX_ATTEMPTS
 }, { timestamps: true });
 msgSchema.index({ libraryId: 1, dedupeKey: 1 }, { unique: true });
 msgSchema.index({ libraryId: 1, createdAt: -1 });
@@ -100,14 +102,70 @@ export async function sendWhatsappMessage({ libraryId, type, to, text, dedupeKey
     const dup = await Message.findOne({ libraryId, dedupeKey }).lean();
     return { status: 'duplicate', id: String(dup?._id) };
   }
-  try {
-    const r = await client.sendText(instanceNameFor(libraryId), number, body);
-    await Message.updateOne({ _id: log._id }, { $set: { status: 'sent', providerMessageId: r?.key?.id || null } });
-    return { status: 'sent', id: String(log._id) };
-  } catch (e) {
-    await Message.updateOne({ _id: log._id }, { $set: { status: 'failed', error: String(e.message).slice(0, 300) } });
-    return { status: 'failed', error: e.message, id: String(log._id) };
+  return deliver(log, { libraryId, number, body }, { client, Message, delaysMs: deps.retryDelaysMs });
+}
+
+export const MAX_ATTEMPTS = 3;
+// ~90s of backoff: covers a Render free-plan Evolution cold start once the wake call has kicked it.
+const SEND_RETRY_MS = [5000, 10000, 20000, 25000, 30000];
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+/** Provider asleep / unreachable / timed out / 502-503-504: worth retrying later. */
+export function isTransientError(e) {
+  const up = e?.upstreamStatus;
+  return e?.status === 503 || [502, 503, 504].includes(up) || /unreachable|timed? ?out|waking/i.test(String(e?.message || ''));
+}
+
+/** Wake Evolution, send with backoff on transient errors, and record the outcome on the log row. */
+export async function deliver(log, { libraryId, number, body }, { client, Message = WhatsappMessage, delaysMs = SEND_RETRY_MS }) {
+  const instance = instanceNameFor(libraryId);
+  if (client.wake) {
+    try { await client.wake(instance); }
+    catch (e) { console.error(`[whatsapp] wake failed for ${instance} (status ${e?.upstreamStatus || e?.status}): ${e?.message}`); }
   }
+  let lastErr;
+  for (let i = 0; i <= delaysMs.length; i++) {
+    try {
+      const r = await client.sendText(instance, number, body);
+      await Message.updateOne({ _id: log._id }, { $set: { status: 'sent', providerMessageId: r?.key?.id || null, error: null, transient: false } });
+      return { status: 'sent', id: String(log._id) };
+    } catch (e) {
+      lastErr = e;
+      console.error(`[whatsapp] send attempt ${i + 1} failed for ${instance} msg ${log._id} (status ${e?.upstreamStatus || e?.status}): ${e?.message}`);
+      if (!isTransientError(e) || i === delaysMs.length) break;
+      await sleep(delaysMs[i]);
+    }
+  }
+  const transient = isTransientError(lastErr);
+  const permanent = !transient || (log.attempts || 1) >= MAX_ATTEMPTS;
+  await Message.updateOne({ _id: log._id }, { $set: { status: 'failed', error: String(lastErr?.message).slice(0, 300), transient, permanent } });
+  return { status: 'failed', error: lastErr?.message, id: String(log._id), transient, permanent };
+}
+
+/**
+ * Re-send receipts whose last attempt failed with a transient error (any time of day), at most MAX_ATTEMPTS
+ * in total. Same row and dedupeKey, so a receipt is never sent twice. Older rows without the `transient`
+ * flag are matched by their error text.
+ */
+export async function retryFailedReceipts(deps = {}) {
+  const { client = createEvolutionClient(), Message = WhatsappMessage, retryDelaysMs } = deps;
+  const rows = await Message.find({
+    type: { $in: ['admission_receipt', 'renewal_receipt'] }, status: 'failed', permanent: { $ne: true }, attempts: { $lt: MAX_ATTEMPTS },
+    $or: [{ transient: true }, { transient: { $exists: false }, error: /unreachable|timed? ?out|waking|service request failed/i }],
+  }).limit(50).lean();
+  const out = { retried: 0, sent: 0, failed: 0 };
+  for (const row of rows) {
+    const log = await Message.findOneAndUpdate({ _id: row._id, status: 'failed', attempts: row.attempts },
+      { $set: { status: 'queued' }, $inc: { attempts: 1 } }, { new: true });
+    if (!log) continue; // someone else claimed it (or a manual Resend)
+    out.retried++;
+    const r = await deliver(log, { libraryId: row.libraryId, number: row.to, body: row.text }, { client, Message, delaysMs: retryDelaysMs });
+    r.status === 'sent' ? out.sent++ : out.failed++;
+  }
+  // Rows that already used every attempt are given up on.
+  await Message.updateMany({ type: { $in: ['admission_receipt', 'renewal_receipt'] }, status: 'failed', permanent: { $ne: true }, attempts: { $gte: MAX_ATTEMPTS } }, { $set: { permanent: true } });
+  if (out.retried) console.log(`[whatsapp] receipt retry: ${JSON.stringify(out)}`);
+  return out;
 }
 
 /** Log a skipped message (never overwrites a sent/queued row for the same key). */

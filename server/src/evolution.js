@@ -31,7 +31,7 @@ export const normalizePhone = (raw, defaultCountry = '91') => {
 
 export function createEvolutionClient({ baseUrl = process.env.EVOLUTION_API_URL, apiKey = process.env.EVOLUTION_API_KEY, fetchImpl = globalThis.fetch, timeoutMs = 20000 } = {}) {
   const base = String(baseUrl || '').replace(/\/+$/, '');
-  async function call(method, path, body) {
+  async function call(method, path, body, callTimeoutMs = timeoutMs) {
     if (!base || !apiKey) throw new EvolutionError('WhatsApp integration is not configured on the server', 503);
     let res;
     try {
@@ -39,7 +39,7 @@ export function createEvolutionClient({ baseUrl = process.env.EVOLUTION_API_URL,
         method,
         headers: { 'Content-Type': 'application/json', apikey: apiKey },
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: AbortSignal.timeout(callTimeoutMs),
       });
     } catch {
       throw new EvolutionError('WhatsApp service is unreachable. It may be waking up; try again in a minute.', 503);
@@ -64,6 +64,8 @@ export function createEvolutionClient({ baseUrl = process.env.EVOLUTION_API_URL,
     createInstance: (name) => call('POST', '/instance/create', { instanceName: name, integration: 'WHATSAPP-BAILEYS', qrcode: true }),
     connect: (name) => call('GET', `/instance/connect/${enc(name)}`),
     connectionState: (name) => call('GET', `/instance/connectionState/${enc(name)}`),
+    /** Wake a sleeping (free-plan) Evolution service: same read as connectionState, with a long timeout for the cold start. */
+    wake: (name, ms = 60000) => call('GET', `/instance/connectionState/${enc(name)}`, undefined, ms),
     logout: (name) => call('DELETE', `/instance/logout/${enc(name)}`),
     setWebhook: (name, url) => call('POST', `/webhook/set/${enc(name)}`, { webhook: { enabled: true, url, byEvents: false, base64: false, events: ['MESSAGES_UPDATE'] } }),
     sendText: (name, number, text) => call('POST', `/message/sendText/${enc(name)}`, { number, text }),

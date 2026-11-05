@@ -2,6 +2,14 @@
 
 ## 2026-11-05 (IST)
 
+- **Issue #18: WhatsApp Login copes with a sleeping WhatsApp server and never shows raw HTML** (branch `fix/18-whatsapp-login-429`, merged into `release/21-issues` only).
+  The WhatsApp Login page could show an HTTP 429 error full of HTML/CSS text. Its status and connect calls did not wake the sleeping free-plan WhatsApp (Evolution) server and did not retry. Now:
+  - These calls wake the server and retry on 429/5xx.
+  - An HTML error page is replaced by plain text: "WhatsApp service is starting up. Please try again in a minute."
+  - The app handles a non-JSON reply safely.
+  - The page retries by itself up to 3 times while it shows "WhatsApp service is waking up".
+  - Sending (PR #26) is unchanged.
+
 - **Issue #2: each library now has its own browser cache, so data can no longer leak between libraries** (branch `fix/tenant-cache-isolation`, not merged or deployed).
   Before, every library on the same browser shared one set of `library_*` keys. When you opened a library whose server data was empty, the app uploaded whatever another library had left in the browser. That is how data could be copied from one library into another. Now:
   - Every key, including the setup wizard draft and the saved documents, is stored as `t:<libraryId>:<key>`.

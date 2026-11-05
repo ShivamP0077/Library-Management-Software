@@ -30,10 +30,16 @@ export const normalizePhone = (raw, defaultCountry = '91') => {
 };
 
 /** Short, human-readable reason from an Evolution error response (never includes secrets). */
+/** True when a body is an HTML page (e.g. a proxy/edge "429 Too Many Requests" page). */
+export const looksLikeHtml = (v) => typeof v === 'string' && /<\s*(!doctype|html|head|body|style|script|div|title)\b/i.test(v);
+
+/** Short, human-readable reason from an Evolution error response (never includes secrets or raw HTML/CSS). */
 export function upstreamReason(status, data) {
   const pick = (v) => Array.isArray(v) ? v.map(pick).filter(Boolean).join('; ') : v && typeof v === 'object' ? pick(v.message ?? v.error ?? (v.exists === false ? `number ${v.number || ''} is not on WhatsApp` : "")) : v ? String(v) : '';
   let msg = pick(data?.response?.message ?? data?.message ?? data?.error ?? data?.raw);
+  if (looksLikeHtml(msg)) msg = '';
   if (!msg && status === 429) msg = 'service is busy or still starting up';
+  if (!msg && [502, 503, 504].includes(status)) msg = 'service is starting up';
   msg = String(msg || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
   return `HTTP ${status}${msg ? ': ' + msg : ''}`;
 }
@@ -58,7 +64,10 @@ export function createEvolutionClient({ baseUrl = process.env.EVOLUTION_API_URL,
     try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
     if (!res.ok) {
       const reason = upstreamReason(res.status, data);
-      const err = new EvolutionError(res.status === 404 ? 'WhatsApp instance not found' : `WhatsApp service request failed (${reason})`, res.status === 404 ? 404 : 502);
+      const busy = [429, 502, 503, 504].includes(res.status);
+      const err = new EvolutionError(res.status === 404 ? 'WhatsApp instance not found'
+        : busy ? 'WhatsApp service is starting up. Please try again in a minute.'
+        : `WhatsApp service request failed (${reason})`, res.status === 404 ? 404 : busy ? 503 : 502);
       err.upstreamStatus = res.status;
       err.upstreamBody = data;
       throw err;

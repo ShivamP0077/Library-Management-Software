@@ -2,6 +2,15 @@
 
 ## 2026-11-05 (IST)
 
+- **Issue #3: camera capture and document preview** (branch `fix/03-camera-preview`, merged into `release/21-issues` only).
+  - A Camera button next to Attach/Upload opens the phone camera directly in three places: New Admission, the student profile Documents tab (custom and each required document), and new notices.
+  - On computers it opens the normal file picker.
+  - New Admission has a Preview button that opens the file full screen with Retake (the same camera or picker) and Remove.
+  - New notices also get a full-screen preview with Remove.
+  - Back closes the preview only.
+  - Pending documents, "Skip for now", and the photo-required setting are unchanged.
+  - The photo on receipts was done in #12.
+
 - **Issue #1: browser Back / Forward inside the library** (branch `fix/01-back-forward`, merged into `release/21-issues` only).
   - Each screen change adds a history entry like `#/students`, so Back and Forward move between library screens.
   - Back closes an open window first: student profile, new admission, receipt, change password, and the renew, relocate, extend, edit, bulk renew, WhatsApp send and document preview windows.

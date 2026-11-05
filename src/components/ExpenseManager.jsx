@@ -18,6 +18,11 @@ const FREQUENCY_LABELS = {
 };
 
 const frequencyText = (template) => {
+  if (template.firstDueDate) {
+    const n = Number(template.intervalCount || 1);
+    const unit = (template.intervalUnit || 'months').replace(/s$/, '');
+    return n === 1 ? `Every ${unit}` : `Every ${n} ${unit}s`;
+  }
   if (template.frequency === 'custom') {
     const months = Number(template.intervalMonths || 1);
     return `Every ${months} month${months === 1 ? '' : 's'}`;
@@ -36,7 +41,6 @@ export const ExpenseManager = () => {
   const { expenses, addExpense, branches, activeBranchId, todayStr } = useLibrary();
 
   const todayDate = todayStr || new Date().toISOString().split('T')[0];
-  const todayDay = Number(todayDate.split('-')[2]) || 1;
 
   const [activeTab, setActiveTab] = useState('ledger');
 
@@ -50,10 +54,10 @@ export const ExpenseManager = () => {
   const [mode, setMode] = useState('UPI');
   const [notes, setNotes] = useState('');
 
-  const [frequency, setFrequency] = useState('monthly');
-  const [intervalMonths, setIntervalMonths] = useState('2');
-  const [startDate, setStartDate] = useState(todayDate);
-  const [dueDay, setDueDay] = useState(String(todayDay));
+  // Issue #8: first due date + repeat every N days / months / years.
+  const [intervalCount, setIntervalCount] = useState('1');
+  const [intervalUnit, setIntervalUnit] = useState('months');
+  const [firstDueDate, setFirstDueDate] = useState(todayDate);
   const [endDate, setEndDate] = useState('');
   const [reminderDaysBefore, setReminderDaysBefore] = useState('3');
   const [reminderOnDue, setReminderOnDue] = useState(true);
@@ -164,16 +168,16 @@ export const ExpenseManager = () => {
       return;
     }
 
-    if (!startDate) {
-      toast.error('Start date is required');
+    if (!firstDueDate) {
+      toast.error('First due date is required');
       return;
     }
-    if (frequency === 'custom' && !(Number(intervalMonths) >= 1)) {
-      toast.error('Enter an interval of at least 1 month');
+    if (!(Number.isInteger(Number(intervalCount)) && Number(intervalCount) >= 1)) {
+      toast.error('Repeat every must be a whole number of at least 1');
       return;
     }
-    if (!(Number(dueDay) >= 1 && Number(dueDay) <= 31)) {
-      toast.error('Due day must be between 1 and 31');
+    if (endDate && endDate < firstDueDate) {
+      toast.error('End date must be after the first due date');
       return;
     }
 
@@ -182,10 +186,9 @@ export const ExpenseManager = () => {
       await api.createRecurringExpense({
         category: resolvedCategory,
         amount: numericAmount,
-        frequency,
-        intervalMonths: frequency === 'custom' ? Number(intervalMonths) : undefined,
-        startDate,
-        dueDay: Number(dueDay),
+        firstDueDate,
+        intervalUnit,
+        intervalCount: Number(intervalCount),
         endDate: endDate || undefined,
         description: notes,
         branchId,
@@ -486,7 +489,7 @@ export const ExpenseManager = () => {
                       )}
                     </div>
                     <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px', overflowWrap: 'anywhere' }}>
-                      {frequencyText(template)} · ₹{Number(template.amount || 0).toLocaleString()} · due day {template.dueDay || '—'}
+                      {frequencyText(template)} · ₹{Number(template.amount || 0).toLocaleString()} · {template.firstDueDate ? `first due ${template.firstDueDate}` : `due day ${template.dueDay || '—'}`}
                       {template.endDate ? ` · ends ${template.endDate}` : ''}
                     </div>
                   </div>
@@ -581,33 +584,19 @@ export const ExpenseManager = () => {
                       </div>
                     ) : (
                       <div className="form-group" style={{ minWidth: 0 }}>
-                        <label className="form-label">Frequency</label>
-                        <select className="form-select" value={frequency} onChange={(e) => setFrequency(e.target.value)}>
-                          <option value="monthly">Monthly</option>
-                          <option value="every_2_months">Every 2 months</option>
-                          <option value="quarterly">Quarterly</option>
-                          <option value="half_yearly">Every 6 months</option>
-                          <option value="yearly">Yearly</option>
-                          <option value="custom">Custom</option>
-                        </select>
+                        <label className="form-label">Repeat every</label>
+                         <div style={{ display: 'flex', gap: '8px' }}>
+                          <input type="number" className="form-input" style={{ width: '80px', flex: '0 0 80px' }} min="1" step="1" aria-label="Repeat every N" value={intervalCount} onChange={(e) => setIntervalCount(e.target.value)} required />
+                          <select className="form-select" style={{ flex: 1, minWidth: 0 }} aria-label="Repeat unit" value={intervalUnit} onChange={(e) => setIntervalUnit(e.target.value)}>
+                            <option value="days">Days</option>
+                            <option value="months">Months</option>
+                            <option value="years">Years</option>
+                          </select>
+                        </div>
                       </div>
                     )}
                   </div>
 
-                  {expenseType === 'recurring' && frequency === 'custom' && (
-                    <div className="form-group" style={{ minWidth: 0 }}>
-                      <label className="form-label">Every N months</label>
-                      <input
-                        type="number"
-                        className="form-input"
-                        min="1"
-                        step="1"
-                        value={intervalMonths}
-                        onChange={(e) => setIntervalMonths(e.target.value)}
-                        required
-                      />
-                    </div>
-                  )}
 
                   {expenseType === 'one_time' ? (
                     <div className="form-group" style={{ minWidth: 0 }}>
@@ -616,23 +605,11 @@ export const ExpenseManager = () => {
                     </div>
                   ) : (
                     <>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', minWidth: 0 }}>
-                        <div className="form-group" style={{ minWidth: 0 }}>
-                          <label className="form-label">Start date</label>
-                          <input type="date" className="form-input" value={startDate} onChange={(e) => setStartDate(e.target.value)} required />
-                        </div>
-                        <div className="form-group" style={{ minWidth: 0 }}>
-                          <label className="form-label">Due day of month</label>
-                          <input
-                            type="number"
-                            className="form-input"
-                            min="1"
-                            max="31"
-                            step="1"
-                            value={dueDay}
-                            onChange={(e) => setDueDay(e.target.value)}
-                            required
-                          />
+                      <div className="form-group" style={{ minWidth: 0 }}>
+                        <label className="form-label">First due date</label>
+                        <input type="date" className="form-input" value={firstDueDate} onChange={(e) => setFirstDueDate(e.target.value)} required />
+                        <div style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '4px' }}>
+                          Next bills follow every {Number(intervalCount) === 1 ? intervalUnit.replace(/s$/, '') : `${intervalCount || 1} ${intervalUnit}`}. Short months use their last day. You record the payment date when you pay.
                         </div>
                       </div>
                       <div className="form-group" style={{ minWidth: 0 }}>
@@ -641,7 +618,7 @@ export const ExpenseManager = () => {
                           type="date"
                           className="form-input"
                           value={endDate}
-                          min={startDate || undefined}
+                          min={firstDueDate || undefined}
                           onChange={(e) => setEndDate(e.target.value)}
                         />
                       </div>

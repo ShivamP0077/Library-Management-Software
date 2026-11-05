@@ -633,7 +633,8 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       startDate: startStr,
       expiryDate: expiryStr,
       amountPaid: renewAmount,
-      ...(Number(renewAmount) !== Number(renewSuggested) ? { amountEdited: true, suggestedAmount: Number(renewSuggested) } : {}),
+      suggestedAmount: Number(renewSuggested),
+      ...(Number(renewAmount) !== Number(renewSuggested) ? { amountEdited: true } : {}),
       ...(renewAlign ? { bridge: renewAlign } : {}),
       discount: renewDiscount,
       fine: renewFine,
@@ -660,7 +661,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     if (!oldFee || !newFee || oldFee === newFee) return null;
     const totalDays = cycleFor(todayStr, cycleCfg).totalDays;
     const r = upgradeCharge(oldFee, newFee, todayStr, selectedStudent.expiryDate, totalDays);
-    return { amount: r.amount, days: r.remainingDays, oldFee, newFee, totalDays, newPlanId: newPlan.id };
+    return { amount: r.amount, days: r.remainingDays, oldFee, newFee, totalDays, newPlanId: newPlan.id, moveDate: todayStr, paidUntil: selectedStudent.expiryDate, suggestedAmount: r.amount };
   })();
 
   const handleExecuteSeatChange = (e) => {
@@ -671,7 +672,8 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     const priceChange = pc && pc.amount !== 0 ? {
       ...pc,
       amount: relocOverride != null ? Number(relocOverride) : pc.amount,
-      ...(relocOverride != null && Number(relocOverride) !== pc.amount ? { amountEdited: true, suggestedAmount: pc.amount } : {}),
+      suggestedAmount: pc.suggestedAmount ?? pc.amount,
+      ...(relocOverride != null && Number(relocOverride) !== pc.amount ? { amountEdited: true } : {}),
       collect: relocCollect, method: relocMethod
     } : null;
     const success = changeSeat(selectedStudent.id, newBlockId, newSeatTypeId, newSeatNo, seatChangeReason, newShiftId, effectiveBranchId, priceChange);

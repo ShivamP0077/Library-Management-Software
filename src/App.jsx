@@ -12,7 +12,8 @@ import { NewStudentModal } from './components/Modals/NewStudentModal';
 import { PrintReceiptModal } from './components/Modals/PrintReceiptModal';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Toaster } from 'react-hot-toast';
-import { ShieldAlert, ArrowLeft, LogOut, Eye, WifiOff, Cloud } from 'lucide-react';
+import { ShieldAlert, ArrowLeft, LogOut, Eye, WifiOff, Cloud, KeyRound } from 'lucide-react';
+import { ChangePasswordModal } from './auth/ChangePasswordModal';
 import { NotificationsCenter } from './components/NotificationsCenter';
 import { SupportCenter } from './components/SupportCenter';
 import { PreviousStudentRecords } from './components/PreviousStudentRecords';
@@ -233,6 +234,7 @@ export const AppContent = () => {
 /** Thin bar above the app showing who is signed in, read-only state, offline mode, and navigation. */
 const SessionBar = ({ libraryName, readOnly, onBack, isOffline = false, onSwitchToCloud }) => {
   const { user, logout } = useAuth();
+  const [pwOpen, setPwOpen] = useState(false);
   return (
     <div id="session-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '6px 16px', fontSize: 12, background: readOnly ? '#fef3c7' : isOffline ? '#1e293b' : '#111827', color: readOnly ? '#92400e' : '#e5e7eb' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -253,7 +255,9 @@ const SessionBar = ({ libraryName, readOnly, onBack, isOffline = false, onSwitch
         ) : (
           <>
             <span><span className="session-email">{user?.email} · </span>{user?.role === 'superadmin' ? 'Super Admin' : user?.role === 'client_admin' ? 'Client Admin' : user?.role === 'partner' ? 'Partner' : user?.role === 'agent' ? 'Agent' : 'Staff'}</span>
+            {!onBack && <button className="btn btn-ghost btn-sm" onClick={() => setPwOpen(true)} style={{ color: 'inherit' }} aria-label="Change password"><KeyRound size={14} /> <span>Password</span></button>}
             <button className="btn btn-ghost btn-sm" onClick={logout} style={{ color: 'inherit' }}><LogOut size={14} /> <span>Sign out</span></button>
+            {pwOpen && <ChangePasswordModal onClose={() => setPwOpen(false)} hasPassword={!(user?.authProviders?.length && !user.authProviders.includes('password'))} />}
           </>
         )}
       </div>

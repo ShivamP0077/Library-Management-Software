@@ -209,11 +209,22 @@ router.get('/auth/me', wrap(async (req, res) => {
   res.json({ user: user.toSafeJSON(), library: library && { libraryId: library.libraryId, name: library.name, status: library.status } });
 }));
 
+const pwTries = new Map();
 router.post('/auth/change-password', wrap(async (req, res) => {
   const { currentPassword, newPassword } = req.body || {};
   if (!validatePassword(newPassword)) return res.status(400).json({ error: 'New password must be at least 8 characters' });
   const user = await User.findById(req.user.id).select('+passwordHash');
-  if (user.passwordHash && !(await bcrypt.compare(String(currentPassword || ''), user.passwordHash))) return res.status(401).json({ error: 'Current password is incorrect' });
+  if (!user) return res.status(401).json({ error: 'Not signed in' });
+  // Issue #15: slow down guessing of the current password (5 wrong tries per 15 minutes).
+  const key = String(user._id); const now = Date.now();
+  const tries = (pwTries.get(key) || []).filter(t => now - t < 15 * 60 * 1000);
+  if (tries.length >= 5) return res.status(429).json({ error: 'Too many wrong attempts. Try again in 15 minutes.' });
+  if (user.passwordHash && !(await bcrypt.compare(String(currentPassword || ''), user.passwordHash))) {
+    pwTries.set(key, [...tries, now]);
+    return res.status(400).json({ error: 'Current password is incorrect' }); // 400, not 401: a 401 signs the user out in the app
+  }
+  pwTries.delete(key);
+  if (user.passwordHash && await bcrypt.compare(String(newPassword), user.passwordHash)) return res.status(400).json({ error: 'New password must be different from the current one' });
   user.passwordHash = await hashPassword(newPassword);
   user.authProviders = [...new Set([...(user.authProviders || []), 'password'])];
   await user.save();

@@ -2,6 +2,12 @@
 
 ## 2026-11-05 (IST)
 
+- **Issue #12: receipt print layout** (branch `fix/12-receipt-print`, merged into `release/21-issues` only).
+  - Printing now gives one A4 page split into two A5 halves, a "Student copy" and a "Library copy", with a dashed cut line.
+  - Each copy is shrunk to fit its half (never enlarged), so nothing is cut off and it no longer sits in the top-left corner.
+  - The student's photo shows on the receipt (on screen and in print) when they have an uploaded "Photograph" image document.
+  - Receipt content and the WhatsApp receipt are unchanged.
+
 - **Issue #15 (part 1): Change Password inside the account** (branch `fix/15-change-password`, merged into `release/21-issues` only).
   - A key button in the top bar opens a Change password form: current password, new password, and confirm.
   - Checks: at least 8 characters, the two new passwords must match, and the new one must differ from the current one.

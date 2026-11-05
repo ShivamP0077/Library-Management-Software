@@ -67,9 +67,36 @@ export function MySubscriptionModal({ libraryName, onClose }) {
               </section>
             )}
 
+            {(s?.status === 'pending_payment' || s?.status === 'past_due' || s?.status === 'expired') && (
+              <section style={{ marginBottom: 16 }}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={busy || !v.paymentsEnabled}
+                  style={{ width: '100%', justifyContent: 'center' }}
+                  onClick={() => act(async () => {
+                    const r = await api.subscriptionCheckout(window.location.origin);
+                    if (r.url) { window.location.href = r.url; return r; }
+                    throw new Error(r.error || 'Checkout did not return a URL');
+                  }, 'Opening checkout…')}
+                >
+                  {v.paymentsEnabled ? 'Pay now' : 'Payments not configured yet'}
+                </button>
+              </section>
+            )}
+
             <section style={{ marginBottom: 16 }}>
               <h4 style={{ margin: '0 0 6px', fontSize: 14 }}>Invoices</h4>
-              {v.invoices.length ? null : <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>No invoices yet.</p>}
+              {v.invoices?.length ? (
+                <ul style={{ listStyle: 'none', padding: 0, margin: 0, fontSize: 13 }}>
+                  {v.invoices.map(inv => (
+                    <li key={inv.invoiceId} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--border-light, #e5e7eb)' }}>
+                      <span>{inv.invoiceId} · {inv.status}</span>
+                      <span>₹{Number(inv.amount || 0).toLocaleString()}{inv.paidAt ? ` · paid ${fmt(inv.paidAt)}` : ''}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: 0 }}>No invoices yet.</p>}
             </section>
 
             <section style={{ borderTop: '1px solid var(--border-light, #e5e7eb)', paddingTop: 12 }}>

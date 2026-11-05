@@ -7,6 +7,9 @@ import { requireRole } from './auth.js';
 import { audit } from './audit.js';
 import { SoftwarePlan, pubPlan, libraryLimits } from './plans.js';
 import { paymentProvider, planPrice, INTERVALS, initialSubscription } from './billing.js';
+import { refreshPaymentProvider } from './paymentConfig.js';
+import { listInvoices } from './payments/invoices.js';
+import { notifySuperAdminsOfDeletionRequest } from './paymentsAdmin.js';
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const NOT_SET_UP = { error: 'Online payments are not set up yet. Please contact support to change to a paid plan.', code: 'payments_not_configured' };
@@ -38,7 +41,7 @@ async function view(tenantId) {
     limits: await libraryLimits(tenantId),
     usage: await usageOf(tenantId),
     plans: plans.map(pubPlan),
-    invoices: [], // filled by the payment provider once one exists
+    invoices: await listInvoices(tenantId),
     paymentsEnabled: Boolean(paymentProvider()),
     deletionRequest: lib?.deletionRequest || null,
   };
@@ -91,6 +94,7 @@ export function createSubscriptionRouter() {
     if (!sub || sub.status !== 'pending_payment') {
       return res.status(400).json({ error: 'No payment is due right now.', code: 'no_payment_due' });
     }
+    await refreshPaymentProvider();
     const provider = paymentProvider();
     if (!provider) return res.status(402).json(NOT_SET_UP);
     if (typeof provider.createCheckout !== 'function') {
@@ -122,6 +126,7 @@ export function createSubscriptionRouter() {
     const deletionRequest = { at: new Date(), by: req.user.email, reason: String(req.body?.reason || '').slice(0, 1000) };
     await Library.updateOne({ libraryId: req.tenantId }, { $set: { deletionRequest } });
     await audit(req, 'library.deletion_requested', { tenantId: req.tenantId, detail: { reason: deletionRequest.reason } });
+    await notifySuperAdminsOfDeletionRequest(lib, deletionRequest);
     res.json(await view(req.tenantId));
   }));
   r.delete('/subscription/deletion-request', requireRole('client_admin'), wrap(async (req, res) => {

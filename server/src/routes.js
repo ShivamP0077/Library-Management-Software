@@ -28,6 +28,8 @@ import { createSignupRouter, createGoogleSignupPending, signupEnabled } from './
 import { createSubscriptionRouter } from './subscription.js';
 import { requireActiveSubscription, requireFeature, refreshSubscriptionStatus, accessFor } from './subscriptionAccess.js';
 import { createPlanAdminRouter, SoftwarePlan, checkBranchLimit, checkStaffLimit } from './plans.js';
+import { createPaymentsAdminRouter } from './paymentsAdmin.js';
+import { refreshPaymentProvider } from './paymentConfig.js';
 import { createPublicAccountRouter, createTenantAccountRouter, auditSuperadminAccess, acceptInvite } from './accounts.js';
 import { createSeatRouter, reconcileStudents, releaseForStudents, validateSeatSync, SeatAllocation, seatMatchesAllocation, SeatConflictError } from './seats.js';
 
@@ -278,6 +280,7 @@ admin.use(createInsightsRouter());
 admin.use(createPartnerAdminRouter());
 admin.use(createSupportAdminRouter());
 admin.use(createPlanAdminRouter());
+admin.use(createPaymentsAdminRouter()); // Issue #19
 
 admin.get('/libraries', wrap(async (_req, res) => {
   const libs = await Library.find().sort({ createdAt: 1 }).lean();

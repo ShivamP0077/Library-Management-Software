@@ -2,6 +2,8 @@
 
 ## 2026-11-05 (IST)
 
+- **#6 Shifts grouped by section** — Settings > Operating Shifts now lists shifts under the section whose plans use them. Shifts not used by a section plan go under "All sections". Derived only, no data or schema change.
+
 - **#5 Seat types grouped by section** — Settings > Seat Types now shows types under each section heading (Hall A, Hall B…) and an "All sections" group for shared ones. Section comes from the type's own section or its seats. No data change.
 
 - **Issue #10: Student Profile layout** (branch `fix/10-profile-layout`, merged into `release/21-issues` only).

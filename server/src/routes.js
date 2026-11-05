@@ -23,6 +23,7 @@ const sendReceiptsAfterSave = async (tenantId, payments, newStudentKeys) => {
   const p = (newStudentKeys ? receiptsForNewStudents(tenantId, newStudentKeys) : autoSendReceipts(tenantId, payments)).catch(e => console.error('[receipts]', e.message));
   if (process.env.NODE_ENV === 'test') await p;
 };
+import { deleteLibraryData } from './deleteLibrary.js';
 import { createPublicAccountRouter, createTenantAccountRouter, auditSuperadminAccess, acceptInvite } from './accounts.js';
 import { createSeatRouter, reconcileStudents, releaseForStudents, validateSeatSync, SeatAllocation, seatMatchesAllocation, SeatConflictError } from './seats.js';
 
@@ -282,6 +283,16 @@ admin.patch('/libraries/:libraryId', wrap(async (req, res) => {
   await audit(req, 'library.update', { tenantId: req.params.libraryId, target: req.params.libraryId, detail: set });
   const lib = await Library.findOneAndUpdate({ libraryId: req.params.libraryId }, { $set: set }, { new: true, lean: true });
   lib ? res.json({ libraryId: lib.libraryId, name: lib.name, status: lib.status }) : res.status(404).json({ error: 'Library not found' });
+}));
+
+// Issue #16: permanent delete. The exact library name must be typed back; only that tenant's data is removed.
+admin.delete('/libraries/:libraryId', wrap(async (req, res) => {
+  const lib = await Library.findOne({ libraryId: req.params.libraryId }).lean();
+  if (!lib) return res.status(404).json({ error: 'Library not found' });
+  if (String(req.body?.confirmName ?? '').trim() !== String(lib.name).trim()) return res.status(400).json({ error: 'Type the library name exactly to confirm', code: 'confirm_mismatch' });
+  const r = await deleteLibraryData(lib.libraryId, { evolution: req.app.locals.evolutionClient });
+  await audit(req, 'library.deleted', { tenantId: lib.libraryId, target: lib.libraryId, detail: { name: lib.name, ...r } });
+  res.json({ ok: true, libraryId: lib.libraryId, ...r });
 }));
 
 admin.get('/metrics', wrap(async (_req, res) => {

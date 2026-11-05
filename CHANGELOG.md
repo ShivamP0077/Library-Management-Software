@@ -2,6 +2,8 @@
 
 ## 2026-11-05 (IST)
 
+- **#5 Seat types grouped by section** — Settings > Seat Types now shows types under each section heading (Hall A, Hall B…) and an "All sections" group for shared ones. Section comes from the type's own section or its seats. No data change.
+
 - **Issue #10: Student Profile layout** (branch `fix/10-profile-layout`, merged into `release/21-issues` only).
   - Header: the student's photo (or their initial when there is none), their name, and a 44px close button.
   - Details in pairs: ID | Gender, Desk | Shift, Expiry | Status. Mobile and Emergency each take a full row.

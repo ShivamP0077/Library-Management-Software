@@ -6,6 +6,7 @@ import {
   Beaker, CheckCircle2, ChevronRight, X, AlertCircle, Calendar,
   UserPlus, UserCheck, Power, Shield, Check, Minus, Phone, Mail, Users
 } from 'lucide-react';
+import { groupSeatTypesBySection, groupShiftsBySection } from '../utils/sectionGroups';
 import { motion, AnimatePresence } from 'framer-motion';
 import { NumericInput } from './NumericInput';
 import { SetupWizard } from './SetupWizard';
@@ -1112,11 +1113,10 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
             </button>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
-            {displayedSeatTypes.map(st => {
-              const physicalSeats = (seats || []).filter(s => s.seatTypeId === st.id);
-              const seatCount = physicalSeats.length;
-
+          {/* Issue #5: seat types under their section heading (derived, nothing stored). */}
+          {(() => {
+            const groups = groupSeatTypesBySection(displayedSeatTypes, seats || [], displayedSections);
+            const renderCard = (st, seatCount, gkey) => {
               let capacitySubtitle = '';
               if (st.allocationMode === 'Fixed') {
                 capacitySubtitle = `Fixed (${seatCount} ${seatCount === 1 ? 'seat' : 'seats'})`;
@@ -1129,7 +1129,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
               }
 
               return (
-                <div key={st.id} style={{ padding: '14px 16px', background: '#f8fafc', borderRadius: '8px', border: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div key={`${gkey}-${st.id}`} data-seat-type={st.name} style={{ padding: '14px 16px', background: '#f8fafc', borderRadius: '8px', border: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <strong style={{ fontSize: '14px' }}>{st.name}</strong>
                     <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px', fontWeight: 500 }}>
@@ -1146,8 +1146,18 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                   </div>
                 </div>
               );
-            })}
-          </div>
+            };
+            return groups.map(g => (
+              <div key={g.key} className="section-group" style={{ marginBottom: '16px' }}>
+                {(groups.length > 1 || g.key !== '__shared') && (
+                  <h4 className="section-group-title" style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 8px 0' }}>{g.title}</h4>
+                )}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
+                  {g.items.map(({ item, seatCount }) => renderCard(item, seatCount, g.key))}
+                </div>
+              </div>
+            ));
+          })()}
         </div>
       )}
 

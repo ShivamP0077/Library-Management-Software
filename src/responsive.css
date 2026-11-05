@@ -253,3 +253,6 @@ button:has(> svg.lucide-x:only-child) > svg.lucide-x { width: 20px !important; h
 
 /* Issue #21: fit the visible screen on mobile browsers (100vh is taller than the screen there). */
 .lib-workspace, .app-container { height: 100vh; height: 100dvh; }
+
+/* Issue #20: long option text in dropdowns is cut with "…" instead of running under the arrow. */
+select.input-field { text-overflow: ellipsis; white-space: nowrap; overflow: hidden; padding-right: 32px; min-width: 0; max-width: 100%; }

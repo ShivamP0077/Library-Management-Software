@@ -2,6 +2,13 @@
 
 ## 2026-11-05 (IST)
 
+- **Issue #20: support replies confirm when sent** (branch `fix/20-support-confirm`, merged into `release/21-issues` only).
+  - Owner and Super Admin replies show "Reply sent" only after the server saves the reply, and the thread updates with it.
+  - If sending fails, the typed text is kept and a "Not sent" line with a Retry button appears.
+  - The Send button shows "Sending…" and can't be pressed twice.
+  - Long dropdown options are now cut with "…" instead of overlapping on mobile.
+  - Owner notifications for Super Admin replies already existed; no change.
+
 - **Issue #21: mobile bottom bar no longer hides the last item** (branch `fix/21-bottom-bar`, merged into `release/21-issues` only).
   The bottom padding (bar height plus the phone's safe area) now sits on the box that actually scrolls. The app height now uses `100dvh`, so it fits the visible screen on mobile browsers, with `100vh` as a fallback. The 5-button bar itself is unchanged.
 

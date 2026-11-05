@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-11-05 (IST)
+
+- **Issue #2: each library now has its own browser cache, so data can no longer leak between libraries** (branch `fix/tenant-cache-isolation`, not merged or deployed).
+  Before, every library on the same browser shared one set of `library_*` keys. When you opened a library whose server data was empty, the app uploaded whatever another library had left in the browser. That is how data could be copied from one library into another. Now:
+  - Every key, including the setup wizard draft and the saved documents, is stored as `t:<libraryId>:<key>`.
+  - An empty library starts empty with the setup wizard. Local data is only uploaded if it was saved by that same library.
+  - Super-admin read-only views use memory only, and logging out clears the in-memory cache scope.
+  - Offline mode keeps its old keys.
+  - Old unprefixed data is copied only into the library the old marker names. It is never uploaded automatically and never deleted.
+  - Tests: `tests/tenantCache.test.js`.
+
 ## 2026-11-04 (IST)
 
 - **WhatsApp phase 1: WhatsApp section, send button on every student, bulk send, disconnected banner** ([PR #28](https://github.com/ShivamP0077/Library-Management-Software/pull/28), merge commit [`a835fd2`](https://github.com/ShivamP0077/Library-Management-Software/commit/a835fd2), 19:00 IST).

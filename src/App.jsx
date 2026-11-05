@@ -20,6 +20,7 @@ import { SetupWizard } from './components/SetupWizard';
 import { useLibrary } from './context/LibraryContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { AuthProvider, useAuth, prepareLocalCacheFor } from './auth/AuthContext';
+import { setCacheScope, clearCacheScope } from './utils/tenantCache';
 import { LoginScreen } from './auth/LoginScreen';
 import { SuperAdminDashboard } from './auth/SuperAdminDashboard';
 import { PartnerPortal } from './auth/PartnerPortal';
@@ -263,9 +264,13 @@ const SessionBar = ({ libraryName, readOnly, onBack, isOffline = false, onSwitch
 const LibraryWorkspace = ({ libraryId, libraryName, readOnly = false, lockedStaffId = null, onBack, isOffline = false, onSwitchToCloud }) => {
   const [ready, setReady] = useState(false);
   React.useLayoutEffect(() => {
-    if (!isOffline && libraryId) {
+    if (isOffline) {
+      setCacheScope({ offline: true }); // offline mode keeps its original local cache
+    } else if (libraryId) {
       setTenantContext(onBack ? { libraryId, readOnly } : {});
-      prepareLocalCacheFor(`${libraryId}${readOnly ? ':ro' : ''}`);
+      prepareLocalCacheFor(libraryId, { readOnly });
+    } else {
+      clearCacheScope();
     }
     setReady(true);
   }, [libraryId, readOnly, onBack, isOffline]);

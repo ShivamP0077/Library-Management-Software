@@ -4,6 +4,10 @@ import { api, createSyncQueue, SYNCED_COLLECTIONS } from '../utils/api';
 import { getDefaultPermissionsForRole, syncLegacyPermissions } from '../utils/staffPermissions';
 import { isShiftInPlan, resolveCanonicalShift, getCanonicalShifts, normalizeShiftName, shiftsOverlap } from '../utils/shiftUtils';
 import { areSeatTypesEquivalent } from '../utils/seatTypeUtils';
+import { scopedStorage, canSeedServer } from '../utils/tenantCache';
+// Issue #2: all cache reads/writes in this file go to the current library's own namespace.
+const localStorage = scopedStorage;
+
 
 const LibraryContext = createContext();
 
@@ -788,6 +792,17 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
           // Server wins: load its data into state (and the localStorage cache via the effects above)
           applyRemoteState(remote);
           if (!readOnly) sync.enable();
+        } else if (!readOnly && !canSeedServer()) {
+          // Issue #2: this browser's cache was not written by this library, so never upload it.
+          // An empty library starts clean, with its own setup wizard.
+          applyRemoteState({
+            settings: { ...INITIAL_SETTINGS, libraryId: remote.libraryId || INITIAL_SETTINGS.libraryId },
+            branches: INITIAL_BRANCHES, sections: INITIAL_SECTIONS, seatTypes: INITIAL_SEAT_TYPES, seats: INITIAL_SEATS,
+            shifts: INITIAL_SHIFTS, plans: INITIAL_PLANS, staffMembers: INITIAL_STAFF, students: INITIAL_STUDENTS,
+            archivedStudents: INITIAL_ARCHIVED_STUDENTS, expenses: INITIAL_EXPENSES, payments: INITIAL_PAYMENTS, waitingList: INITIAL_WAITING_LIST,
+          });
+          setStaffMembers(INITIAL_STAFF);
+          sync.enable();
         } else if (!readOnly) {
           sync.enable();
           const local = latestStateRef.current;

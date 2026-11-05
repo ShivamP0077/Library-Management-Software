@@ -6,6 +6,9 @@ import toast from 'react-hot-toast';
 import { NumericInput } from './NumericInput';
 import { resolveConfigurationScope, matchesScope } from '../utils/scopeResolver';
 import { buildDurationPricing } from '../utils/pricingCalculator';
+import { scopedStorage } from '../utils/tenantCache';
+// Issue #2: the wizard draft belongs to the current library only.
+const localStorage = scopedStorage;
 
 const INITIAL_SHIFT_TEMPLATES = [
   { name: "Full Day", startTime: "06:00", endTime: "20:00", daysOfWeek: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] },

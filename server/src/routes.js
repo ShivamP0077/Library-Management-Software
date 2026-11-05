@@ -14,6 +14,7 @@ import { createNotificationRouter } from './notifications.js';
 import { createInsightsRouter } from './insights.js';
 import { createSupportRouter, createSupportAdminRouter } from './support.js';
 import { createPartnerAdminRouter, createPartnerPortalRouter } from './partners.js';
+import { createTemplateRouter } from './templates.js';
 import { createReminderRouter, autoSendReceipts, receiptsForNewStudents } from './reminders.js';
 
 // Auto-receipts never block or fail the save; in tests we await so results are observable.
@@ -374,6 +375,7 @@ tenant.use(createFinanceRouter());
 tenant.use(createStudentRouter());
 tenant.use(createNotificationRouter());
 tenant.use(createReminderRouter());
+tenant.use(createTemplateRouter());
 tenant.use(createSupportRouter());
 
 // Generic REST for each entity collection, always filtered by req.tenantId

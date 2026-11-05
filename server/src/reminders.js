@@ -16,6 +16,7 @@ import { models, Library } from './models.js';
 import { todayIn } from './finance.js';
 import { WhatsappConfig, sendWhatsappMessage, buildReceiptText, logSkipped, canManageWhatsapp, retryFailedReceipts } from './whatsapp.js';
 import { evolutionConfigured } from './evolution.js';
+import { getTemplates, renderTemplate } from './templates.js';
 
 const schema = new mongoose.Schema({
   tenantId: { type: String, required: true, index: true },
@@ -24,6 +25,9 @@ const schema = new mongoose.Schema({
   type: { type: String, enum: ['fee_reminder', 'expiry_reminder'], required: true },
   sendOn: { type: String, required: true },    // YYYY-MM-DD (app timezone)
   periodKey: String,                           // student's expiry date for this period
+  ruleId: String,                              // Issue #17: auto-reminder rule that planned it
+  sendHour: Number,                            // earliest local hour to send (rule's send time)
+  onlyIfUnpaid: Boolean,
   status: { type: String, enum: ['scheduled', 'sent', 'failed', 'skipped', 'cancelled'], default: 'scheduled' },
   reason: String,
   attempts: { type: Number, default: 0 },
@@ -45,12 +49,46 @@ export async function reminderSettings(tenantId) {
   return { ...DEFAULT_REMINDER_SETTINGS, ...(c.reminderSettings || {}) };
 }
 
+/** Enabled auto-reminder rules, or null when the library still uses the single legacy expiry offset. */
+export function activeRules(settings) {
+  if (!Array.isArray(settings?.rules) || !settings.rules.length) return null;
+  return settings.rules.filter(r => r && r.enabled !== false);
+}
+
+export const MAX_RULES = 10;
+/** Validate rules from the UI: { id, offsetDays -30..30, sendHour 9..19, enabled, onlyIfUnpaid, template }. */
+export function validateRules(list) {
+  if (!Array.isArray(list)) throw Object.assign(new Error('rules must be a list'), { status: 400 });
+  if (list.length > MAX_RULES) throw Object.assign(new Error(`At most ${MAX_RULES} reminder rules`), { status: 400 });
+  const ids = new Set();
+  return list.map((r, i) => {
+    const bad = (m) => { throw Object.assign(new Error(`Rule ${i + 1}: ${m}`), { status: 400 }); };
+    const id = String(r?.id || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 24) || bad('missing id');
+    if (ids.has(id)) bad('duplicate id'); ids.add(id);
+    const offsetDays = Number(r.offsetDays);
+    if (!Number.isInteger(offsetDays) || offsetDays < -30 || offsetDays > 30) bad('days must be a whole number from -30 to 30');
+    const sendHour = r.sendHour == null || r.sendHour === '' ? 9 : Number(r.sendHour);
+    if (!Number.isInteger(sendHour) || sendHour < 9 || sendHour > 19) bad('send time must be between 9 AM and 7 PM');
+    const template = r.template === 'fee_reminder' ? 'fee_reminder' : 'renewal_reminder';
+    return { id, offsetDays, sendHour, enabled: r.enabled !== false, onlyIfUnpaid: !!r.onlyIfUnpaid, template };
+  });
+}
+
 /** Desired schedule for one student today (pure). */
 export function desiredFor(s, settings, today) {
   const out = [];
   const exp = expiryOf(s);
   const id = String(s._key ?? s.id);
-  if (exp && exp >= today) {
+  const rules = activeRules(settings);
+  if (rules) {
+    // Issue #17: each enabled rule plans one reminder per period, `offsetDays` from the expiry date
+    // (negative = before). A rule whose day has already passed is not sent late.
+    if (exp) for (const r of rules) {
+      const sendOn = addDays(exp, Number(r.offsetDays || 0));
+      if (sendOn < today) continue;
+      out.push({ key: `expiry:${id}:${exp}:r${r.id}`, studentId: id, type: r.template === 'fee_reminder' ? 'fee_reminder' : 'expiry_reminder', sendOn, periodKey: exp, ruleId: r.id, sendHour: r.sendHour ?? null, onlyIfUnpaid: !!r.onlyIfUnpaid, rule: true });
+    }
+  } else if (exp && exp >= today) {
     let sendOn = addDays(exp, -Number(settings.expiryDaysBefore || 0));
     if (settings.expiryFixedDay) { // owner-selected fixed day in the expiry month (never after expiry)
       const d = String(Math.min(Number(settings.expiryFixedDay), 28)).padStart(2, '0');
@@ -80,14 +118,14 @@ export async function planReminders(tenantId, { today = todayIn() } = {}) {
   const existingFee = new Map((await ReminderSchedule.find({ tenantId, type: 'fee_reminder' }).lean()).map(r => [r.key, r]));
   for (const d of desired.values()) {
     let sendOn = d.sendOn;
-    if (d.type === 'fee_reminder') {
+    if (d.type === 'fee_reminder' && !d.rule) {
       const firstKey = d.key.replace(/:\d+$/, ':1');
       const anchor = existingFee.get(firstKey)?.sendOn || today;
       sendOn = addDays(anchor, d.seq * Number(settings.feeEveryDays || 1));
     }
     try {
       const r = await ReminderSchedule.updateOne({ tenantId, key: d.key },
-        { $setOnInsert: { studentId: d.studentId, type: d.type, sendOn, periodKey: d.periodKey, status: 'scheduled' } }, { upsert: true });
+        { $setOnInsert: { studentId: d.studentId, type: d.type, sendOn, periodKey: d.periodKey, status: 'scheduled', ...(d.rule ? { ruleId: d.ruleId, sendHour: d.sendHour, onlyIfUnpaid: d.onlyIfUnpaid } : {}) } }, { upsert: true });
       planned += r.upsertedCount || 0;
     } catch (e) { if (e?.code !== 11000) throw e; }
   }
@@ -95,27 +133,33 @@ export async function planReminders(tenantId, { today = todayIn() } = {}) {
   const stale = (await ReminderSchedule.find({ tenantId, status: 'scheduled' }).lean()).filter(r => !desired.has(r.key));
   for (const r of stale) {
     const s = students.find(x => String(x._key ?? x.id) === r.studentId);
-    const reason = !s ? 'student_removed' : r.type === 'fee_reminder' ? 'paid' : 'renewed';
+    const reason = !s ? 'student_removed' : r.ruleId && expiryOf(s) === r.periodKey ? 'rule_changed' : r.type === 'fee_reminder' && !r.ruleId ? 'paid' : 'renewed';
     await ReminderSchedule.updateOne({ tenantId, _id: r._id, status: 'scheduled' }, { $set: { status: 'cancelled', reason } });
   }
   return { planned, cancelled: stale.length };
 }
 
 /** Send everything due today, re-checking live data first (latest payment status wins). */
-export async function sendDueReminders(tenantId, { today = todayIn(), deps = {} } = {}) {
-  const due = await ReminderSchedule.find({ tenantId, status: 'scheduled', sendOn: { $lte: today } }).lean();
+export async function sendDueReminders(tenantId, { today = todayIn(), hour = null, deps = {} } = {}) {
+  // A rule's send time: today's row waits until that local hour (earlier days' rows go out now).
+  const due = (await ReminderSchedule.find({ tenantId, status: 'scheduled', sendOn: { $lte: today } }).lean())
+    .filter(r => hour == null || r.sendOn < today || !r.sendHour || hour >= r.sendHour);
   const lib = await Library.findOne({ libraryId: tenantId }).lean();
+  const templates = await getTemplates(tenantId).catch(() => ({}));
   const results = { sent: 0, skipped: 0, failed: 0, cancelled: 0 };
   for (const r of due) {
     // Claim it so two workers can't both send.
     const claimed = await ReminderSchedule.findOneAndUpdate({ tenantId, _id: r._id, status: 'scheduled' }, { $set: { status: 'skipped', reason: 'in_progress' }, $inc: { attempts: 1 } }, { new: true });
     if (!claimed) continue;
     const s = await models.students.findOne({ tenantId, _key: r.studentId }).lean();
-    const stillValid = s && (r.type === 'fee_reminder' ? dueOf(s) > 0 && (expiryOf(s) || 'open') === r.periodKey : expiryOf(s) === r.periodKey);
-    if (!stillValid) { await ReminderSchedule.updateOne({ tenantId, _id: r._id }, { $set: { status: 'cancelled', reason: r.type === 'fee_reminder' ? 'paid' : 'renewed' } }); results.cancelled++; continue; }
-    const text = r.type === 'fee_reminder'
-      ? `Hi ${s.name || 'there'}, a fee of ${money(dueOf(s))} is pending at ${lib?.name || 'the library'}. Please pay at the desk. Ignore if already paid.`
-      : `Hi ${s.name || 'there'}, your plan at ${lib?.name || 'the library'} ends on ${expiryOf(s)}. Please renew to keep your seat.`;
+    const stillValid = s && (r.ruleId
+      ? expiryOf(s) === r.periodKey && (!r.onlyIfUnpaid || dueOf(s) > 0)
+      : r.type === 'fee_reminder' ? dueOf(s) > 0 && (expiryOf(s) || 'open') === r.periodKey : expiryOf(s) === r.periodKey);
+    if (!stillValid) {
+      const reason = s && expiryOf(s) === r.periodKey ? 'paid' : r.type === 'fee_reminder' && !r.ruleId ? 'paid' : 'renewed';
+      await ReminderSchedule.updateOne({ tenantId, _id: r._id }, { $set: { status: 'cancelled', reason } }); results.cancelled++; continue;
+    }
+    const text = reminderText(r.type, s, lib, templates);
     let out;
     try {
       out = await sendWhatsappMessage({ libraryId: tenantId, type: r.type, to: s.phone, text, dedupeKey: `reminder:${r.key}`, consent: s.whatsappOptOut !== true, studentId: r.studentId, studentName: s.name }, deps);
@@ -129,6 +173,16 @@ export async function sendDueReminders(tenantId, { today = todayIn(), deps = {} 
   return results;
 }
 
+/** Reminder text: the library's saved template if any, else the built-in wording. */
+export function reminderText(type, s, lib, templates = {}) {
+  const vars = { name: s.name || 'there', amount: Number(dueOf(s)).toLocaleString('en-IN'), dueDate: expiryOf(s) || '', library: lib?.name || 'the library', seat: s.seatNo || s.seatNumber || '', shift: s.shift || '' };
+  const tpl = type === 'fee_reminder' ? templates.fee_reminder : templates.renewal_reminder;
+  if (tpl) return renderTemplate(tpl, vars);
+  return type === 'fee_reminder'
+    ? `Hi ${vars.name}, a fee of ${money(dueOf(s))} is pending at ${vars.library}. Please pay at the desk. Ignore if already paid.`
+    : `Hi ${vars.name}, your plan at ${vars.library} ends on ${vars.dueDate}. Please renew to keep your seat.`;
+}
+
 const localHour = (tz = process.env.APP_TIMEZONE || 'Asia/Kolkata') => Number(new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hourCycle: 'h23', timeZone: tz }).format(new Date()));
 
 export async function runReminderJob(deps = {}) {
@@ -136,7 +190,7 @@ export async function runReminderJob(deps = {}) {
   const h = localHour();
   const sendNow = deps.force || (h >= 9 && h < 20); // no messages at night; planning/cancelling still runs
   for (const l of await Library.find({ status: 'Active' }).lean()) {
-    try { await planReminders(l.libraryId); if (sendNow) await sendDueReminders(l.libraryId, { deps }); }
+    try { await planReminders(l.libraryId); if (sendNow) await sendDueReminders(l.libraryId, { hour: deps.hour ?? h, deps }); }
     catch (e) { console.error('[reminders] failed for', l.libraryId, e.message); }
   }
 }
@@ -203,6 +257,7 @@ export function createReminderRouter() {
     if (b.expiryFixedDay !== undefined) set['reminderSettings.expiryFixedDay'] = b.expiryFixedDay === null || b.expiryFixedDay === '' ? null : int(b.expiryFixedDay, 1, 28);
     if (b.feeEveryDays !== undefined) set['reminderSettings.feeEveryDays'] = int(b.feeEveryDays, 1, 30);
     if (b.feeMaxReminders !== undefined) set['reminderSettings.feeMaxReminders'] = int(b.feeMaxReminders, 1, 10);
+    if (b.rules !== undefined) set['reminderSettings.rules'] = b.rules === null ? [] : validateRules(b.rules);
     await WhatsappConfig.updateOne({ libraryId: req.tenantId }, { $set: { ...set, updatedBy: req.user.email } }, { upsert: true, strict: false });
     res.json(await reminderSettings(req.tenantId));
   }));
@@ -211,7 +266,7 @@ export function createReminderRouter() {
     if (req.query.status) q.status = String(req.query.status);
     if (req.query.studentId) q.studentId = String(req.query.studentId);
     const list = await ReminderSchedule.find(q).sort({ sendOn: -1 }).limit(Math.min(Number(req.query.limit || 200), 500)).lean();
-    res.json(list.map(x => ({ id: String(x._id), studentId: x.studentId, type: x.type, sendOn: x.sendOn, status: x.status, reason: x.reason, sentAt: x.sentAt })));
+    res.json(list.map(x => ({ id: String(x._id), studentId: x.studentId, type: x.type, sendOn: x.sendOn, status: x.status, reason: x.reason, sentAt: x.sentAt, ruleId: x.ruleId || null })));
   }));
   r.post('/reminders/plan', guard, wrap(async (req, res) => res.json(await planReminders(req.tenantId))));
   return r;

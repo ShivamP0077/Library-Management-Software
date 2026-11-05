@@ -20,7 +20,9 @@ export const WhatsappConfig = mongoose.models.WhatsappConfig || mongoose.model('
   expiryReminders: { type: Boolean, default: DEFAULT_TOGGLES.expiryReminders },
   connectedNumber: String,
   // Reminder timing (spec §6): set via PUT /reminders/settings
-  reminderSettings: { expiryDaysBefore: Number, expiryFixedDay: Number, feeEveryDays: Number, feeMaxReminders: Number },
+  reminderSettings: { expiryDaysBefore: Number, expiryFixedDay: Number, feeEveryDays: Number, feeMaxReminders: Number, rules: { type: mongoose.Schema.Types.Mixed, default: undefined } },
+  // Issue #17: owner-edited message templates { type: text }
+  templates: { type: mongoose.Schema.Types.Mixed, default: undefined },
   updatedBy: String,
 }, { timestamps: true }));
 

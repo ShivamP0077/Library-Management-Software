@@ -23,7 +23,7 @@ const sendReceiptsAfterSave = async (tenantId, payments, newStudentKeys) => {
   const p = (newStudentKeys ? receiptsForNewStudents(tenantId, newStudentKeys) : autoSendReceipts(tenantId, payments)).catch(e => console.error('[receipts]', e.message));
   if (process.env.NODE_ENV === 'test') await p;
 };
-import { createPublicAccountRouter, createTenantAccountRouter, auditSuperadminAccess } from './accounts.js';
+import { createPublicAccountRouter, createTenantAccountRouter, auditSuperadminAccess, acceptInvite } from './accounts.js';
 import { createSeatRouter, reconcileStudents, releaseForStudents, validateSeatSync, SeatAllocation, seatMatchesAllocation, SeatConflictError } from './seats.js';
 
 const router = express.Router();
@@ -114,7 +114,9 @@ router.get('/auth/google/start', (req, res) => {
   const state = crypto.randomBytes(32).toString('base64url');
   const codeVerifier = crypto.randomBytes(32).toString('base64url');
   const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
-  const cookieValue = Buffer.from(JSON.stringify({ s: state, v: codeVerifier }), 'utf8').toString('base64url');
+  // Issue #13: an invite token may ride along so a new staff member can join with Google.
+  const invite = typeof req.query.invite === 'string' && /^[A-Za-z0-9_-]{16,200}$/.test(req.query.invite) ? req.query.invite : undefined;
+  const cookieValue = Buffer.from(JSON.stringify({ s: state, v: codeVerifier, ...(invite ? { i: invite } : {}) }), 'utf8').toString('base64url');
 
   res.cookie(GOOGLE_COOKIE, cookieValue, { ...googleCookieOptions(), maxAge: 600 * 1000 });
   return res.redirect(302, buildAuthUrl({ state, codeChallenge }));
@@ -151,7 +153,13 @@ router.get('/auth/google/callback', wrap(async (req, res) => {
       throw err;
     }
 
-    const user = await User.findOne({ email: identity.email });
+    let user = await User.findOne({ email: identity.email });
+    if (!user && cookieData.i) {
+      // Only a valid invite for this exact email creates the account (never self-signup).
+      const r = await acceptInvite({ token: String(cookieData.i), google: identity, ip: req.ip });
+      if (r.error) return fail(r.code);
+      user = r.user;
+    }
     if (!user) return fail('not_registered'); // Google identity never creates users or grants roles
     if (user.googleSub && user.googleSub !== identity.sub) return fail('account_mismatch');
 

@@ -2,6 +2,8 @@
 
 ## 2026-11-05 (IST)
 
+- **#13 Staff invite and login** (3:20 PM IST): checked Render (read-only): FRONTEND_URL is set to https://library-os-app.vercel.app, so invite links are correct. Tested the whole flow end to end (invite, open link on mobile, set password, join, sign in, single use, expiry, revoke, other library blocked). Added the missing part: an invited person can now also join with Google, only with the invited email; the account gets the invited library, role and staff link, and the invite is still single-use.
+
 - **#9 Billing cycles & fee changes** (2:55 PM IST): library-wide cycle modes (anniversary, calendar month, every N days, yearly). New joiners get a pro-rated first payment option (calendar days, final amount rounded to the rupee). Seat/shift moves to a different-priced plan charge the pro-rated difference (separate receipt) or add a credit to the student; logged in seat history. Renewals can optionally be aligned to the library cycle with a bridge payment; existing students keep their stored dates otherwise (no data migration). Amount-edit permission: Admin always, Manager on by default, other staff off; owner-only setting, enforced on the server and every change audited.
 
 - **#8 Recurring bill schedule** — New recurring bills use a clear **First due date** and **Repeat every N days / months / years**. Month and year steps keep the original day and use the last day of short months (Jan 31 → Feb 28/29 → Mar 31; Feb 29 → Feb 28 in normal years). Payment date stays separate; reminders unchanged. Old bills keep their old due-day schedule and dates (no data changed).

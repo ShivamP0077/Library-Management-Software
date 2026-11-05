@@ -60,6 +60,37 @@ export const resetRateLimits = () => hits.clear();
 const mask = (email) => email.replace(/^(.)(.*)(@.*)$/, (_, a, b, c) => a + '*'.repeat(Math.min(b.length, 6)) + c);
 
 /** Public (unauthenticated) routes. */
+/**
+ * Issue #13: the one place an invite becomes an account (password or Google).
+ * Atomic single use; the account is bound to the invited email, library and role.
+ * With `google`, the verified Google email must equal the invited email.
+ */
+export async function acceptInvite({ token, name, passwordHash, google, ip }) {
+  const now = new Date();
+  const i = await Invite.findOneAndUpdate({ tokenHash: sha(token), usedAt: null, revokedAt: null, expiresAt: { $gt: now } }, { $set: { usedAt: now } }, { new: true });
+  if (!i) return { status: 410, error: 'This invite link is invalid, expired or already used', code: 'invite_invalid' };
+  const release = () => Invite.updateOne({ _id: i._id }, { $set: { usedAt: null } });
+  if (google && String(google.email).toLowerCase() !== i.email) {
+    await release();
+    return { status: 403, error: `This invite is for ${i.email}. Sign in to Google with that email.`, code: 'invite_email_mismatch' };
+  }
+  const lib = await Library.findOne({ libraryId: i.tenantId }).lean();
+  if (!lib || lib.status !== 'Active') { await release(); return { status: 403, error: 'Library is disabled', code: 'library_disabled' }; }
+  if (await User.exists({ email: i.email })) {
+    await release();
+    return { status: 409, error: 'An account with this email already exists. Sign in instead.', code: 'account_exists' };
+  }
+  const user = await User.create({
+    email: i.email, name: name || i.name || google?.name || '', role: i.role, tenantId: i.tenantId, libraryId: i.tenantId, staffId: i.staffId,
+    ...(passwordHash ? { passwordHash } : {}),
+    ...(google ? { googleSub: google.sub } : {}),
+    authProviders: [google ? 'google' : 'password'],
+  });
+  await Invite.updateOne({ _id: i._id }, { $set: { usedBy: String(user._id) } });
+  await audit({ user: { id: String(user._id), email: user.email, role: user.role }, ip }, 'invite.accepted', { tenantId: i.tenantId, target: i.email, detail: { via: google ? 'google' : 'password' } });
+  return { user };
+}
+
 export function createPublicAccountRouter({ issueSession }) {
   const r = express.Router();
 
@@ -74,20 +105,9 @@ export function createPublicAccountRouter({ issueSession }) {
     const { token, name, password } = req.body || {};
     if (!token) return res.status(400).json({ error: 'token is required' });
     if (!validatePassword(password)) return res.status(400).json({ error: 'Password must be at least 8 characters' });
-    const now = new Date();
-    // Atomic one-time use: only one concurrent accept can claim the invite.
-    const i = await Invite.findOneAndUpdate({ tokenHash: sha(token), usedAt: null, revokedAt: null, expiresAt: { $gt: now } }, { $set: { usedAt: now } }, { new: true });
-    if (!i) return res.status(410).json({ error: 'This invite link is invalid, expired or already used' });
-    const lib = await Library.findOne({ libraryId: i.tenantId }).lean();
-    if (!lib || lib.status !== 'Active') return res.status(403).json({ error: 'Library is disabled' });
-    if (await User.exists({ email: i.email })) {
-      await Invite.updateOne({ _id: i._id }, { $set: { usedAt: null } });
-      return res.status(409).json({ error: 'An account with this email already exists. Sign in instead.' });
-    }
-    const user = await User.create({ email: i.email, name: name || i.name || '', role: i.role, tenantId: i.tenantId, libraryId: i.tenantId, staffId: i.staffId, passwordHash: await hashPassword(password), authProviders: ['password'] });
-    await Invite.updateOne({ _id: i._id }, { $set: { usedBy: String(user._id) } });
-    await audit({ user: { id: String(user._id), email: user.email, role: user.role }, ip: req.ip }, 'invite.accepted', { tenantId: i.tenantId, target: i.email });
-    return issueSession(user, res);
+    const r = await acceptInvite({ token, name, passwordHash: await hashPassword(password), ip: req.ip });
+    if (r.error) return res.status(r.status).json({ error: r.error, ...(r.code ? { code: r.code } : {}) });
+    return issueSession(r.user, res);
   }));
 
   // Always answers the same way so it cannot be used to discover accounts.

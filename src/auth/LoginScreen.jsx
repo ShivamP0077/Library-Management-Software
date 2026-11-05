@@ -31,7 +31,7 @@ const readInviteToken = () => {
 };
 
 export function LoginScreen({ onContinueOffline }) {
-  const { loginWithPassword, completeLogin, oauthError } = useAuth();
+  const { loginWithPassword, completeLogin, oauthError, googleSignupPending, clearGoogleSignupPending } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -71,6 +71,12 @@ export function LoginScreen({ onContinueOffline }) {
       .catch(() => {});
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    if (googleSignupPending && signup) {
+      setMode('signup');
+    }
+  }, [googleSignupPending, signup]);
 
   useEffect(() => {
     if (!inviteToken) return;
@@ -261,7 +267,14 @@ export function LoginScreen({ onContinueOffline }) {
         )}
 
         {mode === 'signup' && signup && (
-          <SignupPanel plans={signup.plans || []} onBack={backToLogin} onDone={(result) => completeLogin(result)} />
+          <SignupPanel
+            plans={signup.plans || []}
+            googleSignup={Boolean(signup.googleSignup)}
+            paymentsConfigured={Boolean(signup.paymentsConfigured)}
+            googlePendingToken={googleSignupPending || ''}
+            onBack={() => { clearGoogleSignupPending?.(); backToLogin(); }}
+            onDone={(result) => { clearGoogleSignupPending?.(); completeLogin(result); }}
+          />
         )}
 
         {mode === 'forgot' && (

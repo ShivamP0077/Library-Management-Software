@@ -24,7 +24,7 @@ const sendReceiptsAfterSave = async (tenantId, payments, newStudentKeys) => {
   if (process.env.NODE_ENV === 'test') await p;
 };
 import { deleteLibraryData } from './deleteLibrary.js';
-import { createSignupRouter } from './signup.js';
+import { createSignupRouter, createGoogleSignupPending, signupEnabled } from './signup.js';
 import { createSubscriptionRouter } from './subscription.js';
 import { requireActiveSubscription, requireFeature, refreshSubscriptionStatus, accessFor } from './subscriptionAccess.js';
 import { createPlanAdminRouter, SoftwarePlan, checkBranchLimit, checkStaffLimit } from './plans.js';
@@ -126,9 +126,14 @@ router.get('/auth/google/start', (req, res) => {
   const state = crypto.randomBytes(32).toString('base64url');
   const codeVerifier = crypto.randomBytes(32).toString('base64url');
   const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
-  // Issue #13: an invite token may ride along so a new staff member can join with Google.
+  // Issue #13: invite token may ride along. Issue #15: signup=1 starts Google owner signup.
   const invite = typeof req.query.invite === 'string' && /^[A-Za-z0-9_-]{16,200}$/.test(req.query.invite) ? req.query.invite : undefined;
-  const cookieValue = Buffer.from(JSON.stringify({ s: state, v: codeVerifier, ...(invite ? { i: invite } : {}) }), 'utf8').toString('base64url');
+  const signup = req.query.signup === '1' || req.query.signup === 'true';
+  const cookieValue = Buffer.from(JSON.stringify({
+    s: state, v: codeVerifier,
+    ...(invite ? { i: invite } : {}),
+    ...(signup ? { su: 1 } : {}),
+  }), 'utf8').toString('base64url');
 
   res.cookie(GOOGLE_COOKIE, cookieValue, { ...googleCookieOptions(), maxAge: 600 * 1000 });
   return res.redirect(302, buildAuthUrl({ state, codeChallenge }));
@@ -172,7 +177,12 @@ router.get('/auth/google/callback', wrap(async (req, res) => {
       if (r.error) return fail(r.code);
       user = r.user;
     }
-    if (!user) return fail('not_registered'); // Google identity never creates users or grants roles
+    // Issue #15: Google owner signup — park identity and let the frontend finish plan + library.
+    if (!user && cookieData.su && signupEnabled()) {
+      const pending = await createGoogleSignupPending(identity);
+      return res.redirect(302, `${frontendUrl}/#google_signup=${encodeURIComponent(pending)}`);
+    }
+    if (!user) return fail('not_registered'); // Google identity never creates users or grants roles outside signup
     if (user.googleSub && user.googleSub !== identity.sub) return fail('account_mismatch');
 
     const { denial } = await resolveSession(user);

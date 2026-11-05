@@ -237,3 +237,15 @@ input[type="radio"], input[type="checkbox"] { width: auto !important; min-height
 .st-selbar, .st-selbar .btn { white-space: nowrap; }
 @media (max-width: 360px) { .st-selbar { gap: 4px; padding: 6px 6px 6px 12px; font-size: 12px; } }
 .st-head .st-c { color: inherit; }
+
+/* Issue #7: every icon-only close (X) button: same 20px icon, at least a 44x44px tap area. */
+button:has(> svg.lucide-x:only-child) {
+  min-width: 44px !important;
+  min-height: 44px !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  touch-action: manipulation;
+}
+button:has(> svg.lucide-x:only-child) > svg.lucide-x { width: 20px !important; height: 20px !important; }

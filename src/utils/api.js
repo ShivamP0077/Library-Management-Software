@@ -134,6 +134,9 @@ export const api = {
   },
   // Super admin
   adminLibraries: () => apiRequest('/admin/libraries'),
+  adminPlans: () => apiRequest('/admin/plans'),
+  adminCreatePlan: (body) => apiRequest('/admin/plans', { method: 'POST', body }),
+  adminUpdatePlan: (planId, body) => apiRequest(`/admin/plans/${encodeURIComponent(planId)}`, { method: 'PATCH', body }),
   adminMetrics: () => apiRequest('/admin/metrics'),
   adminSaasSummary: () => apiRequest('/admin/saas-summary'),
   adminInsights: (q = '') => apiRequest(`/admin/insights${q}`),

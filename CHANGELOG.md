@@ -2,6 +2,15 @@
 
 ## 2026-11-05 (IST)
 
+- **Issue #15 (part 1): Change Password inside the account** (branch `fix/15-change-password`, merged into `release/21-issues` only).
+  - A key button in the top bar opens a Change password form: current password, new password, and confirm.
+  - Checks: at least 8 characters, the two new passwords must match, and the new one must differ from the current one.
+  - Google-only accounts can set a first password without entering a current one.
+  - Server: after 5 wrong current-password tries the user waits 15 minutes.
+  - Server: a wrong current password now returns 400 instead of 401. Before, a wrong entry signed the user out; this also fixes the Partner portal.
+  - Every change is audited (already existed).
+  - Forgot Password and Google login are unchanged. Signup comes later with #14.
+
 - **Issue #20: support replies confirm when sent** (branch `fix/20-support-confirm`, merged into `release/21-issues` only).
   - Owner and Super Admin replies show "Reply sent" only after the server saves the reply, and the thread updates with it.
   - If sending fails, the typed text is kept and a "Not sent" line with a Retry button appears.

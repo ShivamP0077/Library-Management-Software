@@ -13,7 +13,8 @@
     "backup": "node src/backup.js backup",
     "restore": "node src/backup.js restore",
     "backup:verify": "node src/backup.js verify",
-    "export:schema": "node scripts/export-schema.js"
+    "export:schema": "node scripts/export-schema.js",
+    "report:copied-dry-run": "node scripts/copied-data-dry-run.mjs"
   },
   "keywords": [],
   "author": "",

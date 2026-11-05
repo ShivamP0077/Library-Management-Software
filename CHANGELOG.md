@@ -2,6 +2,8 @@
 
 ## 2026-11-05 (IST)
 
+- **#2 copied-data dry-run script + changelog PR #30 fix** — 18:35 IST. Added `server/scripts/copied-data-dry-run.mjs` (read-only pairwise fingerprint compare; never deletes). Changelog now correctly notes Issue #2 / PR #30 is merged into `release/21-issues`. Production overlap report still needs Atlas IP allow-list or a machine that can reach Mongo.
+
 - **#19 Payment providers (Razorpay + PayPal)** — 18:20 IST. Super Admin **Payments** tab stores Razorpay/PayPal keys encrypted (AES-256-GCM). Active provider powers `POST /subscription/checkout` (Payment Links / PayPal Orders), signature-verified webhooks, software invoices, AutoPay helpers (Razorpay subscriptions), lock-at-expiry via existing #14 statuses (`past_due` on failed charge). Deletion requests email Super Admins and appear under Payments for acknowledge/dismiss.
 
 - **#15 Google signup + payment step hooks** — 17:55 IST. Owner signup (still gated by `OWNER_SIGNUP_ENABLED`) can continue with Google (`?signup=1` OAuth → pending token → `/auth/signup/complete-google`). Config exposes `googleSignup` and `paymentsConfigured`. Signup responses include `needsPayment` + `paymentHook` pointing at `POST /api/subscription/checkout` (402 until a provider is registered in #19). UI shows a payment step after creating a paid library.
@@ -98,7 +100,7 @@
   - The page retries by itself up to 3 times while it shows "WhatsApp service is waking up".
   - Sending (PR #26) is unchanged.
 
-- **Issue #2: each library now has its own browser cache, so data can no longer leak between libraries** (branch `fix/tenant-cache-isolation`, not merged or deployed).
+- **Issue #2: each library now has its own browser cache, so data can no longer leak between libraries** ([PR #30](https://github.com/ShivamP0077/Library-Management-Software/pull/30), branch `fix/tenant-cache-isolation`, merged into `release/21-issues` only — not deployed to main).
   Before, every library on the same browser shared one set of `library_*` keys. When you opened a library whose server data was empty, the app uploaded whatever another library had left in the browser. That is how data could be copied from one library into another. Now:
   - Every key, including the setup wizard draft and the saved documents, is stored as `t:<libraryId>:<key>`.
   - An empty library starts empty with the setup wizard. Local data is only uploaded if it was saved by that same library.

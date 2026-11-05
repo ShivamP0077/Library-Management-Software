@@ -2,6 +2,8 @@
 
 ## 2026-11-05 (IST)
 
+- **#16 Delete library** (3:45 PM IST): Super Admin has a separate Delete button (Disable is unchanged). You must type the exact library name; the server checks it again, removes only that library's data (students, payments, settings, staff logins, invites, WhatsApp settings and log, and the rest), logs out its WhatsApp instance if possible, and keeps an audit entry. Other libraries are never touched. No library was deleted on the live system.
+
 - **#13 Staff invite and login** (3:20 PM IST): checked Render (read-only): FRONTEND_URL is set to https://library-os-app.vercel.app, so invite links are correct. Tested the whole flow end to end (invite, open link on mobile, set password, join, sign in, single use, expiry, revoke, other library blocked). Added the missing part: an invited person can now also join with Google, only with the invited email; the account gets the invited library, role and staff link, and the invite is still single-use.
 
 - **#9 Billing cycles & fee changes** (2:55 PM IST): library-wide cycle modes (anniversary, calendar month, every N days, yearly). New joiners get a pro-rated first payment option (calendar days, final amount rounded to the rupee). Seat/shift moves to a different-priced plan charge the pro-rated difference (separate receipt) or add a credit to the student; logged in seat history. Renewals can optionally be aligned to the library cycle with a bridge payment; existing students keep their stored dates otherwise (no data migration). Amount-edit permission: Admin always, Manager on by default, other staff off; owner-only setting, enforced on the server and every change audited.

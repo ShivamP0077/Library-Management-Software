@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Building2, Eye, LogOut, Plus, RefreshCw, Shield, UserPlus, Power } from 'lucide-react';
+import { Building2, Eye, LogOut, Plus, RefreshCw, Shield, UserPlus, Power, Trash2 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import { api } from '../utils/api';
 import { useAuth } from './AuthContext';
@@ -27,6 +27,20 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
   const [form, setForm] = useState({ name: '', adminEmail: '', adminName: '' });
   const [inviteFor, setInviteFor] = useState(null);
   const [inviteEmail, setInviteEmail] = useState('');
+  // Issue #16: permanent delete with the library name typed back.
+  const [deleteFor, setDeleteFor] = useState(null);
+  const [deleteName, setDeleteName] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const confirmDelete = async (e) => {
+    e.preventDefault();
+    if (!deleteFor || deleteName.trim() !== deleteFor.name.trim()) return;
+    setDeleting(true);
+    try {
+      await api.adminDeleteLibrary(deleteFor.libraryId, deleteName);
+      toast.success(`${deleteFor.name} deleted`);
+      setDeleteFor(null); setDeleteName(''); load();
+    } catch (err) { toast.error(err.message); } finally { setDeleting(false); }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -138,6 +152,7 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
                       <button className="btn btn-secondary btn-sm" title="Access Library" onClick={() => onOpenLibrary(l, false)}><Building2 size={14} /> <span>Access Library</span></button>
                       <button className="btn btn-ghost btn-sm" title="Add client admin" onClick={() => setInviteFor(l)}><UserPlus size={14} /></button>
                       <button className="btn btn-ghost btn-sm" title={l.status === 'Active' ? 'Disable' : 'Enable'} onClick={() => toggleStatus(l)}><Power size={14} /></button>
+                      <button className="btn btn-ghost btn-sm" title="Delete library" aria-label={`Delete ${l.name}`} style={{ color: '#dc2626' }} onClick={() => { setDeleteFor(l); setDeleteName(''); }}><Trash2 size={14} /></button>
                     </td>
                   </tr>
                 ))}
@@ -147,6 +162,22 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
         </div>
         )}
 
+        {deleteFor && (
+          <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Delete library" onClick={() => !deleting && setDeleteFor(null)}>
+            <form className="modal-content" style={{ maxWidth: 440, padding: 20 }} onClick={e => e.stopPropagation()} onSubmit={confirmDelete}>
+              <h3 style={{ margin: '0 0 8px', color: '#b91c1c' }}>Delete {deleteFor.name}?</h3>
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '0 0 12px' }}>
+                This permanently deletes this library (ID <strong>{deleteFor.libraryId}</strong>): its students, payments, settings, staff accounts and other data. It cannot be undone. Other libraries are not touched. To only block access, use Disable instead.
+              </p>
+              <label className="form-label" htmlFor="delete-lib-name">Type <strong>{deleteFor.name}</strong> to confirm</label>
+              <input id="delete-lib-name" className="form-input" autoComplete="off" value={deleteName} onChange={e => setDeleteName(e.target.value)} />
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16, flexWrap: 'wrap' }}>
+                <button type="button" className="btn btn-secondary" disabled={deleting} onClick={() => setDeleteFor(null)}>Cancel</button>
+                <button type="submit" className="btn btn-danger" style={{ background: '#dc2626', color: '#fff' }} disabled={deleting || deleteName.trim() !== deleteFor.name.trim()}>{deleting ? 'Deleting…' : 'Delete permanently'}</button>
+              </div>
+            </form>
+          </div>
+        )}
         {inviteFor && (
           <form className="premium-card" style={{ padding: 16, display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }} onSubmit={addAdmin}>
             <div className="form-group" style={{ flex: 1, minWidth: 240, marginBottom: 0 }}>

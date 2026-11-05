@@ -151,6 +151,7 @@ export const api = {
   partnerCommissions: () => apiRequest('/partner/commissions'),
   changePassword: (currentPassword, newPassword) => apiRequest('/auth/change-password', { method: 'POST', body: { currentPassword, newPassword } }),
   adminUpdateLibrary: (libraryId, body) => apiRequest(`/admin/libraries/${encodeURIComponent(libraryId)}`, { method: 'PATCH', body }),
+  adminDeleteLibrary: (libraryId, confirmName) => apiRequest(`/admin/libraries/${encodeURIComponent(libraryId)}`, { method: 'DELETE', body: { confirmName } }),
   adminAddLibraryUser: (libraryId, body) => apiRequest(`/admin/libraries/${encodeURIComponent(libraryId)}/users`, { method: 'POST', body }),
   adminUpdateUser: (id, body) => apiRequest(`/admin/users/${encodeURIComponent(id)}`, { method: 'PATCH', body }),
   saveDocument: (key, data) => apiRequest(`/documents/${encodeURIComponent(key)}`, { method: 'PUT', body: { data } }),

@@ -230,6 +230,7 @@ export async function computePnl(tenantId, { from, to, branchId } = {}) {
   let feeCollections = 0, refunds = 0; const byMethod = {};
   const add = (o, k, v) => { o[k] = (o[k] || 0) + v; };
   for (const p of payments) {
+    if (p.voided === true || p.status === 'Voided') continue; // Issue #11: voided receipts stay visible but out of totals
     const n = Number(p.netTotal ?? p.amount ?? 0);
     if (n < 0 || p.method === 'Refund') { refunds += Math.abs(n); continue; }
     feeCollections += n;

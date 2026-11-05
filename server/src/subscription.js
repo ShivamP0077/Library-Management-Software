@@ -83,6 +83,28 @@ export function createSubscriptionRouter() {
     res.json(await view(req.tenantId));
   }));
 
+  // Issue #15/#19 payment hook — creates a provider checkout when configured.
+  r.post('/subscription/checkout', wrap(async (req, res) => {
+    const lib = await Library.findOne({ libraryId: req.tenantId });
+    if (!lib) return res.status(404).json({ error: 'Library not found' });
+    const sub = lib.subscription;
+    if (!sub || sub.status !== 'pending_payment') {
+      return res.status(400).json({ error: 'No payment is due right now.', code: 'no_payment_due' });
+    }
+    const provider = paymentProvider();
+    if (!provider) return res.status(402).json(NOT_SET_UP);
+    if (typeof provider.createCheckout !== 'function') {
+      return res.status(501).json({ error: 'Checkout is not implemented for this provider yet', code: 'checkout_not_implemented' });
+    }
+    const plan = lib.planId ? await SoftwarePlan.findOne({ planId: lib.planId }).lean() : null;
+    const amount = Number(sub.price) || planPrice(plan, sub.interval) || 0;
+    const result = await provider.createCheckout({
+      library: lib, plan, interval: sub.interval, amount,
+      returnUrl: req.body?.returnUrl || undefined,
+    });
+    return res.json({ ok: true, ...result });
+  }));
+
   r.post('/subscription/cancel', wrap(async (req, res) => {
     const lib = await Library.findOne({ libraryId: req.tenantId }).lean();
     if (!lib.subscription) return res.status(400).json({ error: 'No subscription to cancel' });

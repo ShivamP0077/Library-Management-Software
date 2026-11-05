@@ -38,6 +38,7 @@ export function prepareLocalCacheFor(libraryId, { readOnly = false } = {}) {
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(null); // { user, library }
   const [oauthError, setOauthError] = useState('');
+  const [googleSignupPending, setGoogleSignupPending] = useState(''); // Issue #15
   const [status, setStatus] = useState(() => {
     const hasHashToken = typeof window !== 'undefined' && window.location.hash.includes('google_token=');
     return getToken() || hasHashToken ? 'loading' : 'anonymous';
@@ -57,14 +58,17 @@ export function AuthProvider({ children }) {
     // The OAuth callback returns the token (or an error code) in the URL fragment.
     // Consume it before the normal session check, then remove it from the address bar.
     const hash = window.location.hash || '';
-    if (hash.includes('google_token=') || hash.includes('google_error=')) {
+    if (hash.includes('google_token=') || hash.includes('google_error=') || hash.includes('google_signup=')) {
       const params = new URLSearchParams(hash.replace(/^#/, ''));
       const token = params.get('google_token');
       const code = params.get('google_error');
+      const signupTok = params.get('google_signup');
       if (token) setToken(token);
       if (code) setOauthError(code);
-      if (token || code) window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      if (signupTok) setGoogleSignupPending(signupTok);
+      if (token || code || signupTok) window.history.replaceState(null, '', window.location.pathname + window.location.search);
     }
+
 
     if (!getToken()) return;
     api.me()
@@ -77,7 +81,7 @@ export function AuthProvider({ children }) {
   const loginWithGoogle = async (credential) => completeLogin(await api.loginWithGoogle(credential));
 
   return (
-    <AuthContext.Provider value={{ ...session, status, oauthError, completeLogin, loginWithPassword, loginWithGoogle, logout }}>
+    <AuthContext.Provider value={{ ...session, status, oauthError, googleSignupPending, clearGoogleSignupPending: () => setGoogleSignupPending(''), completeLogin, loginWithPassword, loginWithGoogle, logout }}>
       {children}
     </AuthContext.Provider>
   );

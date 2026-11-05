@@ -2,6 +2,8 @@
 
 ## 2026-11-05 (IST)
 
+- **#15 Google signup + payment step hooks** — 17:55 IST. Owner signup (still gated by `OWNER_SIGNUP_ENABLED`) can continue with Google (`?signup=1` OAuth → pending token → `/auth/signup/complete-google`). Config exposes `googleSignup` and `paymentsConfigured`. Signup responses include `needsPayment` + `paymentHook` pointing at `POST /api/subscription/checkout` (402 until a provider is registered in #19). UI shows a payment step after creating a paid library.
+
 - **#14 Subscription enforcement** — 17:40 IST. Libraries with a subscription that is awaiting payment, expired (including ended trials), cancelled or past-due can still read data and manage their plan, but writes are blocked (402). Plan feature lists gate WhatsApp when the plan does not include it (empty list = all features). Staff limits apply on invites, invite accept, and POST /users. `/auth/me` returns `subscriptionAccess` and the app shows a lock banner.
 
 - **#11 Voided payments kept in history** — 17:25 IST. Voiding a renewal (or admission) no longer deletes the payment. The row stays visible as **Voided**, is struck through in the ledger and student profile, and is excluded from income totals and P&L. Admission void still frees the seat.

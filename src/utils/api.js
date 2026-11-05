@@ -86,6 +86,8 @@ export const api = {
   signupConfig: () => apiRequest('/auth/signup/config'),
   signupStart: (email) => apiRequest('/auth/signup/start', { method: 'POST', body: { email } }),
   signupComplete: async (body) => { const r = await apiRequest('/auth/signup/complete', { method: 'POST', body }); setToken(r.token); return r; },
+  signupCompleteGoogle: async (body) => { const r = await apiRequest('/auth/signup/complete-google', { method: 'POST', body }); setToken(r.token); return r; },
+  subscriptionCheckout: (returnUrl) => apiRequest('/subscription/checkout', { method: 'POST', body: { returnUrl } }),
   acceptInvite: async (body) => { const r = await apiRequest('/auth/invite/accept', { method: 'POST', body }); setToken(r.token); return r; },
   invites: () => apiRequest('/invites'),
   createInvite: (body) => apiRequest('/invites', { method: 'POST', body }),

@@ -20,7 +20,8 @@ const complete = (body) => call('POST', '/api/auth/signup/complete', { body: { n
 
 test('signup is off unless OWNER_SIGNUP_ENABLED=true', async () => {
   delete process.env.OWNER_SIGNUP_ENABLED;
-  assert.deepEqual((await call('GET', '/api/auth/signup/config')).body, { enabled: false, plans: [] });
+  const off = (await call('GET', '/api/auth/signup/config')).body;
+  assert.equal(off.enabled, false); assert.deepEqual(off.plans, []); assert.equal(off.googleSignup, false);
   assert.equal((await call('POST', '/api/auth/signup/start', { body: { email: 'x@test.local' } })).status, 403);
   assert.equal((await complete({ email: 'x@test.local', code: '000000' })).status, 403);
 });
@@ -76,4 +77,49 @@ test('initialSubscription: trial, free and paid-without-provider', () => {
   assert.equal(free.status, 'active'); assert.equal(free.currentPeriodEnd.toISOString(), '2026-12-05T00:00:00.000Z');
   assert.equal(initialSubscription({ planId: 'x', priceMonthly: 500, priceYearly: 5000 }, 'year', now).status, 'pending_payment');
   assert.equal(initialSubscription(null), null);
+});
+
+test('config exposes googleSignup and paymentsConfigured flags', async () => {
+  process.env.OWNER_SIGNUP_ENABLED = 'true';
+  const c = (await call('GET', '/api/auth/signup/config')).body;
+  assert.equal(c.enabled, true);
+  assert.equal(typeof c.googleSignup, 'boolean');
+  assert.equal(c.paymentsConfigured, false);
+});
+
+test('paid plan without trial returns needsPayment + paymentHook', async () => {
+  process.env.OWNER_SIGNUP_ENABLED = 'true';
+  // Create a paid public plan with no trial
+  assert.equal((await call('POST', '/api/admin/plans', { token: ctx.tokens.sa, body: { name: 'PayNow', priceMonthly: 500, trialDays: 0, public: true } })).status, 201);
+  const email = 'paynow.owner@test.local';
+  await call('POST', '/api/auth/signup/start', { body: { email } });
+  const code = codeFor(email);
+  const r = await complete({ email, code, planId: 'paynow', libraryName: 'Pay Lib' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.needsPayment, true);
+  assert.equal(r.body.paymentHook?.path, '/api/subscription/checkout');
+  assert.equal(r.body.paymentsConfigured, false);
+  // Checkout without provider → 402
+  const chk = await call('POST', '/api/subscription/checkout', { token: r.body.token });
+  assert.equal(chk.status, 402);
+  assert.equal(chk.body.code, 'payments_not_configured');
+});
+
+test('google signup pending -> complete-google creates library', async () => {
+  process.env.OWNER_SIGNUP_ENABLED = 'true';
+  const { createGoogleSignupPending } = await import('../src/signup.js');
+  const pending = await createGoogleSignupPending({ email: 'g.owner@test.local', sub: 'google-sub-15', name: 'G Owner' });
+  const r = await call('POST', '/api/auth/signup/complete-google', {
+    body: { pendingToken: pending, libraryName: 'Google Lib', planId: 'free', name: 'G Owner' },
+  });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.ok(r.body.token);
+  assert.equal(r.body.needsPayment, false);
+  const me = (await call('GET', '/api/auth/me', { token: r.body.token })).body;
+  assert.equal(me.user.email, 'g.owner@test.local');
+  assert.ok((me.user.authProviders || []).includes('google'));
+  // pending token single-use
+  assert.equal((await call('POST', '/api/auth/signup/complete-google', {
+    body: { pendingToken: pending, libraryName: 'X', planId: 'free' },
+  })).status, 400);
 });

@@ -6,6 +6,9 @@
 const RAW_BASE = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
 export const API_BASE = RAW_BASE ? (RAW_BASE.endsWith('/api') ? RAW_BASE : `${RAW_BASE}/api`) : '/api';
 
+import { parseJsonSafe } from './parseJsonSafe';
+export { parseJsonSafe };
+
 const TOKEN_KEY = 'library_api_token';
 export const getToken = () => localStorage.getItem(TOKEN_KEY);
 export const setToken = (t) => (t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY));
@@ -26,7 +29,7 @@ export async function apiRequest(path, { method = 'GET', body, signal } = {}) {
   if (tenantContext.readOnly) headers['X-Read-Only'] = '1';
   const res = await fetch(`${API_BASE}${path}`, { method, headers, signal, body: body !== undefined ? JSON.stringify(body) : undefined });
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  const data = parseJsonSafe(text, res.status);
   if (res.status === 401 && token && unauthorizedHandler) unauthorizedHandler();
   if (!res.ok) throw Object.assign(new Error(data?.error || `Request failed (${res.status})`), { status: res.status, code: data?.code, details: data?.details });
   return data;

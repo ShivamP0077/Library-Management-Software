@@ -1,10 +1,14 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   MessageCircle, QrCode, LogOut, RefreshCw, CheckCircle2, Smartphone
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api, getToken } from '../utils/api';
 import { refreshWhatsappStatus } from '../utils/whatsappStatus';
+import { friendlyWhatsappError, isWakingError } from '../utils/whatsappErrors';
+
+const AUTO_RETRY_MAX = 3;
+const AUTO_RETRY_MS = 15000;
 
 const DEFAULT_TOGGLES = {
   enabled: true,
@@ -103,6 +107,9 @@ const WhatsAppSettingsInner = () => {
   const [busy, setBusy] = useState(null); // 'connect' | 'refresh' | 'logout'
   const [savingSettings, setSavingSettings] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const [waking, setWaking] = useState(false);
+  const autoRetries = useRef(0);
+  const retryTimer = useRef(null);
 
   // Initial status load (also used by the Retry button).
   useEffect(() => {
@@ -125,12 +132,21 @@ const WhatsAppSettingsInner = () => {
           setQrExpired(false);
         }
       } catch (err) {
-        if (active) setError(err);
+        if (!active) return;
+        // Issue #18: while the WhatsApp service is waking up (429/503), retry by itself a few times.
+        if (isWakingError(err) && autoRetries.current < AUTO_RETRY_MAX) {
+          autoRetries.current += 1;
+          setWaking(true);
+          retryTimer.current = setTimeout(() => setReloadKey(k => k + 1), AUTO_RETRY_MS);
+          return;
+        }
+        setWaking(false);
+        setError(err);
       } finally {
         if (active) setLoading(false);
       }
     })();
-    return () => { active = false; };
+    return () => { active = false; clearTimeout(retryTimer.current); };
   }, [reloadKey]);
 
   // Poll the connection state while the user is scanning a QR code.
@@ -189,7 +205,7 @@ const WhatsAppSettingsInner = () => {
       else setQrDeadline(prev => prev || Date.now() + QR_TTL_MS);
       if (extend) setQrExpired(false);
     } catch (err) {
-      toast.error(err?.message || 'Could not connect to WhatsApp.');
+      toast.error(friendlyWhatsappError(err, 'Could not connect to WhatsApp.'));
     } finally {
       setBusy(null);
     }
@@ -242,7 +258,12 @@ const WhatsAppSettingsInner = () => {
   const meta = status || {};
 
   const renderBody = () => {
-    if (loading) {
+    if (loading || waking) {
+      if (waking && !loading) return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '20px 0', color: 'var(--text-secondary)', fontSize: '14px' }}>
+          <Smartphone size={18} /> WhatsApp service is waking up. Trying again…
+        </div>
+      );
       return (
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '20px 0', color: 'var(--text-secondary)', fontSize: '14px' }}>
           <Smartphone size={18} /> Loading WhatsApp status…
@@ -254,7 +275,7 @@ const WhatsAppSettingsInner = () => {
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '8px 0' }}>
           <p style={{ fontSize: '14px', color: '#b91c1c', margin: 0 }}>
-            {error.message || 'Could not load WhatsApp status.'}
+            {friendlyWhatsappError(error, 'Could not load WhatsApp status.')}
           </p>
           {error.status === 503 && (
             <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0 }}>
@@ -262,7 +283,7 @@ const WhatsAppSettingsInner = () => {
             </p>
           )}
           <div>
-            <button type="button" className="btn btn-primary" onClick={() => setReloadKey(k => k + 1)}>
+            <button type="button" className="btn btn-primary" onClick={() => { autoRetries.current = 0; setReloadKey(k => k + 1); }}>
               <RefreshCw size={15} /> Retry
             </button>
           </div>

@@ -19,6 +19,7 @@ import { EditStudentModal } from './Modals/EditStudentModal';
 import { handleSplitAmountChange, handleAddSplitComponent, handleRemoveSplitComponent, validateSplitPayment } from '../utils/splitPaymentUtils';
 import { calculateSubscriptionExpiry, calculateRenewalStartDate, getSubscriptionStatus, formatDate } from '../utils/dateUtils';
 import { getDocumentBlob, saveDocumentBlob } from '../utils/idbStorage';
+import { useBackClose } from '../utils/useBackClose';
 import { getCanonicalShifts, matchesShiftFilter, isShiftInPlan, resolveCanonicalShift, normalizeShiftName } from '../utils/shiftUtils';
 import { getPlanBasePrice, getPlanDefaultDuration } from '../utils/pricingCalculator';
 import { areSeatTypesEquivalent } from '../utils/seatTypeUtils';
@@ -336,6 +337,14 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   const [extendDate, setExtendDate] = useState('');
   const [extendReason, setExtendReason] = useState('Payment extension granted');
   const [isEditStudentModalOpen, setIsEditStudentModalOpen] = useState(false);
+  // Issue #1: Back closes the top modal first.
+  useBackClose(isRenewModalOpen, () => setIsRenewModalOpen(false));
+  useBackClose(isSeatModalOpen, () => setIsSeatModalOpen(false));
+  useBackClose(isExtendModalOpen, () => setIsExtendModalOpen(false));
+  useBackClose(isEditStudentModalOpen, () => setIsEditStudentModalOpen(false));
+  useBackClose(isBulkRenewModalOpen, () => setIsBulkRenewModalOpen(false));
+  useBackClose(!!waTargets, () => setWaTargets(null));
+  useBackClose(!!previewDoc, () => setPreviewDoc(null));
 
   // Sync initial relocate values
   useEffect(() => {

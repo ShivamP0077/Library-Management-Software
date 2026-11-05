@@ -2,6 +2,13 @@
 
 ## 2026-11-05 (IST)
 
+- **Issue #1: browser Back / Forward inside the library** (branch `fix/01-back-forward`, merged into `release/21-issues` only).
+  - Each screen change adds a history entry like `#/students`, so Back and Forward move between library screens.
+  - Back closes an open window first: student profile, new admission, receipt, change password, and the renew, relocate, extend, edit, bulk renew, WhatsApp send and document preview windows.
+  - Back on the first screen no longer leaves the library or lands on the login page. It stays and shows "Use Sign out to leave".
+  - A reload keeps the current screen.
+  - Menu, tabs, login and logout are unchanged. No new library was added.
+
 - **Issue #12: receipt print layout** (branch `fix/12-receipt-print`, merged into `release/21-issues` only).
   - Printing now gives one A4 page split into two A5 halves, a "Student copy" and a "Library copy", with a dashed cut line.
   - Each copy is shrunk to fit its half (never enlarged), so nothing is cut off and it no longer sits in the top-left corner.

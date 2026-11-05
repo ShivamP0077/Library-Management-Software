@@ -3,6 +3,7 @@ import toast from 'react-hot-toast';
 import { Bell, AlertTriangle, CheckCircle2, RefreshCw, Paperclip, Plus, X } from 'lucide-react';
 import { api } from '../utils/api';
 import { openNotificationLink } from '../utils/notificationLinks';
+import { DocPreview } from './DocPreview';
 
 const SEV = { critical: { bg: '#fee2e2', fg: '#991b1b' }, important: { bg: '#fef9c3', fg: '#854d0e' }, info: { bg: '#eff6ff', fg: '#1e40af' } };
 const FILTERS = [
@@ -19,6 +20,13 @@ const NoticeForm = ({ onDone }) => {
   const [summary, setSummary] = useState('');
   const [file, setFile] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState(null);
+  useEffect(() => {
+    if (!file) { setPreviewUrl(null); return undefined; }
+    const u = URL.createObjectURL(file); setPreviewUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [file]);
   const submit = async (e) => {
     e.preventDefault();
     if (file && !['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].includes(file.type)) return toast.error('Only JPG, PNG, WEBP or PDF files are allowed');
@@ -37,7 +45,19 @@ const NoticeForm = ({ onDone }) => {
       <strong>New notice / letter</strong>
       <input className="form-input" placeholder="Title (e.g. Electricity board letter)" value={title} onChange={e => setTitle(e.target.value)} required minLength={3} maxLength={140} />
       <textarea className="form-input" placeholder="Short summary (optional)" rows={3} value={summary} onChange={e => setSummary(e.target.value)} maxLength={2000} />
-      <input type="file" accept=".jpg,.jpeg,.png,.webp,.pdf" onChange={e => setFile(e.target.files?.[0] || null)} style={{ maxWidth: '100%' }} />
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <label className="btn btn-secondary btn-sm" style={{ margin: 0, cursor: 'pointer' }}>{file ? 'Change file' : 'Attach file'}
+          <input type="file" accept=".jpg,.jpeg,.png,.webp,.pdf" onChange={e => { setFile(e.target.files?.[0] || null); e.target.value = ''; }} style={{ display: 'none' }} />
+        </label>
+        <label className="btn btn-secondary btn-sm" style={{ margin: 0, cursor: 'pointer' }} aria-label="Take photo of notice">Camera
+          <input type="file" accept="image/*" capture="environment" onChange={e => { setFile(e.target.files?.[0] || null); e.target.value = ''; }} style={{ display: 'none' }} />
+        </label>
+        {file && <>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPreview(true)} style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setFile(null)} style={{ color: 'var(--status-error, #dc2626)' }}>Remove</button>
+        </>}
+      </div>
+      {preview && file && <DocPreview src={previewUrl} name={file.name} fileType={file.type} onClose={() => setPreview(false)} onRemove={() => { setFile(null); setPreview(false); }} />}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <button className="btn btn-primary btn-sm" disabled={busy}>{busy ? 'Saving…' : 'Save notice'}</button>
         <button type="button" className="btn btn-secondary btn-sm" onClick={onDone}>Cancel</button>

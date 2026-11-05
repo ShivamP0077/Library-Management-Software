@@ -43,24 +43,39 @@ export const Thread = ({ ticket, fetchAttachment }) => (
   </div>
 );
 
-export const ReplyBox = ({ onSend, disabled, placeholder = 'Write a reply…', extra }) => {
+export const ReplyBox = ({ onSend, disabled, placeholder = 'Write a reply…', extra, successText = 'Reply sent' }) => {
   const [text, setText] = useState('');
   const [files, setFiles] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
   const [key, setKey] = useState(0);
   const send = async (e) => {
-    e.preventDefault();
-    setBusy(true);
-    try { const attachments = await readFiles(files); await onSend({ message: text, attachments }); setText(''); setFiles(null); setKey(k => k + 1); }
-    catch (err) { toast.error(err.message || 'Could not send'); } finally { setBusy(false); }
+    e?.preventDefault?.();
+    if (busy) return;
+    setBusy(true); setError('');
+    try {
+      const attachments = await readFiles(files);
+      await onSend({ message: text, attachments });
+      // Only after the server has saved it: clear the box and confirm.
+      setText(''); setFiles(null); setKey(k => k + 1);
+      toast.success(successText);
+    } catch (err) {
+      // Keep the typed text so the user can retry.
+      setError(err.message || 'Could not send');
+      toast.error(err.message || 'Could not send');
+    } finally { setBusy(false); }
   };
   return (
     <form onSubmit={send} className="glass-panel" style={{ padding: 12, display: 'grid', gap: 8 }}>
       <textarea className="input-field" rows={3} value={text} onChange={e => setText(e.target.value)} placeholder={placeholder} disabled={disabled} />
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
         <input key={key} type="file" multiple accept=".jpg,.jpeg,.png,.webp,.pdf" onChange={e => setFiles(e.target.files)} disabled={disabled} style={{ maxWidth: '100%', fontSize: 13 }} />
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{extra}<button className="btn btn-primary btn-sm" disabled={busy || disabled || (!text.trim() && !files?.length)}><Send size={14} /> Send</button></div>
+        <div className="reply-actions" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', minWidth: 0, maxWidth: '100%' }}>{extra}<button className="btn btn-primary btn-sm" disabled={busy || disabled || (!text.trim() && !files?.length)} aria-busy={busy}><Send size={14} /> {busy ? 'Sending…' : 'Send'}</button></div>
       </div>
+      {error && <div role="alert" style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', fontSize: 13, color: 'var(--danger, #dc2626)' }}>
+        <span>Not sent: {error}</span>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={() => send()} disabled={busy}>Retry</button>
+      </div>}
     </form>
   );
 };

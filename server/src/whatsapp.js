@@ -20,7 +20,9 @@ export const WhatsappConfig = mongoose.models.WhatsappConfig || mongoose.model('
   expiryReminders: { type: Boolean, default: DEFAULT_TOGGLES.expiryReminders },
   connectedNumber: String,
   // Reminder timing (spec §6): set via PUT /reminders/settings
-  reminderSettings: { expiryDaysBefore: Number, expiryFixedDay: Number, feeEveryDays: Number, feeMaxReminders: Number },
+  reminderSettings: { expiryDaysBefore: Number, expiryFixedDay: Number, feeEveryDays: Number, feeMaxReminders: Number, rules: { type: mongoose.Schema.Types.Mixed, default: undefined } },
+  // Issue #17: owner-edited message templates { type: text }
+  templates: { type: mongoose.Schema.Types.Mixed, default: undefined },
   updatedBy: String,
 }, { timestamps: true }));
 
@@ -206,7 +208,7 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 const mapState = (s) => (s === 'open' ? 'connected' : s === 'connecting' ? 'connecting' : 'disconnected');
 const jidToNumber = (jid) => (jid ? `+${String(jid).split('@')[0].split(':')[0]}` : null);
 
-export function createWhatsappRouter({ client = createEvolutionClient(), isConfigured = () => evolutionConfigured() } = {}) {
+export function createWhatsappRouter({ client = createEvolutionClient(), isConfigured = () => evolutionConfigured(), wakeDelaysMs = [3000, 6000, 10000] } = {}) {
   const r = express.Router();
   const guard = wrap(async (req, res, next) => {
     if (!(await canManageWhatsapp(req.user, req.libraryId))) return res.status(403).json({ error: 'You do not have permission to manage WhatsApp' });
@@ -216,8 +218,22 @@ export function createWhatsappRouter({ client = createEvolutionClient(), isConfi
   });
   r.use(guard);
 
+  /** Status/connect wake the (free-plan) Evolution service and retry while it answers 429/5xx. */
+  async function withWake(name, fn) {
+    let lastErr;
+    for (let i = 0; i <= wakeDelaysMs.length; i++) {
+      try { return await fn(); } catch (e) {
+        lastErr = e;
+        if (!isTransientError(e) || i === wakeDelaysMs.length) break;
+        if (i === 0 && client.wake) { try { await client.wake(name); } catch { /* still waking */ } }
+        await sleep(wakeDelaysMs[i]);
+      }
+    }
+    throw lastErr;
+  }
+
   async function status(name) {
-    const inst = await client.findInstance(name);
+    const inst = await withWake(name, () => client.findInstance(name));
     if (!inst) return { state: 'not_created', number: null, profileName: null };
     let raw = inst.connectionStatus;
     try { raw = (await client.connectionState(name))?.instance?.state || raw; } catch { /* use cached */ }
@@ -235,11 +251,11 @@ export function createWhatsappRouter({ client = createEvolutionClient(), isConfi
   // Creates the library's instance if needed and returns a fresh QR code.
   r.post('/connect', wrap(async (req, res) => {
     let created = null;
-    if (!(await client.findInstance(req.instance))) created = await client.createInstance(req.instance);
+    if (!(await withWake(req.instance, () => client.findInstance(req.instance)))) created = await client.createInstance(req.instance);
     await registerWebhook(client, req.instance, webhookBaseUrl(req));
     const s = await status(req.instance);
     if (s.state === 'connected') return res.json(s);
-    const c = await client.connect(req.instance);
+    const c = await withWake(req.instance, () => client.connect(req.instance));
     const qr = c?.base64 || created?.qrcode?.base64 || null;
     res.json({ state: 'connecting', qr, pairingCode: c?.pairingCode || null });
   }));

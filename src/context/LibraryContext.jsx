@@ -4,6 +4,12 @@ import { api, createSyncQueue, SYNCED_COLLECTIONS } from '../utils/api';
 import { getDefaultPermissionsForRole, syncLegacyPermissions } from '../utils/staffPermissions';
 import { isShiftInPlan, resolveCanonicalShift, getCanonicalShifts, normalizeShiftName, shiftsOverlap } from '../utils/shiftUtils';
 import { areSeatTypesEquivalent } from '../utils/seatTypeUtils';
+import { buildAdmissionVoid } from '../utils/admissionVoid.js';
+import { buildRenewalVoid, markPaymentVoided } from '../utils/paymentVoid.js';
+import { scopedStorage, canSeedServer } from '../utils/tenantCache';
+// Issue #2: all cache reads/writes in this file go to the current library's own namespace.
+const localStorage = scopedStorage;
+
 
 const LibraryContext = createContext();
 
@@ -788,6 +794,17 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
           // Server wins: load its data into state (and the localStorage cache via the effects above)
           applyRemoteState(remote);
           if (!readOnly) sync.enable();
+        } else if (!readOnly && !canSeedServer()) {
+          // Issue #2: this browser's cache was not written by this library, so never upload it.
+          // An empty library starts clean, with its own setup wizard.
+          applyRemoteState({
+            settings: { ...INITIAL_SETTINGS, libraryId: remote.libraryId || INITIAL_SETTINGS.libraryId },
+            branches: INITIAL_BRANCHES, sections: INITIAL_SECTIONS, seatTypes: INITIAL_SEAT_TYPES, seats: INITIAL_SEATS,
+            shifts: INITIAL_SHIFTS, plans: INITIAL_PLANS, staffMembers: INITIAL_STAFF, students: INITIAL_STUDENTS,
+            archivedStudents: INITIAL_ARCHIVED_STUDENTS, expenses: INITIAL_EXPENSES, payments: INITIAL_PAYMENTS, waitingList: INITIAL_WAITING_LIST,
+          });
+          setStaffMembers(INITIAL_STAFF);
+          sync.enable();
         } else if (!readOnly) {
           sync.enable();
           const local = latestStateRef.current;
@@ -1561,6 +1578,12 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       netTotal,
       method: studentData.paymentMethod || "UPI",
       breakdown: studentData.breakdown,
+      planId: studentData.planId || plan?.id || null,
+      durationMonths: studentData.durationMonths || 1,
+      priceKind: 'admission',
+      suggestedAmount: studentData.suggestedAmount != null ? Number(studentData.suggestedAmount) : Number(amountPaid),
+      ...(studentData.amountEdited ? { amountEdited: true } : {}),
+      ...(studentData.proRated ? { proRated: studentData.proRated } : {}),
       date: todayStr,
       staffName: currentStaff?.name || "Admin"
     };
@@ -1793,6 +1816,12 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       netTotal,
       method: renewalData.paymentMethod || "UPI",
       breakdown: renewalData.breakdown,
+      planId: renewalData.planId || student.planId || null,
+      durationMonths: Number(renewalData.durationMonths || 1),
+      priceKind: 'renewal',
+      suggestedAmount: renewalData.suggestedAmount != null ? Number(renewalData.suggestedAmount) : Number(amountPaid),
+      ...(renewalData.amountEdited ? { amountEdited: true } : {}),
+      ...(renewalData.bridge ? { bridge: renewalData.bridge } : {}),
       date: todayStr,
       staffName: currentStaff?.name || "Admin"
     };
@@ -1855,7 +1884,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
   };
 
   // Change Student Seat (Full Scope & Shift-Overlap Relocation)
-  const changeSeat = (studentId, newSectionId, newSeatTypeId, newSeatNo, reason, newShiftId, newBranchId) => {
+  const changeSeat = (studentId, newSectionId, newSeatTypeId, newSeatNo, reason, newShiftId, newBranchId, priceChange = null) => {
     if (!hasPermission('students', 'edit')) {
       toast.error('Permission Denied: You do not have permission to change seats.');
       return false;
@@ -1922,13 +1951,51 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       newShift: reqShiftObj ? reqShiftObj.name : student.shift,
       reason: reason || "Relocation",
       date: todayStr,
-      staffName: currentStaff?.name || "Admin"
+      staffName: currentStaff?.name || "Admin",
+      // Issue #9: pro-rated fee difference for the rest of the paid period (+ charge, - credit).
+      ...(priceChange ? { priceChange } : {})
     };
+
+    // Issue #9: an upgrade charge is a separate receipt; a downgrade becomes credit on the student.
+    let upgradePayment = null;
+    const changeAmt = priceChange ? Number(priceChange.amount) || 0 : 0;
+    if (changeAmt > 0 && priceChange.collect) {
+      upgradePayment = {
+        receiptNo: generateReceiptNo(),
+        studentId: student.id,
+        studentName: student.name,
+        branchId,
+        branchName: newBranchObj?.name || settings.name || "Main Branch",
+        branchCode: newBranchObj?.code || "BR",
+        seatNo: newSeatNo,
+        seatName: newSeatNo,
+        planName: `Seat upgrade (${priceChange.days}/${priceChange.totalDays} days)`,
+        type: 'upgrade',
+        amount: changeAmt,
+        discount: 0,
+        fine: 0,
+        netTotal: changeAmt,
+        method: priceChange.method || "Cash",
+        priceKind: 'relocate',
+        oldFee: priceChange.oldFee ?? null,
+        newFee: priceChange.newFee ?? null,
+        moveDate: priceChange.moveDate ?? null,
+        paidUntil: priceChange.paidUntil ?? null,
+        totalDays: priceChange.totalDays ?? null,
+        suggestedAmount: priceChange.suggestedAmount != null ? Number(priceChange.suggestedAmount) : Number(priceChange.amount),
+        ...(priceChange.amountEdited ? { amountEdited: true } : {}),
+        date: todayStr,
+        staffName: currentStaff?.name || "Admin"
+      };
+      newSeatLog.receiptNo = upgradePayment.receiptNo;
+    }
 
     setStudents(prev => prev.map(s => {
       if (s.id === studentId) {
         return {
           ...s,
+          ...(changeAmt < 0 ? { creditBalance: (Number(s.creditBalance) || 0) + Math.abs(changeAmt) } : {}),
+          ...(upgradePayment ? { paymentHistory: [upgradePayment, ...(s.paymentHistory || [])] } : {}),
           branchId,
           sectionId,
           blockId: sectionId,
@@ -1941,6 +2008,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       }
       return s;
     }));
+    if (upgradePayment) setPayments(prev => [upgradePayment, ...prev]);
     return true;
   };
 
@@ -2122,45 +2190,45 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
     const renewalIndex = student.renewalHistory?.findIndex(r => r.renewalId === renewalId);
     if (renewalIndex === -1 || renewalIndex === undefined) return false;
 
-    const renewalToCancel = student.renewalHistory[renewalIndex];
-    const newRenewalHistory = student.renewalHistory.filter(r => r.renewalId !== renewalId);
-    const newPaymentHistory = student.paymentHistory.filter(p => p.receiptNo !== renewalToCancel.receiptNo);
+    const staffName = currentStaff?.name || 'Admin';
+    // Issue #11: voiding the initial admission ends the plan and frees the seat (record kept, audited).
+    const admissionVoid = buildAdmissionVoid(student, renewalId, { today: todayStr, staffName });
+    if (admissionVoid) {
+      setStudents(prev => prev.map(s => s.id === studentId ? { ...s, ...admissionVoid.updates } : s));
+      // Keep the payment row, marked Voided (no longer deleted).
+      setPayments(prev => prev.map(p => p.receiptNo === admissionVoid.receiptNo ? markPaymentVoided(p, { today: todayStr, staffName }) : p));
+      return 'admission';
+    }
 
-    let updates = {
-      renewalHistory: newRenewalHistory,
-      paymentHistory: newPaymentHistory
-    };
+    // Issue #11: renewal void keeps the record as Voided (no delete) and rolls dates back when it was the current period.
+    const renewalVoid = buildRenewalVoid(student, renewalId, { today: todayStr, staffName });
+    if (!renewalVoid) return false;
 
+    let updates = renewalVoid.updates;
     if (renewalIndex === 0) {
-      let newStartDate, newExpiryDate, newPlanId, newPlanName, newShift, newSeatNo;
-      if (newRenewalHistory.length > 0) {
-        newStartDate = newRenewalHistory[0].startDate;
-        newExpiryDate = newRenewalHistory[0].endDate;
-        newPlanId = newRenewalHistory[0].planId || student.planId;
-        newPlanName = newRenewalHistory[0].planName;
-        newShift = newRenewalHistory[0].shift || student.shift;
-        newSeatNo = newRenewalHistory[0].seatNo || student.seatNo;
+      const previous = (updates.renewalHistory || []).find(r => !r.voided);
+      if (previous) {
+        updates = {
+          ...updates,
+          startDate: previous.startDate,
+          expiryDate: previous.endDate,
+          planId: previous.planId || student.planId,
+          planName: previous.planName,
+          shift: previous.shift || student.shift,
+          seatNo: previous.seatNo || student.seatNo,
+        };
       } else {
-        newStartDate = student.joinedDate;
-        newExpiryDate = student.expiryDate;
-        newPlanId = student.planId;
-        newPlanName = student.planName;
-        newShift = student.shift;
-        newSeatNo = student.seatNo;
+        updates = {
+          ...updates,
+          startDate: student.joinedDate,
+          expiryDate: student.joinedDate,
+          status: 'Expired',
+        };
       }
-      updates = {
-        ...updates,
-        startDate: newStartDate,
-        expiryDate: newExpiryDate,
-        planId: newPlanId,
-        planName: newPlanName,
-        shift: newShift,
-        seatNo: newSeatNo
-      };
     }
 
     setStudents(prev => prev.map(s => s.id === studentId ? { ...s, ...updates } : s));
-    setPayments(prev => prev.filter(p => p.receiptNo !== renewalToCancel.receiptNo));
+    setPayments(prev => prev.map(p => p.receiptNo === renewalVoid.receiptNo ? markPaymentVoided(p, { today: todayStr, staffName }) : p));
     return true;
   };
 

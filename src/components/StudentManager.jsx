@@ -19,8 +19,14 @@ import { EditStudentModal } from './Modals/EditStudentModal';
 import { handleSplitAmountChange, handleAddSplitComponent, handleRemoveSplitComponent, validateSplitPayment } from '../utils/splitPaymentUtils';
 import { calculateSubscriptionExpiry, calculateRenewalStartDate, getSubscriptionStatus, formatDate } from '../utils/dateUtils';
 import { getDocumentBlob, saveDocumentBlob } from '../utils/idbStorage';
+import { useBackClose } from '../utils/useBackClose';
+import { useStudentPhoto } from '../utils/useStudentPhoto';
 import { getCanonicalShifts, matchesShiftFilter, isShiftInPlan, resolveCanonicalShift, normalizeShiftName } from '../utils/shiftUtils';
 import { getPlanBasePrice, getPlanDefaultDuration } from '../utils/pricingCalculator';
+import { isVoidedPayment } from '../utils/paymentVoid';
+import { clientCanEditAmount } from '../utils/amountPermission';
+import { cycleConfig, cycleFor, addDays, bridgeCharge, upgradeCharge } from '../utils/billingCycle';
+import { isAdmissionVoid } from '../utils/admissionVoid.js';
 import { areSeatTypesEquivalent } from '../utils/seatTypeUtils';
 
 /**
@@ -215,13 +221,17 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     settings, students, branches, sections, activeBranchId, setActiveBranchId, plans, shifts, seatTypes, 
     renewSubscription, changeSeat, addStudentDocument, extendStudentDueDate, archiveStudent, 
     cancelAdmission, cancelRenewalTransaction, getValidDesksList, getAvailableEligibleSeats, 
-    currentStaff, waitingList, removeFromWaitingList, updateWaitingListStatus, hasPermission, updateStudentDetails
+    currentStaff, waitingList, removeFromWaitingList, updateWaitingListStatus, hasPermission, updateStudentDetails,
+    lockedStaffId, getMatchingPlans, todayStr
   } = useLibrary();
+  const canEditAmount = clientCanEditAmount({ lockedStaffId, currentStaff, settings });
+  const cycleCfg = cycleConfig(settings);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [shiftFilter, setShiftFilter] = useState('All');
   const [activeDrawerTab, setActiveDrawerTab] = useState('history');
+  const profilePhoto = useStudentPhoto(selectedStudent);
   const [viewMode, setViewMode] = useState('active'); // active | waiting 
   const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
   const [isExcelViewOpen, setIsExcelViewOpen] = useState(false);
@@ -318,7 +328,14 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   const [renewShiftId, setRenewShiftId] = useState('');
   const [renewPaymentMethod, setRenewPaymentMethod] = useState('');
   const [renewSplitBreakdown, setRenewSplitBreakdown] = useState([{ method: '', amount: '' }]);
-  const [renewAmount, setRenewAmount] = useState(0);
+  const [renewAmount, setRenewAmountRaw] = useState(0);
+  // Issue #9: system-computed price, so a manual change is flagged for the server permission check + audit.
+  const [renewSuggested, setRenewSuggested] = useState(0);
+  const [renewAlign, setRenewAlign] = useState(null);
+  const setRenewAmount = (v) => { setRenewAmountRaw(v); setRenewSuggested(v); setRenewAlign(null); };
+  const [relocCollect, setRelocCollect] = useState(true);
+  const [relocMethod, setRelocMethod] = useState('Cash');
+  const [relocOverride, setRelocOverride] = useState(null);
   const [renewDiscount, setRenewDiscount] = useState(0);
   const [renewFine, setRenewFine] = useState(0);
   
@@ -336,6 +353,14 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   const [extendDate, setExtendDate] = useState('');
   const [extendReason, setExtendReason] = useState('Payment extension granted');
   const [isEditStudentModalOpen, setIsEditStudentModalOpen] = useState(false);
+  // Issue #1: Back closes the top modal first.
+  useBackClose(isRenewModalOpen, () => setIsRenewModalOpen(false));
+  useBackClose(isSeatModalOpen, () => setIsSeatModalOpen(false));
+  useBackClose(isExtendModalOpen, () => setIsExtendModalOpen(false));
+  useBackClose(isEditStudentModalOpen, () => setIsEditStudentModalOpen(false));
+  useBackClose(isBulkRenewModalOpen, () => setIsBulkRenewModalOpen(false));
+  useBackClose(!!waTargets, () => setWaTargets(null));
+  useBackClose(!!previewDoc, () => setPreviewDoc(null));
 
   // Sync initial relocate values
   useEffect(() => {
@@ -593,7 +618,12 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
 
     const plan = plans.find(p => p.id === renewPlanId) || plans[0];
     const startStr = calculateRenewalStartDate(selectedStudent.expiryDate);
-    const expiryStr = calculateSubscriptionExpiry(startStr, renewDuration);
+    let expiryStr = calculateSubscriptionExpiry(startStr, renewDuration);
+    if (renewAlign) {
+      // Issue #9 (owner-chosen): bridge days up to the library cycle end, then whole library cycles.
+      let next = addDays(renewAlign.to, 1);
+      for (let i = 0; i < parsedDur; i++) { const c = cycleFor(next, cycleCfg); expiryStr = c.end; next = addDays(c.end, 1); }
+    }
     
     const result = renewSubscription(selectedStudent.id, {
       planId: plan.id,
@@ -604,6 +634,9 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       startDate: startStr,
       expiryDate: expiryStr,
       amountPaid: renewAmount,
+      suggestedAmount: Number(renewSuggested),
+      ...(Number(renewAmount) !== Number(renewSuggested) ? { amountEdited: true } : {}),
+      ...(renewAlign ? { bridge: renewAlign } : {}),
       discount: renewDiscount,
       fine: renewFine,
       paymentMethod: renewPaymentMethod,
@@ -618,22 +651,47 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     }
   };
 
+  // Issue #9: fee difference for the rest of the paid period when the new seat/shift has a different plan price.
+  const relocPriceChange = (() => {
+    if (!isSeatModalOpen || !selectedStudent || !newBlockId || !newShiftId || !selectedStudent.expiryDate) return null;
+    const oldPlan = plans.find(p => p.id === selectedStudent.planId);
+    const branchId = relocateBranchId || selectedStudent.branchId;
+    const newPlan = (getMatchingPlans?.(settings.libraryId, branchId, newBlockId, newSeatTypeId, newShiftId) || [])[0];
+    if (!oldPlan || !newPlan || oldPlan.id === newPlan.id) return null;
+    const oldFee = getPlanBasePrice(oldPlan, 1), newFee = getPlanBasePrice(newPlan, 1);
+    if (!oldFee || !newFee || oldFee === newFee) return null;
+    const totalDays = cycleFor(todayStr, cycleCfg).totalDays;
+    const r = upgradeCharge(oldFee, newFee, todayStr, selectedStudent.expiryDate, totalDays);
+    return { amount: r.amount, days: r.remainingDays, oldFee, newFee, totalDays, newPlanId: newPlan.id, moveDate: todayStr, paidUntil: selectedStudent.expiryDate, suggestedAmount: r.amount };
+  })();
+
   const handleExecuteSeatChange = (e) => {
     e.preventDefault();
     if (!selectedStudent || !newSeatNo || !newShiftId || !newBlockId || !newSeatTypeId) return;
     const effectiveBranchId = relocateBranchId || selectedStudent.branchId;
-    const success = changeSeat(selectedStudent.id, newBlockId, newSeatTypeId, newSeatNo, seatChangeReason, newShiftId, effectiveBranchId);
+    const pc = relocPriceChange;
+    const priceChange = pc && pc.amount !== 0 ? {
+      ...pc,
+      amount: relocOverride != null ? Number(relocOverride) : pc.amount,
+      suggestedAmount: pc.suggestedAmount ?? pc.amount,
+      ...(relocOverride != null && Number(relocOverride) !== pc.amount ? { amountEdited: true } : {}),
+      collect: relocCollect, method: relocMethod
+    } : null;
+    const success = changeSeat(selectedStudent.id, newBlockId, newSeatTypeId, newSeatNo, seatChangeReason, newShiftId, effectiveBranchId, priceChange);
     if (success !== false) {
       toast.success(`Desk for ${selectedStudent.name} updated to ${newSeatNo}`);
       setIsSeatModalOpen(false);
       setNewSeatNo('');
       setNewShiftId('');
       setSeatChangeReason('');
+      setRelocOverride(null);
     }
   };
 
+  // Issue #4: ticking a box (or Select all) opens the one Bulk Actions bar (Select Students mode).
   const handleToggleSelectAll = (e) => {
     if (e.target.checked) {
+      setIsSelectionMode(true);
       setSelectedIds(filteredStudents.map(s => s.id));
     } else {
       setSelectedIds([]);
@@ -641,6 +699,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   };
 
   const handleToggleSelect = (id) => {
+    setIsSelectionMode(true);
     setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
   };
 
@@ -917,6 +976,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
             <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)' }}>
               Bulk Actions ({selectedIds.length} selected):
             </span>
+            {canManageStudents && (
             <button 
               className="btn btn-primary" 
               disabled={selectedIds.length === 0} 
@@ -924,6 +984,17 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
               style={{ padding: '6px 12px', fontSize: '13px' }}
             >
               <RefreshCw size={14} /> Renew Selected
+            </button>
+            )}
+
+            <button
+              type="button"
+              className="btn btn-secondary wa-send-btn"
+              disabled={selectedIds.length === 0}
+              onClick={() => setWaTargets(students.filter(s => selectedIds.includes(s.id)))}
+              style={{ padding: '6px 12px', fontSize: '13px' }}
+            >
+              <MessageCircle size={14} /> Send WhatsApp
             </button>
             
             {currentStaff?.permissions?.canCancelAdmission && (
@@ -993,15 +1064,6 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
         })}
       </div>
 
-      {selectedIds.length > 0 && (
-        <div className="st-selbar" role="region" aria-label="Selected students">
-          <span><b>{selectedIds.length}</b> selected</span>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setSelectedIds([]); setIsSelectionMode(false); }}>Clear</button>
-          <button type="button" className="btn btn-primary btn-sm wa-send-btn" onClick={() => setWaTargets(students.filter(s => selectedIds.includes(s.id)))}>
-            <MessageCircle size={15} /> Send WhatsApp
-          </button>
-        </div>
-      )}
       {waTargets && <WhatsAppSendModal students={waTargets} onClose={() => setWaTargets(null)} />}
 
       </>
@@ -1154,54 +1216,35 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
               initial={{ scale: 0.95, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 20 }}
               transition={{ type: 'spring', damping: 25, stiffness: 300 }}>
               
-              <div className="modal-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--brand-primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '18px' }}>
-                    {((selectedStudent.name || 'S').charAt(0)).toUpperCase()}
-                  </div>
-                  <div>
-                    <h3 style={{ fontSize: '20px', fontWeight: 700, letterSpacing: '-0.02em' }}>{selectedStudent.name || 'Unnamed Student'}</h3>
-                    <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '2px', display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
-                      <span>{selectedStudent.id || 'N/A'}</span>
-                      <span>•</span>
-                      <span>Mobile: <strong style={{ color: selectedStudent.phone ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>{selectedStudent.phone || 'N/A'}</strong></span>
-                      <span>•</span>
-                      <span>{selectedStudent.gender || 'Male'}</span>
-                      <span>•</span>
-                      <span>Emergency: <strong style={{ color: selectedStudent.emergencyPhone ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>{selectedStudent.emergencyPhone || 'Not Provided'}</strong></span>
-                    </div>
-                  </div>
+              <div className="modal-header sp-header">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+                  {profilePhoto
+                    ? <img src={profilePhoto} alt={`${selectedStudent.name || 'Student'} photo`} className="sp-avatar" style={{ width: '48px', height: '48px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+                    : <div className="sp-avatar" style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--brand-primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '18px', flexShrink: 0 }}>
+                        {((selectedStudent.name || 'S').charAt(0)).toUpperCase()}
+                      </div>}
+                  <h3 style={{ fontSize: '20px', fontWeight: 700, letterSpacing: '-0.02em', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedStudent.name || 'Unnamed Student'}</h3>
                 </div>
-                <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', color: 'var(--text-secondary)' }} onClick={() => setSelectedStudent(null)}><X size={24} /></button>
+                <button aria-label="Close profile" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', minWidth: 44, minHeight: 44 }} onClick={() => setSelectedStudent(null)}><X size={20} /></button>
               </div>
 
-              <div style={{ padding: '24px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '16px', background: 'var(--bg-main)' }}>
-                <div>
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>ASSIGNED DESK</span>
-                  <div style={{ fontSize: '18px', fontWeight: 700, marginTop: '4px' }}>{selectedStudent.seatNo || 'None'}</div>
-                </div>
-                <div>
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>SHIFT</span>
-                  <div style={{ fontSize: '16px', fontWeight: 500, marginTop: '4px' }}>{selectedStudent.shift || 'N/A'}</div>
-                </div>
-                <div>
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>EXPIRY DATE</span>
-                  <div style={{ fontSize: '16px', fontWeight: 600, color: selectedStudent.status === 'Expired' ? 'var(--text-primary)' : '#10b981', marginTop: '4px' }}>
-                    {selectedStudent.expiryDate || 'N/A'}
+              {/* Issue #10: paired facts, two columns where space allows */}
+              <div className="sp-grid" style={{ padding: '16px 24px', background: 'var(--bg-main)' }}>
+                {[
+                  ['STUDENT ID', selectedStudent.id || 'N/A'],
+                  ['GENDER', selectedStudent.gender || 'Male'],
+                  ['ASSIGNED DESK', selectedStudent.seatNo || 'None', { fontSize: '18px', fontWeight: 700 }],
+                  ['SHIFT', selectedStudent.shift || 'N/A'],
+                  ['EXPIRY DATE', selectedStudent.expiryDate || 'N/A', { fontWeight: 600, color: selectedStudent.status === 'Expired' ? 'var(--text-primary)' : '#10b981' }],
+                  ['STATUS', selectedStudent.status || 'N/A', { fontWeight: 600, color: selectedStudent.status === 'Expired' ? 'var(--status-error, #dc2626)' : 'var(--text-primary)' }],
+                  ['STUDENT MOBILE NUMBER', selectedStudent.phone || 'N/A', { fontWeight: 600, color: selectedStudent.phone ? 'var(--text-primary)' : 'var(--text-tertiary)' }, true],
+                  ['EMERGENCY CONTACT NUMBER', selectedStudent.emergencyPhone || 'Not Provided', { fontWeight: 600, color: selectedStudent.emergencyPhone ? 'var(--text-primary)' : 'var(--text-tertiary)' }, true],
+                ].map(([label, value, vs, full]) => (
+                  <div key={label} className={full ? 'sp-full' : undefined} style={{ minWidth: 0 }}>
+                    <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>{label}</span>
+                    <div style={{ fontSize: '16px', fontWeight: 500, marginTop: '2px', overflowWrap: 'anywhere', ...(vs || {}) }}>{value}</div>
                   </div>
-                </div>
-                <div>
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>STUDENT MOBILE NUMBER</span>
-                  <div style={{ fontSize: '16px', fontWeight: 600, color: selectedStudent.phone ? 'var(--text-primary)' : 'var(--text-tertiary)', marginTop: '4px' }}>
-                    {selectedStudent.phone || 'N/A'}
-                  </div>
-                </div>
-                <div>
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>EMERGENCY CONTACT NUMBER</span>
-                  <div style={{ fontSize: '16px', fontWeight: 600, color: selectedStudent.emergencyPhone ? 'var(--text-primary)' : 'var(--text-tertiary)', marginTop: '4px' }}>
-                    {selectedStudent.emergencyPhone || 'Not Provided'}
-                  </div>
-                </div>
+                ))}
                 {selectedStudent.idProofStatus === 'Pending' && (
                   <div style={{ gridColumn: '1 / -1', padding: '12px', background: 'var(--bg-warning)', border: '1px solid var(--border-warning)', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <AlertCircle size={16} color="var(--warning-color)" />
@@ -1247,7 +1290,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                 )}
               </div>
 
-              <div style={{ display: 'flex', borderBottom: '1px solid var(--border-light)', padding: '0 24px', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+              <div className="sp-tabs" style={{ display: 'flex', borderBottom: '1px solid var(--border-light)', padding: '0 24px', overflowX: 'auto', WebkitOverflowScrolling: 'touch', flexShrink: 0 }}>
                 {['history', 'relocations', 'payments', 'documents', 'whatsapp'].map(tab => (
                   <button key={tab} onClick={() => setActiveDrawerTab(tab)} style={{ 
                     padding: '16px 24px', background: 'transparent', border: 'none', cursor: 'pointer',
@@ -1284,21 +1327,29 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                           return (
                             <div key={idx} style={{ padding: '16px', border: '1px solid var(--border-light)', borderRadius: '8px' }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                                <strong style={{ fontSize: '14px' }}>{record.planName} (Renewal)</strong>
+                                <strong style={{ fontSize: '14px', textDecoration: record.voided ? 'line-through' : 'none' }}>{record.planName} (Renewal)</strong>
                                 <span style={{ fontWeight: 600, color: '#10b981' }}>₹{record.amountPaid?.toLocaleString()}</span>
                               </div>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
                                   Valid: {record.startDate} to {record.endDate} • Staff: {record.staffName}
                                 </div>
-                                {currentStaff?.permissions?.canCancelAdmission && (
+                                {record.voided && (
+                                  <span data-testid="voided-badge" style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: '#fee2e2', color: '#b91c1c' }}>Voided</span>
+                                )}
+                                {!record.voided && currentStaff?.permissions?.canCancelAdmission && (
                                   <button
                                     className="btn btn-secondary"
                                     style={{ padding: '4px 8px', fontSize: '12px', color: '#ef4444', borderColor: '#fee2e2', background: '#fef2f2' }}
                                     onClick={() => {
-                                      if (window.confirm(`Are you sure you want to void this renewal (${record.planName})?`)) {
-                                        if (cancelRenewalTransaction(selectedStudent.id, record.renewalId)) {
-                                          toast.success("Renewal voided successfully.");
+                                      const isAdm = isAdmissionVoid(selectedStudent, record.renewalId);
+                                      const msg = isAdm
+                                        ? `Void this admission (${record.planName})? The plan ends and seat ${selectedStudent.seatNo || ''} is freed. The record is kept as voided. Record any refund separately.`
+                                        : `Are you sure you want to void this renewal (${record.planName})?`;
+                                      if (window.confirm(msg)) {
+                                        const res = cancelRenewalTransaction(selectedStudent.id, record.renewalId);
+                                        if (res) {
+                                          toast.success(res === 'admission' ? "Admission voided. Seat freed." : "Renewal voided successfully.");
                                           setSelectedStudent(null);
                                         } else {
                                           toast.error("Failed to void renewal.");
@@ -1387,7 +1438,10 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                           {pay.reason && <div style={{ fontSize: '11px', color: '#ef4444', marginTop: '2px' }}>Reason: {pay.reason}</div>}
                         </div>
                         <div style={{ textAlign: 'right' }}>
-                          <div style={{ fontWeight: 700, color: (pay.type === 'Refund' || pay.amount < 0) ? '#ef4444' : '#10b981' }}>
+                          {isVoidedPayment(pay) && (
+                            <div data-testid="payment-voided-badge" style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: '#fee2e2', color: '#b91c1c', display: 'inline-block', marginBottom: 4 }}>Voided</div>
+                          )}
+                          <div style={{ fontWeight: 700, color: isVoidedPayment(pay) ? '#9ca3af' : ((pay.type === 'Refund' || pay.amount < 0) ? '#ef4444' : '#10b981'), textDecoration: isVoidedPayment(pay) ? 'line-through' : 'none' }}>
                             {pay.type === 'Refund' || pay.amount < 0 ? `-₹${Math.abs(pay.amount).toLocaleString()} (Refund)` : `₹${(pay.netTotal || pay.amount).toLocaleString()}`}
                           </div>
                         </div>
@@ -1405,10 +1459,16 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                         <h4 style={{ fontSize: '14px', fontWeight: 600, margin: 0 }}>Required Verification Documents</h4>
                         <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0 0' }}>Verification status and compliance checklist</p>
                       </div>
-                      <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
-                        + Add Custom Document
-                        <input type="file" style={{ display: 'none' }} accept="image/*,.pdf" onChange={(e) => handleAttachDocumentToStudent(e)} />
-                      </label>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
+                          + Add Custom Document
+                          <input type="file" style={{ display: 'none' }} accept="image/*,.pdf" onChange={(e) => handleAttachDocumentToStudent(e)} />
+                        </label>
+                        <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0 }} aria-label="Add document with camera">
+                          Camera
+                          <input type="file" style={{ display: 'none' }} accept="image/*" capture="environment" onChange={(e) => handleAttachDocumentToStudent(e)} />
+                        </label>
+                      </div>
                     </div>
 
                     {/* Required Document Types Checklist */}
@@ -1485,6 +1545,10 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                                   <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer', margin: 0, padding: '4px 8px' }}>
                                     {matchingDoc ? 'Replace' : 'Upload'}
                                     <input type="file" style={{ display: 'none' }} accept="image/*,.pdf" onChange={(e) => handleAttachDocumentToStudent(e, docType.name)} />
+                                  </label>
+                                  <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer', margin: 0, padding: '4px 8px' }} aria-label={`${docType.name} from camera`}>
+                                    Camera
+                                    <input type="file" style={{ display: 'none' }} accept="image/*" capture="environment" onChange={(e) => handleAttachDocumentToStudent(e, docType.name)} />
                                   </label>
                                 </div>
                               </div>
@@ -1602,7 +1666,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                     </div>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
-                    <div className="form-group"><label className="form-label">Price (₹) per student</label><NumericInput className="form-input" value={renewAmount} onChange={(e) => setRenewAmount(Number(e.target.value))} /></div>
+                    <div className="form-group"><label className="form-label">Price (₹) per student</label><NumericInput className="form-input" value={renewAmount} readOnly={!canEditAmount} onChange={(e) => canEditAmount && setRenewAmountRaw(Number(e.target.value))} /></div>
                     <div className="form-group"><label className="form-label">Discount (₹) per student</label><NumericInput className="form-input" value={renewDiscount} onChange={(e) => setRenewDiscount(Number(e.target.value))} /></div>
                     <div className="form-group"><label className="form-label">Fine (₹) per student</label><NumericInput className="form-input" value={renewFine} onChange={(e) => setRenewFine(Number(e.target.value))} /></div>
                   </div>
@@ -1799,8 +1863,23 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                       </button>
                     </div>
                   )}
+                  {(() => {
+                    if (cycleCfg.mode === 'ANNIVERSARY' || !selectedStudent?.expiryDate) return null;
+                    const monthly = (renewAlign ? renewAlign.baseSuggested : Number(renewSuggested)) / Math.max(1, Number(renewDuration) || 1);
+                    const b = bridgeCharge(monthly, selectedStudent.expiryDate, cycleCfg);
+                    if (!b || b.aligned) return null;
+                    return (
+                      <label data-testid="align-box" style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', marginTop: '16px', fontSize: '12px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '8px 10px' }}>
+                        <input type="checkbox" checked={!!renewAlign} onChange={e => {
+                          if (e.target.checked) { const base = Number(renewSuggested); const sum = Number(renewAmount) + b.amount; setRenewAmountRaw(sum); setRenewSuggested(base + b.amount); setRenewAlign({ ...b, baseSuggested: base }); }
+                          else { const base = renewAlign.baseSuggested; setRenewAmountRaw(Number(renewAmount) - renewAlign.amount); setRenewSuggested(base); setRenewAlign(null); }
+                        }} />
+                        <span>Align to library cycle: add bridge ₹{b.amount.toLocaleString()} for {b.days} of {b.totalDays} days ({b.from} to {b.to}), then renew from the cycle start. Leave unticked to keep this student's own dates.</span>
+                      </label>
+                    );
+                  })()}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginTop: '16px' }}>
-                    <div className="form-group"><label className="form-label">Price (₹)</label><NumericInput className="form-input" value={renewAmount} onChange={(e) => setRenewAmount(Number(e.target.value))} /></div>
+                    <div className="form-group"><label className="form-label">Price (₹)</label><NumericInput className="form-input" value={renewAmount} readOnly={!canEditAmount} title={canEditAmount ? undefined : 'You do not have permission to change amounts'} onChange={(e) => canEditAmount && setRenewAmountRaw(Number(e.target.value))} /></div>
                     <div className="form-group"><label className="form-label">Discount (₹)</label><NumericInput className="form-input" value={renewDiscount} onChange={(e) => setRenewDiscount(Number(e.target.value))} /></div>
                     <div className="form-group"><label className="form-label">Fine (₹)</label><NumericInput className="form-input" value={renewFine} onChange={(e) => setRenewFine(Number(e.target.value))} /></div>
                   </div>
@@ -1921,6 +2000,25 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                       )}
                     </select>
                   </div>
+                {relocPriceChange && relocPriceChange.amount !== 0 && (
+                  <div data-testid="reloc-price" style={{ fontSize: '12px', background: relocPriceChange.amount > 0 ? '#fff7ed' : '#ecfdf5', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '8px 10px', marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <span>
+                      {relocPriceChange.amount > 0 ? 'Upgrade charge' : 'Credit to student'}: ₹{Math.abs(relocPriceChange.amount).toLocaleString()}
+                      {' '}(₹{relocPriceChange.oldFee} → ₹{relocPriceChange.newFee}/month, {relocPriceChange.days} of {relocPriceChange.totalDays} days left)
+                    </span>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                      <NumericInput className="form-input" style={{ maxWidth: '120px' }} value={relocOverride != null ? relocOverride : relocPriceChange.amount} readOnly={!canEditAmount} onChange={e => canEditAmount && setRelocOverride(Number(e.target.value))} />
+                      {relocPriceChange.amount > 0 && (
+                        <>
+                          <label style={{ display: 'flex', gap: '4px', alignItems: 'center' }}><input type="checkbox" checked={relocCollect} onChange={e => setRelocCollect(e.target.checked)} /> Collect now</label>
+                          <select className="form-select" style={{ maxWidth: '110px' }} value={relocMethod} onChange={e => setRelocMethod(e.target.value)}>
+                            <option>Cash</option><option>UPI</option><option>Card</option>
+                          </select>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
                   <div className="form-group">
                     <label className="form-label">Reason</label>
                     <input type="text" className="form-input" value={seatChangeReason} onChange={(e) => setSeatChangeReason(e.target.value)} required />

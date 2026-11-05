@@ -12,6 +12,7 @@ import express from 'express';
 import { Library, models, User } from './models.js';
 import { audit } from './audit.js';
 import { todayIn } from './finance.js';
+import { SoftwarePlan } from './plans.js';
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const kpiProviders = [];
@@ -40,6 +41,7 @@ export async function saasSummary() {
   const kpis = {};
   for (const p of kpiProviders) { try { kpis[p.name] = await p.fn({ libraryIds: ids }); } catch (e) { kpis[p.name] = { error: e.message }; } }
   const extra = {};
+  const planNames = Object.fromEntries((await SoftwarePlan.find().lean()).map(p => [p.planId, p.name]));
   for (const fn of listDecorators) { try { for (const [id, v] of Object.entries(await fn(ids))) extra[id] = { ...(extra[id] || {}), ...v }; } catch (e) { console.error('[saas-summary]', e.message); } }
   return {
     libraries: {
@@ -58,7 +60,10 @@ export async function saasSummary() {
       const owner = users.find(u => u.tenantId === l.libraryId && u.role === 'client_admin');
       return { libraryId: l.libraryId, name: l.name, status: l.status, city: l.city || null, createdAt: l.createdAt,
         owner: owner ? { name: owner.name, email: owner.email } : null, lastActiveAt: lastActive[l.libraryId] || null,
-        subscription: null, expiry: null, paymentStatus: null, ...(extra[l.libraryId] || {}) };
+        // Issue #19: real subscription state when a library has one.
+        subscription: l.subscription ? `${planNames[l.subscription.planId] || l.subscription.planId}${l.subscription.status ? ` (${l.subscription.status})` : ''}` : (l.planId ? planNames[l.planId] || l.planId : null),
+        expiry: l.subscription?.currentPeriodEnd || null, paymentStatus: l.subscription?.status || null,
+        deletionRequested: Boolean(l.deletionRequest), ...(extra[l.libraryId] || {}) };
     }),
   };
 }

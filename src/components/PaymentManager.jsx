@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useLibrary } from '../context/LibraryContext';
 import { CreditCard, Printer, Search, DollarSign, Calendar, UserCheck, Filter, X } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { isVoidedPayment } from '../utils/paymentVoid';
 
 const DetailRow = ({ label, value }) => (
   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', fontSize: '13px' }}>
@@ -26,6 +27,7 @@ export const PaymentManager = ({ onPrintReceipt }) => {
 
   // Helper to extract effective portion for a specific method (solves Problem 13 & 20)
   const getEffectivePortion = (payment, method) => {
+    if (isVoidedPayment(payment)) return 0;
     if (method === 'All') return Number(payment.netTotal || 0);
     if (method === 'Split') {
       return payment.method === 'Split' ? Number(payment.netTotal || 0) : 0;
@@ -323,8 +325,11 @@ export const PaymentManager = ({ onPrintReceipt }) => {
                     <td><span style={{ fontSize: '13px' }}>{pay.date}</span></td>
                     <td>
                       <span className="cell-inline">
-                        <span style={{ fontWeight: 700, color: '#10b981', fontSize: '14px' }}>
-                          ₹{effectivePortion.toLocaleString()}
+                        {isVoidedPayment(pay) && (
+                          <span data-testid="payment-voided-badge" style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: '#fee2e2', color: '#b91c1c' }}>Voided</span>
+                        )}
+                        <span style={{ fontWeight: 700, color: isVoidedPayment(pay) ? '#9ca3af' : '#10b981', fontSize: '14px', textDecoration: isVoidedPayment(pay) ? 'line-through' : 'none' }}>
+                          ₹{(isVoidedPayment(pay) ? Number(pay.netTotal || 0) : effectivePortion).toLocaleString()}
                         </span>
                         {isPortionDifferent && (
                           <span className="cell-meta">

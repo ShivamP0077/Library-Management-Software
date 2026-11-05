@@ -13,6 +13,7 @@ import { models, Library, clean } from './models.js';
 import { audit } from './audit.js';
 import { todayIn } from './finance.js';
 
+import { libraryLimits } from './plans.js';
 const eventSchema = new mongoose.Schema({
   tenantId: { type: String, required: true, index: true },
   studentId: { type: String, required: true },
@@ -42,8 +43,8 @@ export function studentStatus(s, today = todayIn(), soonDays = 3) {
 }
 
 export async function studentLimit(tenantId) {
-  const lib = await Library.findOne({ libraryId: tenantId }).lean();
-  return lib?.studentLimit > 0 ? lib.studentLimit : null;
+  // Issue #14: the library's own studentLimit wins; otherwise the software plan's limit.
+  return (await libraryLimits(tenantId)).studentLimit;
 }
 
 /** Reject only when the count grows past the limit (existing over-limit data never blocks edits). */

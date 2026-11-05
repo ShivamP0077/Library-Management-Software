@@ -1,3 +1,4 @@
+import { DocPreview } from '../DocPreview';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useLibrary } from '../../context/LibraryContext';
 import { X, UserPlus, ShieldAlert, AlertCircle, Clock, Check, RefreshCw } from 'lucide-react';
@@ -17,13 +18,17 @@ const formatFileSize = (bytes) => {
 };
 
 import { getCanonicalShifts, isShiftInPlan } from '../../utils/shiftUtils';
+import { clientCanEditAmount } from '../../utils/amountPermission';
+import { cycleConfig, firstAdmissionCharge } from '../../utils/billingCycle';
 import { getCanonicalSeatTypes, areSeatTypesEquivalent } from '../../utils/seatTypeUtils';
 
 export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPayload }) => {
   const { 
     settings, branches, sections, plans, shifts, seatTypes, addStudent, students, archivedStudents, 
-    todayStr, getAvailableEligibleSeats, canAdmitStudent, addToWaitingList, getMatchingPlans, getUnsyncedShifts, getUnsyncedPlans
+    todayStr, getAvailableEligibleSeats, canAdmitStudent, addToWaitingList, getMatchingPlans, getUnsyncedShifts, getUnsyncedPlans,
+    currentStaff, lockedStaffId
   } = useLibrary();
+  const canEditAmount = clientCanEditAmount({ lockedStaffId, currentStaff, settings });
 
   const libId = settings.libraryId;
 
@@ -45,6 +50,10 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
   const [isUploadingDoc, setIsUploadingDoc] = useState(false);
   const [submitDocLater, setSubmitDocLater] = useState(false);
   const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+  const lastSourceRef = useRef('upload'); // which picker was used, for Retake
+  const [docPreviewUrl, setDocPreviewUrl] = useState(null);
+  const [isDocPreviewOpen, setIsDocPreviewOpen] = useState(false);
 
   const selectedDocTypeObj = settings.documentTypes?.find(d => d.name === selectedDocType);
   const effectiveDocRequirement = selectedDocTypeObj?.requirement || settings.idProofRequirement || 'Required';
@@ -52,10 +61,12 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
 
   const resetFileInput = () => {
     if (fileInputRef.current) fileInputRef.current.value = '';
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
   };
 
   const handleFileChange = (e) => {
     const file = e.target.files?.[0];
+    lastSourceRef.current = e.target === cameraInputRef.current ? 'camera' : 'upload';
 
     // Cancelling the picker (or selecting nothing) must never mark a document as attached.
     if (!file) {
@@ -80,6 +91,7 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
           uploadedAt: new Date().toISOString()
         });
         setDocFile(file);
+        setDocPreviewUrl(base64Data);
         setDocFileAttached(true);
         setSubmitDocLater(false);
         toast.success(`Attached ${file.name}`);
@@ -103,6 +115,8 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
     const storageKey = docFileMeta?.storageKey;
     setDocFile(null);
     setDocFileMeta(null);
+    setDocPreviewUrl(null);
+    setIsDocPreviewOpen(false);
     setDocFileAttached(false);
     resetFileInput();
     if (storageKey) {
@@ -121,7 +135,11 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
   const [isManualDuration, setIsManualDuration] = useState(false);
 
   // Transaction-Level Pricing & Discount Overrides
-  const [baseAmount, setBaseAmount] = useState(0);
+  const [baseAmount, setBaseAmountRaw] = useState(0);
+  // Issue #9: remember the system amount so a manual change can be flagged (server checks permission + audits).
+  const [suggestedBase, setSuggestedBase] = useState(0);
+  const [proRateApplied, setProRateApplied] = useState(null);
+  const setBaseAmount = (v) => { setBaseAmountRaw(v); setSuggestedBase(v); setProRateApplied(null); };
   const [discountType, setDiscountType] = useState('None'); // 'None' | 'Percentage' | 'Fixed'
   const [discountValue, setDiscountValue] = useState(0);
   const [fine, setFine] = useState(0);
@@ -438,6 +456,9 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
       seatNo: isFixed ? seatNo : 'Non-Fixed Seat',
       durationMonths: Number(durationMonths),
       amountPaid: Number(baseAmount),
+      suggestedAmount: Number(proRateApplied ? proRateApplied.amount : suggestedBase),
+      ...(Number(baseAmount) !== Number(proRateApplied ? proRateApplied.amount : suggestedBase) ? { amountEdited: true } : {}),
+      ...(proRateApplied ? { proRated: proRateApplied } : {}),
       discount: calculatedDiscount,
       fine: Number(fine),
       paymentMethod,
@@ -446,7 +467,7 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
       documents: docRecord ? [docRecord] : [],
       idProofStatus: submitDocLater ? 'Pending' : (docRecord ? 'Verified' : 'Not Required'),
       startDate: todayFormatted,
-      expiryDate: calculatedExpiry
+      expiryDate: proRateApplied ? proRateApplied.to : calculatedExpiry
     };
 
     const res = addStudent(studentData);
@@ -572,6 +593,16 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                   >
                     {isUploadingDoc ? 'Attaching...' : (docFileAttached ? 'Replace' : 'Attach')}
                   </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ fontSize: '12px', border: '1px solid var(--border-light)', cursor: isUploadingDoc ? 'not-allowed' : 'pointer', opacity: isUploadingDoc ? 0.6 : 1, flexShrink: 0 }}
+                    onClick={() => cameraInputRef.current?.click()}
+                    disabled={isUploadingDoc}
+                    aria-label="Take photo with camera"
+                  >
+                    Camera
+                  </button>
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -579,6 +610,16 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                     accept="image/*,.pdf"
                     onChange={handleFileChange}
                     disabled={isUploadingDoc}
+                  />
+                  <input
+                    ref={cameraInputRef}
+                    type="file"
+                    style={{ display: 'none' }}
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handleFileChange}
+                    disabled={isUploadingDoc}
+                    data-testid="doc-camera-input"
                   />
                 </div>
 
@@ -593,6 +634,16 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                         ? `${docFileName}${docFileSize ? ` (${docFileSize})` : ''}`
                         : 'No file selected'}
                   </span>
+                  {docFileAttached && !isUploadingDoc && docPreviewUrl && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      style={{ fontSize: '11px', padding: '2px 8px', flexShrink: 0 }}
+                      onClick={() => setIsDocPreviewOpen(true)}
+                    >
+                      Preview
+                    </button>
+                  )}
                   {docFileAttached && !isUploadingDoc && (
                     <button
                       type="button"
@@ -612,6 +663,16 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                   </label>
                 )}
                 {errors.document && <span style={{ color: '#ef4444', fontSize: '11px', display: 'block', marginTop: '4px' }}>{errors.document}</span>}
+                {isDocPreviewOpen && docPreviewUrl && (
+                  <DocPreview
+                    src={docPreviewUrl}
+                    name={`${selectedDocType}: ${docFileName}`}
+                    fileType={docFileMeta?.fileType}
+                    onClose={() => setIsDocPreviewOpen(false)}
+                    onRemove={handleRemoveDoc}
+                    onRetake={() => { setIsDocPreviewOpen(false); (lastSourceRef.current === 'camera' ? cameraInputRef : fileInputRef).current?.click(); }}
+                  />
+                )}
               </div>
 
               <div className="form-group" style={{ marginBottom: 0 }}>
@@ -820,11 +881,28 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                     <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>FEE & DISCOUNT</span>
                     <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>Overrides apply to this admission only</span>
                   </div>
+                  {(() => {
+                    const cfg = cycleConfig(settings);
+                    if (cfg.mode === 'ANNIVERSARY' || !plans.find(p => p.id === planId) || Number(durationMonths) !== 1) return null;
+                    const unit = Number(suggestedBase) / Math.max(1, Number(durationMonths) || 1);
+                    const pr = firstAdmissionCharge(unit, todayStr, cfg);
+                    if (!pr.prorated) return null;
+                    return (
+                      <div data-testid="prorate-box" style={{ fontSize: '12px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '8px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <span>Library cycle: first payment ₹{pr.amount.toLocaleString()} for {pr.days} of {pr.totalDays} days (to {pr.to}). Then full fee.</span>
+                        {proRateApplied ? (
+                          <button type="button" className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => setBaseAmount(Number(suggestedBase))}>Use full fee</button>
+                        ) : (
+                          <button type="button" className="btn btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => { setBaseAmountRaw(pr.amount); setProRateApplied({ ...pr, fullFee: Number(suggestedBase) }); }}>Use pro-rated</button>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                     <div>
                       <label className="form-label" style={{ fontSize: '11px' }}>Base Price (₹)</label>
-                      <NumericInput className="form-input" value={baseAmount} onChange={e => setBaseAmount(Number(e.target.value))} />
+                      <NumericInput className="form-input" value={baseAmount} readOnly={!canEditAmount} title={canEditAmount ? undefined : 'You do not have permission to change amounts'} onChange={e => canEditAmount && setBaseAmountRaw(Number(e.target.value))} />
                     </div>
 
                     <div>

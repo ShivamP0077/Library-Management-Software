@@ -6,6 +6,9 @@
 const RAW_BASE = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
 export const API_BASE = RAW_BASE ? (RAW_BASE.endsWith('/api') ? RAW_BASE : `${RAW_BASE}/api`) : '/api';
 
+import { parseJsonSafe } from './parseJsonSafe';
+export { parseJsonSafe };
+
 const TOKEN_KEY = 'library_api_token';
 export const getToken = () => localStorage.getItem(TOKEN_KEY);
 export const setToken = (t) => (t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY));
@@ -26,7 +29,7 @@ export async function apiRequest(path, { method = 'GET', body, signal } = {}) {
   if (tenantContext.readOnly) headers['X-Read-Only'] = '1';
   const res = await fetch(`${API_BASE}${path}`, { method, headers, signal, body: body !== undefined ? JSON.stringify(body) : undefined });
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  const data = parseJsonSafe(text, res.status);
   if (res.status === 401 && token && unauthorizedHandler) unauthorizedHandler();
   if (!res.ok) throw Object.assign(new Error(data?.error || `Request failed (${res.status})`), { status: res.status, code: data?.code, details: data?.details });
   return data;
@@ -66,6 +69,8 @@ export const api = {
   reminderSettings: () => apiRequest('/reminders/settings'),
   saveReminderSettings: (body) => apiRequest('/reminders/settings', { method: 'PUT', body }),
   reminders: (q = '') => apiRequest(`/reminders${q}`),
+  whatsappTemplates: () => apiRequest('/whatsapp-templates'),
+  saveWhatsappTemplates: (body) => apiRequest('/whatsapp-templates', { method: 'PUT', body }),
   whatsappMessages: (q = '') => apiRequest(`/whatsapp/messages${q}`),
   whatsappResend: (id) => apiRequest(`/whatsapp/messages/${encodeURIComponent(id)}/resend`, { method: 'POST' }),
   whatsappSendToStudent: (studentId, body) => apiRequest(`/whatsapp/students/${encodeURIComponent(studentId)}/send`, { method: 'POST', body }),
@@ -78,6 +83,16 @@ export const api = {
   forgotPassword: (email) => apiRequest('/auth/forgot-password', { method: 'POST', body: { email } }),
   resetPassword: (email, otp, newPassword) => apiRequest('/auth/reset-password', { method: 'POST', body: { email, otp, newPassword } }),
   inviteInfo: (token) => apiRequest(`/auth/invite/${encodeURIComponent(token)}`),
+  signupConfig: () => apiRequest('/auth/signup/config'),
+  signupStart: (email) => apiRequest('/auth/signup/start', { method: 'POST', body: { email } }),
+  signupComplete: async (body) => { const r = await apiRequest('/auth/signup/complete', { method: 'POST', body }); setToken(r.token); return r; },
+  signupCompleteGoogle: async (body) => { const r = await apiRequest('/auth/signup/complete-google', { method: 'POST', body }); setToken(r.token); return r; },
+  subscriptionCheckout: (returnUrl) => apiRequest('/subscription/checkout', { method: 'POST', body: { returnUrl } }),
+  adminPaymentsConfig: () => apiRequest('/admin/payments/config'),
+  adminUpdatePaymentsConfig: (body) => apiRequest('/admin/payments/config', { method: 'PUT', body }),
+  adminTestPaymentsConfig: () => apiRequest('/admin/payments/config/test', { method: 'POST', body: {} }),
+  adminDeletionRequests: () => apiRequest('/admin/payments/deletion-requests'),
+  adminResolveDeletionRequest: (libraryId, action) => apiRequest(`/admin/payments/deletion-requests/${libraryId}/resolve`, { method: 'POST', body: { action } }),
   acceptInvite: async (body) => { const r = await apiRequest('/auth/invite/accept', { method: 'POST', body }); setToken(r.token); return r; },
   invites: () => apiRequest('/invites'),
   createInvite: (body) => apiRequest('/invites', { method: 'POST', body }),
@@ -129,6 +144,9 @@ export const api = {
   },
   // Super admin
   adminLibraries: () => apiRequest('/admin/libraries'),
+  adminPlans: () => apiRequest('/admin/plans'),
+  adminCreatePlan: (body) => apiRequest('/admin/plans', { method: 'POST', body }),
+  adminUpdatePlan: (planId, body) => apiRequest(`/admin/plans/${encodeURIComponent(planId)}`, { method: 'PATCH', body }),
   adminMetrics: () => apiRequest('/admin/metrics'),
   adminSaasSummary: () => apiRequest('/admin/saas-summary'),
   adminInsights: (q = '') => apiRequest(`/admin/insights${q}`),
@@ -146,6 +164,12 @@ export const api = {
   partnerCommissions: () => apiRequest('/partner/commissions'),
   changePassword: (currentPassword, newPassword) => apiRequest('/auth/change-password', { method: 'POST', body: { currentPassword, newPassword } }),
   adminUpdateLibrary: (libraryId, body) => apiRequest(`/admin/libraries/${encodeURIComponent(libraryId)}`, { method: 'PATCH', body }),
+  subscription: () => apiRequest('/subscription'),
+  subscriptionChange: (planId, interval) => apiRequest('/subscription/change', { method: 'POST', body: { planId, interval } }),
+  subscriptionCancel: (resume) => apiRequest('/subscription/cancel', { method: 'POST', body: { resume: Boolean(resume) } }),
+  subscriptionRequestDeletion: (confirmName, reason) => apiRequest('/subscription/deletion-request', { method: 'POST', body: { confirmName, reason } }),
+  subscriptionWithdrawDeletion: () => apiRequest('/subscription/deletion-request', { method: 'DELETE' }),
+  adminDeleteLibrary: (libraryId, confirmName) => apiRequest(`/admin/libraries/${encodeURIComponent(libraryId)}`, { method: 'DELETE', body: { confirmName } }),
   adminAddLibraryUser: (libraryId, body) => apiRequest(`/admin/libraries/${encodeURIComponent(libraryId)}/users`, { method: 'POST', body }),
   adminUpdateUser: (id, body) => apiRequest(`/admin/users/${encodeURIComponent(id)}`, { method: 'PATCH', body }),
   saveDocument: (key, data) => apiRequest(`/documents/${encodeURIComponent(key)}`, { method: 'PUT', body: { data } }),

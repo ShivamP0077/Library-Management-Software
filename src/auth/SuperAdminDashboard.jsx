@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Building2, Eye, LogOut, Plus, RefreshCw, Shield, UserPlus, Power } from 'lucide-react';
+import { Building2, Eye, LogOut, Plus, RefreshCw, Shield, UserPlus, Power, Trash2 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import { api } from '../utils/api';
 import { useAuth } from './AuthContext';
 import { LibraryInsights } from './LibraryInsights';
 import { PartnersAdmin } from './PartnersAdmin';
 import { SupportDesk } from './SupportDesk';
+import { PlansAdmin } from './PlansAdmin';
+import { PaymentsAdmin } from './PaymentsAdmin';
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—');
 
@@ -27,6 +29,20 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
   const [form, setForm] = useState({ name: '', adminEmail: '', adminName: '' });
   const [inviteFor, setInviteFor] = useState(null);
   const [inviteEmail, setInviteEmail] = useState('');
+  // Issue #16: permanent delete with the library name typed back.
+  const [deleteFor, setDeleteFor] = useState(null);
+  const [deleteName, setDeleteName] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const confirmDelete = async (e) => {
+    e.preventDefault();
+    if (!deleteFor || deleteName.trim() !== deleteFor.name.trim()) return;
+    setDeleting(true);
+    try {
+      await api.adminDeleteLibrary(deleteFor.libraryId, deleteName);
+      toast.success(`${deleteFor.name} deleted`);
+      setDeleteFor(null); setDeleteName(''); load();
+    } catch (err) { toast.error(err.message); } finally { setDeleting(false); }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -85,10 +101,14 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
           <button role="tab" aria-selected={view === 'business'} className={`btn btn-sm ${view === 'business' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView('business')}>Business dashboard</button>
           <button role="tab" aria-selected={view === 'insights'} className={`btn btn-sm ${view === 'insights' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView('insights')}>Library Insights &amp; Analytics</button>
           <button role="tab" aria-selected={view === 'partners'} className={`btn btn-sm ${view === 'partners' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView('partners')}>Partners &amp; Commissions</button>
+          <button role="tab" aria-selected={view === 'plans'} className={`btn btn-sm ${view === 'plans' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView('plans')}>Software plans</button>
+          <button role="tab" aria-selected={view === 'payments'} className={`btn btn-sm ${view === 'payments' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView('payments')}>Payments</button>
           <button role="tab" aria-selected={view === 'support'} className={`btn btn-sm ${view === 'support' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView('support')}>Support tickets{summary?.kpis?.support?.value ? ` (${summary.kpis.support.value})` : ''}</button>
         </div>
 
         {view === 'insights' && <LibraryInsights libraries={libraries} />}
+        {view === 'plans' && <PlansAdmin libraries={libraries} onChanged={load} />}
+        {view === 'payments' && <PaymentsAdmin />}
         {view === 'partners' && <PartnersAdmin libraries={libraries} onChanged={load} />}
         {view === 'support' && <SupportDesk libraries={libraries} onAccessLibrary={(id) => { const l = libraries.find(x => x.libraryId === id); if (l) onOpenLibrary(l, true); }} />}
 
@@ -131,13 +151,14 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
                     <td>{l.expiry ? fmtDate(l.expiry) : '—'}</td>
                     <td>{l.paymentStatus || '—'}</td>
                     <td style={{ fontSize: 12 }}>{l.partner?.name || '—'}</td>
-                    <td><span className={`badge ${l.status === 'Active' ? 'badge-active' : 'badge-expired'}`}>{l.status}</span></td>
+                    <td><span className={`badge ${l.status === 'Active' ? 'badge-active' : 'badge-expired'}`}>{l.status}</span>{l.deletionRequested && <div style={{ fontSize: 11, color: '#dc2626', marginTop: 2 }} title={l.deletionRequest?.reason || ''}>Deletion requested</div>}</td>
                     <td style={{ fontSize: 12 }}>{fmtDate(l.lastActiveAt)}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       <button className="btn btn-ghost btn-sm" title="View read-only" onClick={() => onOpenLibrary(l, true)}><Eye size={14} /></button>
                       <button className="btn btn-secondary btn-sm" title="Access Library" onClick={() => onOpenLibrary(l, false)}><Building2 size={14} /> <span>Access Library</span></button>
                       <button className="btn btn-ghost btn-sm" title="Add client admin" onClick={() => setInviteFor(l)}><UserPlus size={14} /></button>
                       <button className="btn btn-ghost btn-sm" title={l.status === 'Active' ? 'Disable' : 'Enable'} onClick={() => toggleStatus(l)}><Power size={14} /></button>
+                      <button className="btn btn-ghost btn-sm" title="Delete library" aria-label={`Delete ${l.name}`} style={{ color: '#dc2626' }} onClick={() => { setDeleteFor(l); setDeleteName(''); }}><Trash2 size={14} /></button>
                     </td>
                   </tr>
                 ))}
@@ -147,6 +168,22 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
         </div>
         )}
 
+        {deleteFor && (
+          <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Delete library" onClick={() => !deleting && setDeleteFor(null)}>
+            <form className="modal-content" style={{ maxWidth: 440, padding: 20 }} onClick={e => e.stopPropagation()} onSubmit={confirmDelete}>
+              <h3 style={{ margin: '0 0 8px', color: '#b91c1c' }}>Delete {deleteFor.name}?</h3>
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '0 0 12px' }}>
+                This permanently deletes this library (ID <strong>{deleteFor.libraryId}</strong>): its students, payments, settings, staff accounts and other data. It cannot be undone. Other libraries are not touched. To only block access, use Disable instead.
+              </p>
+              <label className="form-label" htmlFor="delete-lib-name">Type <strong>{deleteFor.name}</strong> to confirm</label>
+              <input id="delete-lib-name" className="form-input" autoComplete="off" value={deleteName} onChange={e => setDeleteName(e.target.value)} />
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16, flexWrap: 'wrap' }}>
+                <button type="button" className="btn btn-secondary" disabled={deleting} onClick={() => setDeleteFor(null)}>Cancel</button>
+                <button type="submit" className="btn btn-danger" style={{ background: '#dc2626', color: '#fff' }} disabled={deleting || deleteName.trim() !== deleteFor.name.trim()}>{deleting ? 'Deleting…' : 'Delete permanently'}</button>
+              </div>
+            </form>
+          </div>
+        )}
         {inviteFor && (
           <form className="premium-card" style={{ padding: 16, display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }} onSubmit={addAdmin}>
             <div className="form-group" style={{ flex: 1, minWidth: 240, marginBottom: 0 }}>

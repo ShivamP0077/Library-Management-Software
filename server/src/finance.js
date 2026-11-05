@@ -68,8 +68,12 @@ const recurringSchema = new mongoose.Schema({
   description: String,
   branchId: String,
   amount: { type: Number, required: true, min: 0 },
-  frequency: { type: String, enum: [...Object.keys(FREQ_MONTHS), 'custom'], required: true },
+  frequency: { type: String, enum: [...Object.keys(FREQ_MONTHS), 'custom', 'interval'], required: true },
   intervalMonths: { type: Number, min: 1 },
+  // Issue #8: clear schedule = firstDueDate + every N days/months/years. Old bills (no firstDueDate) keep dueDay rules.
+  firstDueDate: String,
+  intervalUnit: { type: String, enum: ['days', 'months', 'years'] },
+  intervalCount: { type: Number, min: 1 },
   startDate: { type: String, required: true },
   dueDay: { type: Number, min: 1, max: 31 },
   endDate: String,
@@ -105,7 +109,27 @@ const daysInMonth = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
 export const todayIn = (tz = process.env.APP_TIMEZONE || 'Asia/Kolkata', d = new Date()) =>
   new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
 
+/** Issue #8: n-th due date from firstDueDate. Months/years keep the original day, clamped to short months / Feb 28. */
+export function nthDueDate(firstDueDate, unit, count, n) {
+  const [y0, m0, d0] = firstDueDate.split('-').map(Number);
+  if (unit === 'days') return new Date(Date.UTC(y0, m0 - 1, d0) + n * count * 864e5).toISOString().slice(0, 10);
+  const months = n * count * (unit === 'years' ? 12 : 1);
+  const total = (m0 - 1) + months;
+  const y = y0 + Math.floor(total / 12), m = (total % 12) + 1;
+  return `${y}-${pad(m)}-${pad(Math.min(d0, daysInMonth(y, m)))}`;
+}
+
 export function dueDatesFor(t, until) {
+  if (t.firstDueDate) {
+    const unit = t.intervalUnit || 'months', count = Math.max(1, Number(t.intervalCount || 1));
+    const out = [];
+    for (let i = 0; i < 5000; i++) {
+      const due = nthDueDate(t.firstDueDate, unit, count, i);
+      if ((t.endDate && due > t.endDate) || due > until) break;
+      out.push({ periodKey: due, dueDate: due });
+    }
+    return out;
+  }
   const step = t.frequency === 'custom' ? Number(t.intervalMonths || 1) : FREQ_MONTHS[t.frequency];
   const [sy, sm, sd] = t.startDate.split('-').map(Number);
   const day = Number(t.dueDay || sd);
@@ -164,13 +188,21 @@ export async function dueReminders(tenantId, today = todayIn()) {
 }
 
 const pubInstance = (i, today) => ({ id: String(i._id), templateId: i.templateId, periodKey: i.periodKey, category: i.category, description: i.description, branchId: i.branchId, dueDate: i.dueDate, amount: i.amount, paidAmount: i.paidAmount || 0, paymentDate: i.paymentDate, payments: i.payments || [], attachments: i.attachments || [], history: i.history || [], status: instanceStatus(i, today) });
-const pubTemplate = (t) => ({ id: String(t._id), category: t.category, description: t.description, branchId: t.branchId, amount: t.amount, frequency: t.frequency, intervalMonths: t.intervalMonths, startDate: t.startDate, dueDay: t.dueDay, endDate: t.endDate, reminder: t.reminder, status: t.status });
+const pubTemplate = (t) => ({ id: String(t._id), category: t.category, description: t.description, branchId: t.branchId, amount: t.amount, frequency: t.frequency, intervalMonths: t.intervalMonths, firstDueDate: t.firstDueDate, intervalUnit: t.intervalUnit, intervalCount: t.intervalCount, startDate: t.startDate, dueDay: t.dueDay, endDate: t.endDate, reminder: t.reminder, status: t.status });
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 function templateInput(b, partial = false) {
   const o = {};
-  for (const k of ['category', 'description', 'branchId', 'frequency', 'startDate', 'endDate']) if (b[k] !== undefined && b[k] !== '') o[k] = String(b[k]);
-  for (const k of ['amount', 'intervalMonths', 'dueDay']) if (b[k] !== undefined && b[k] !== '' && b[k] !== null) o[k] = Number(b[k]);
+  for (const k of ['category', 'description', 'branchId', 'frequency', 'startDate', 'endDate', 'firstDueDate', 'intervalUnit']) if (b[k] !== undefined && b[k] !== '') o[k] = String(b[k]);
+  for (const k of ['amount', 'intervalMonths', 'dueDay', 'intervalCount']) if (b[k] !== undefined && b[k] !== '' && b[k] !== null) o[k] = Number(b[k]);
+  if (o.firstDueDate) {
+    if (!DATE.test(o.firstDueDate)) throw new ValidationError('firstDueDate must be YYYY-MM-DD');
+    o.frequency = 'interval';
+    o.intervalUnit = o.intervalUnit || 'months';
+    if (!['days', 'months', 'years'].includes(o.intervalUnit)) throw new ValidationError('Repeat unit must be days, months or years');
+    if (!(Number.isInteger(o.intervalCount) && o.intervalCount >= 1)) throw new ValidationError('Repeat every must be a whole number of at least 1');
+    if (!o.startDate) o.startDate = o.firstDueDate;
+  }
   if (b.reminder) o.reminder = { daysBefore: Number(b.reminder.daysBefore ?? 3), onDue: b.reminder.onDue !== false, repeatEveryDays: Number(b.reminder.repeatEveryDays ?? 3) };
   if (!partial) {
     if (!o.category) throw new ValidationError('Category is required');
@@ -179,9 +211,11 @@ function templateInput(b, partial = false) {
     if (!o.startDate) throw new ValidationError('Start date is required');
   }
   if (o.amount !== undefined && !(o.amount >= 0)) throw new ValidationError('Amount must be 0 or more');
-  if (o.frequency && o.frequency !== 'custom' && !FREQ_MONTHS[o.frequency]) throw new ValidationError('Unknown frequency');
+  if (o.frequency && o.frequency !== 'custom' && o.frequency !== 'interval' && !FREQ_MONTHS[o.frequency]) throw new ValidationError('Unknown frequency');
   if (o.frequency === 'custom' && !(o.intervalMonths >= 1)) throw new ValidationError('Custom frequency needs an interval of at least 1 month');
   for (const k of ['startDate', 'endDate']) if (o[k] && !DATE.test(o[k])) throw new ValidationError(`${k} must be YYYY-MM-DD`);
+  if (o.frequency === 'interval' && !o.firstDueDate && !partial) throw new ValidationError('First due date is required');
+  if (o.endDate && o.firstDueDate && o.endDate < o.firstDueDate) throw new ValidationError('End date must be after the first due date');
   if (o.endDate && o.startDate && o.endDate < o.startDate) throw new ValidationError('End date must be after start date');
   return o;
 }
@@ -196,6 +230,7 @@ export async function computePnl(tenantId, { from, to, branchId } = {}) {
   let feeCollections = 0, refunds = 0; const byMethod = {};
   const add = (o, k, v) => { o[k] = (o[k] || 0) + v; };
   for (const p of payments) {
+    if (p.voided === true || p.status === 'Voided') continue; // Issue #11: voided receipts stay visible but out of totals
     const n = Number(p.netTotal ?? p.amount ?? 0);
     if (n < 0 || p.method === 'Refund') { refunds += Math.abs(n); continue; }
     feeCollections += n;

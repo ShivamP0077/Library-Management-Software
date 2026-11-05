@@ -1,5 +1,118 @@
 # Changelog
 
+## 2026-11-05 (IST)
+
+- **Release: merge `release/21-issues` → main** — 22:05 IST. Ships all 21 PDF issues plus #9 server price lock, #11 voided history kept, #14 subscription enforcement, #15 Google signup hooks, #19 Razorpay/PayPal provider config, #2 dry-run report script, and log redaction (PRs #30–#58). Public signup and live payments stay off until configured. No customer data deleted; no DB migration. Rollback: previous main `8bfcbaf`, Render `dep-dblj6og473hc73b9jur0`, Vercel `dpl_CBn2yBVCCdQRsoHJY1Pq83PLggtp`.
+
+- **Security: log redaction** — 22:00 IST. New `server/src/redact.js`: masks URL credentials, Bearer/Basic tokens, password/secret/key fields and values of sensitive env vars; console output is redacted at startup. `db.js` re-exports it. Tests added.
+
+- **#2 copied-data dry-run script + changelog PR #30 fix** — 18:35 IST. Added `server/scripts/copied-data-dry-run.mjs` (read-only pairwise fingerprint compare; never deletes). Changelog now correctly notes Issue #2 / PR #30 is merged into `release/21-issues`. Production overlap report still needs Atlas IP allow-list or a machine that can reach Mongo.
+
+- **#19 Payment providers (Razorpay + PayPal)** — 18:20 IST. Super Admin **Payments** tab stores Razorpay/PayPal keys encrypted (AES-256-GCM). Active provider powers `POST /subscription/checkout` (Payment Links / PayPal Orders), signature-verified webhooks, software invoices, AutoPay helpers (Razorpay subscriptions), lock-at-expiry via existing #14 statuses (`past_due` on failed charge). Deletion requests email Super Admins and appear under Payments for acknowledge/dismiss.
+
+- **#15 Google signup + payment step hooks** — 17:55 IST. Owner signup (still gated by `OWNER_SIGNUP_ENABLED`) can continue with Google (`?signup=1` OAuth → pending token → `/auth/signup/complete-google`). Config exposes `googleSignup` and `paymentsConfigured`. Signup responses include `needsPayment` + `paymentHook` pointing at `POST /api/subscription/checkout` (402 until a provider is registered in #19). UI shows a payment step after creating a paid library.
+
+- **#14 Subscription enforcement** — 17:40 IST. Libraries with a subscription that is awaiting payment, expired (including ended trials), cancelled or past-due can still read data and manage their plan, but writes are blocked (402). Plan feature lists gate WhatsApp when the plan does not include it (empty list = all features). Staff limits apply on invites, invite accept, and POST /users. `/auth/me` returns `subscriptionAccess` and the app shows a lock banner.
+
+- **#11 Voided payments kept in history** — 17:25 IST. Voiding a renewal (or admission) no longer deletes the payment. The row stays visible as **Voided**, is struck through in the ledger and student profile, and is excluded from income totals and P&L. Admission void still frees the seat.
+
+- **#9 Server-side payment price lock** — 17:10 IST. Staff without amount-edit permission can no longer bypass the lock by omitting `amountEdited`. The server recomputes the fee from the seat plan (and approved pro-rate maths) and rejects any custom amount or discount. Client flags are ignored for the decision. Matching plan prices still work for Librarians. Owner/Admin always; Manager on by default.
+
+- **#19 My Subscription (owners)** — 15:10 IST. New "Plan" button for owners: current plan, status, renewal/trial dates, usage against limits, change plan (free/cheaper plans; downgrades during a paid period are scheduled for period end; blocked if usage exceeds the new plan's limits), cancel at period end / resume, invoices list (empty until a payment provider exists), and a deletion *request* (exact library name; nothing is deleted — Super Admin reviews and uses the existing delete flow). Paid upgrades reply "Online payments are not set up yet". Super Admin's business table now shows real plan/status/renewal and a "Deletion requested" flag.
+
+- **#15 Owner self-signup (off by default)** — 14:40 IST. New owners can create a library from the sign-in screen: email → 6-digit code (15 min, 5 tries, single use) → plan choice (monthly/yearly) → name, library name, password. Only visible when the server sets `OWNER_SIGNUP_ENABLED=true`. Plans with a trial start as trialing; paid plans without a trial are recorded as `pending_payment` (no payment provider is connected yet — provider interface only). Existing emails get a notice email, never a second account.
+
+- **#14 Super Admin plan builder** (4:10 PM IST): new "Software plans" tab. Super Admin can create, edit and archive plans with a monthly/yearly price, student, staff and branch limits, a free-trial length, a feature list, and whether the plan is offered at signup. Each library can be put on a plan. The server enforces the plan's limits (only when adding more; existing data is never locked). A library's own student limit still wins over the plan's. No payment provider is connected.
+
+- **#16 Delete library** (3:45 PM IST): Super Admin has a separate Delete button (Disable is unchanged). You must type the exact library name; the server checks it again, removes only that library's data (students, payments, settings, staff logins, invites, WhatsApp settings and log, and the rest), logs out its WhatsApp instance if possible, and keeps an audit entry. Other libraries are never touched. No library was deleted on the live system.
+
+- **#13 Staff invite and login** (3:20 PM IST): checked Render (read-only): FRONTEND_URL is set to https://library-os-app.vercel.app, so invite links are correct. Tested the whole flow end to end (invite, open link on mobile, set password, join, sign in, single use, expiry, revoke, other library blocked). Added the missing part: an invited person can now also join with Google, only with the invited email; the account gets the invited library, role and staff link, and the invite is still single-use.
+
+- **#9 Billing cycles & fee changes** (2:55 PM IST): library-wide cycle modes (anniversary, calendar month, every N days, yearly). New joiners get a pro-rated first payment option (calendar days, final amount rounded to the rupee). Seat/shift moves to a different-priced plan charge the pro-rated difference (separate receipt) or add a credit to the student; logged in seat history. Renewals can optionally be aligned to the library cycle with a bridge payment; existing students keep their stored dates otherwise (no data migration). Amount-edit permission: Admin always, Manager on by default, other staff off; owner-only setting, enforced on the server and every change audited.
+
+- **#8 Recurring bill schedule** — New recurring bills use a clear **First due date** and **Repeat every N days / months / years**. Month and year steps keep the original day and use the last day of short months (Jan 31 → Feb 28/29 → Mar 31; Feb 29 → Feb 28 in normal years). Payment date stays separate; reminders unchanged. Old bills keep their old due-day schedule and dates (no data changed).
+
+- **#11 Void admission frees the seat** — Voiding the first admission (History tab > Void) now ends the plan, frees the seat (server releases it) and marks the record "Voided" instead of deleting it. An audit entry is saved in the student's voidHistory. Renewal voids and Cancel Admission work as before. Refunds stay separate.
+
+- **#6 Shifts grouped by section** — Settings > Operating Shifts now lists shifts under the section whose plans use them. Shifts not used by a section plan go under "All sections". Derived only, no data or schema change.
+
+- **#5 Seat types grouped by section** — Settings > Seat Types now shows types under each section heading (Hall A, Hall B…) and an "All sections" group for shared ones. Section comes from the type's own section or its seats. No data change.
+
+- **Issue #10: Student Profile layout** (branch `fix/10-profile-layout`, merged into `release/21-issues` only).
+  - Header: the student's photo (or their initial when there is none), their name, and a 44px close button.
+  - Details in pairs: ID | Gender, Desk | Shift, Expiry | Status. Mobile and Emergency each take a full row.
+  - Two columns on phones, one column below 300px width.
+  - Fixed: on phones the 5 tabs (History, Relocations, Payments, Documents, WhatsApp) were squashed to 1px tall and couldn't be seen or tapped. They now always show.
+  - All actions are unchanged.
+
+- **Issue #3: camera capture and document preview** (branch `fix/03-camera-preview`, merged into `release/21-issues` only).
+  - A Camera button next to Attach/Upload opens the phone camera directly in three places: New Admission, the student profile Documents tab (custom and each required document), and new notices.
+  - On computers it opens the normal file picker.
+  - New Admission has a Preview button that opens the file full screen with Retake (the same camera or picker) and Remove.
+  - New notices also get a full-screen preview with Remove.
+  - Back closes the preview only.
+  - Pending documents, "Skip for now", and the photo-required setting are unchanged.
+  - The photo on receipts was done in #12.
+
+- **Issue #1: browser Back / Forward inside the library** (branch `fix/01-back-forward`, merged into `release/21-issues` only).
+  - Each screen change adds a history entry like `#/students`, so Back and Forward move between library screens.
+  - Back closes an open window first: student profile, new admission, receipt, change password, and the renew, relocate, extend, edit, bulk renew, WhatsApp send and document preview windows.
+  - Back on the first screen no longer leaves the library or lands on the login page. It stays and shows "Use Sign out to leave".
+  - A reload keeps the current screen.
+  - Menu, tabs, login and logout are unchanged. No new library was added.
+
+- **Issue #12: receipt print layout** (branch `fix/12-receipt-print`, merged into `release/21-issues` only).
+  - Printing now gives one A4 page split into two A5 halves, a "Student copy" and a "Library copy", with a dashed cut line.
+  - Each copy is shrunk to fit its half (never enlarged), so nothing is cut off and it no longer sits in the top-left corner.
+  - The student's photo shows on the receipt (on screen and in print) when they have an uploaded "Photograph" image document.
+  - Receipt content and the WhatsApp receipt are unchanged.
+
+- **Issue #15 (part 1): Change Password inside the account** (branch `fix/15-change-password`, merged into `release/21-issues` only).
+  - A key button in the top bar opens a Change password form: current password, new password, and confirm.
+  - Checks: at least 8 characters, the two new passwords must match, and the new one must differ from the current one.
+  - Google-only accounts can set a first password without entering a current one.
+  - Server: after 5 wrong current-password tries the user waits 15 minutes.
+  - Server: a wrong current password now returns 400 instead of 401. Before, a wrong entry signed the user out; this also fixes the Partner portal.
+  - Every change is audited (already existed).
+  - Forgot Password and Google login are unchanged. Signup comes later with #14.
+
+- **Issue #20: support replies confirm when sent** (branch `fix/20-support-confirm`, merged into `release/21-issues` only).
+  - Owner and Super Admin replies show "Reply sent" only after the server saves the reply, and the thread updates with it.
+  - If sending fails, the typed text is kept and a "Not sent" line with a Retry button appears.
+  - The Send button shows "Sending…" and can't be pressed twice.
+  - Long dropdown options are now cut with "…" instead of overlapping on mobile.
+  - Owner notifications for Super Admin replies already existed; no change.
+
+- **Issue #21: mobile bottom bar no longer hides the last item** (branch `fix/21-bottom-bar`, merged into `release/21-issues` only).
+  The bottom padding (bar height plus the phone's safe area) now sits on the box that actually scrolls. The app height now uses `100dvh`, so it fits the visible screen on mobile browsers, with `100vh` as a fallback. The 5-button bar itself is unchanged.
+
+- **Issue #7: close (X) buttons are easy to tap on mobile** (branch `fix/07-close-buttons`, merged into `release/21-issues` only).
+  One shared style in `responsive.css` gives every icon-only X button the same 20px icon and a tap area of at least 44×44px, in all 30+ modals and panels, with no change to their look or layout. Buttons with an X plus text (like "Exit Setup") are not affected.
+
+- **Issue #4: one way to select students** (branch `fix/04-bulk-select`, merged into `release/21-issues` only).
+  The separate sticky "N selected · Send WhatsApp" bar from PR #28 is gone, and Send WhatsApp is now in the old Bulk Actions bar next to Renew Selected and Remove Selected. Checkboxes still show on every row. Ticking one, or Select all, opens Select Students mode, so the menu's Select Students and a direct tick both lead to the same bar. Cancel Selection clears everything. Renew Selected now shows only for staff who can manage students, the same rule as the Select Students menu item.
+
+- **Issue #17: WhatsApp Templates and Auto reminders tabs now work** (branch `feat/17-templates-reminders`, merged into `release/21-issues` only).
+  - **Templates:** edit the fee reminder, renewal reminder, fee receipt and seat info messages. Variables are {name}, {amount}, {dueDate}, {library} and {seat}, with a live preview. Reset to default is available. Templates are saved per library. The send window uses them, and automatic reminders use the fee and renewal templates. Until a template is saved, the old wording is used.
+  - **Auto reminders:** up to 10 rules, each with days before, on or after the due date, a send time (9 AM–7 PM), on/off, and "only if unpaid". Each message is sent once and is cancelled when the student renews or pays. With no rules, the old single expiry timing still applies. Fee repeat timing moved to this tab. Quiet hours stay 9 AM–8 PM. No existing data is changed.
+
+- **Issue #18: WhatsApp Login copes with a sleeping WhatsApp server and never shows raw HTML** (branch `fix/18-whatsapp-login-429`, merged into `release/21-issues` only).
+  The WhatsApp Login page could show an HTTP 429 error full of HTML/CSS text. Its status and connect calls did not wake the sleeping free-plan WhatsApp (Evolution) server and did not retry. Now:
+  - These calls wake the server and retry on 429/5xx.
+  - An HTML error page is replaced by plain text: "WhatsApp service is starting up. Please try again in a minute."
+  - The app handles a non-JSON reply safely.
+  - The page retries by itself up to 3 times while it shows "WhatsApp service is waking up".
+  - Sending (PR #26) is unchanged.
+
+- **Issue #2: each library now has its own browser cache, so data can no longer leak between libraries** ([PR #30](https://github.com/ShivamP0077/Library-Management-Software/pull/30), branch `fix/tenant-cache-isolation`, merged into `release/21-issues` only — not deployed to main).
+  Before, every library on the same browser shared one set of `library_*` keys. When you opened a library whose server data was empty, the app uploaded whatever another library had left in the browser. That is how data could be copied from one library into another. Now:
+  - Every key, including the setup wizard draft and the saved documents, is stored as `t:<libraryId>:<key>`.
+  - An empty library starts empty with the setup wizard. Local data is only uploaded if it was saved by that same library.
+  - Super-admin read-only views use memory only, and logging out clears the in-memory cache scope.
+  - Offline mode keeps its old keys.
+  - Old unprefixed data is copied only into the library the old marker names. It is never uploaded automatically and never deleted.
+  - Tests: `tests/tenantCache.test.js`.
+
 ## 2026-11-04 (IST)
 
 - **WhatsApp phase 1: WhatsApp section, send button on every student, bulk send, disconnected banner** ([PR #28](https://github.com/ShivamP0077/Library-Management-Software/pull/28), merge commit [`a835fd2`](https://github.com/ShivamP0077/Library-Management-Software/commit/a835fd2), 19:00 IST).

@@ -6,6 +6,7 @@ import {
   Beaker, CheckCircle2, ChevronRight, X, AlertCircle, Calendar,
   UserPlus, UserCheck, Power, Shield, Check, Minus, Phone, Mail, Users
 } from 'lucide-react';
+import { groupSeatTypesBySection, groupShiftsBySection } from '../utils/sectionGroups';
 import { motion, AnimatePresence } from 'framer-motion';
 import { NumericInput } from './NumericInput';
 import { SetupWizard } from './SetupWizard';
@@ -31,6 +32,8 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
     copyFromBranch, getSetupStatus, generateTestStudents, clearTestData,
     addStaffMember, updateStaffMember, toggleStaffStatus, deleteStaffMember, hasPermission
   } = useLibrary();
+  const { lockedStaffId } = useLibrary();
+  const isOwnerSession = !lockedStaffId;
 
   const canManageWhatsapp = !currentStaff || currentStaff.role === 'Admin' || currentStaff.role === 'Manager' || hasPermission?.('settings', 'manage') || hasPermission?.('settings', 'edit');
 
@@ -107,7 +110,11 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
     receiptFooter: settings.receiptFooter || '',
     billingCycleMode: settings.billingCycleMode || 'ANNIVERSARY',
     gracePeriodDays: settings.gracePeriodDays ?? 3,
-    calendarBillingDay: settings.calendarBillingDay ?? 1
+    calendarBillingDay: settings.calendarBillingDay ?? 1,
+    cycleDays: settings.cycleDays ?? 30,
+    cycleAnchorDate: settings.cycleAnchorDate || '',
+    managerCanEditAmount: settings.managerCanEditAmount !== false,
+    staffCanEditAmount: settings.staffCanEditAmount === true
   });
 
   // Keep billingFormData in sync if settings changes externally
@@ -124,7 +131,11 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
       receiptFooter: settings.receiptFooter || '',
       billingCycleMode: settings.billingCycleMode || 'ANNIVERSARY',
       gracePeriodDays: settings.gracePeriodDays ?? 3,
-      calendarBillingDay: settings.calendarBillingDay ?? 1
+    calendarBillingDay: settings.calendarBillingDay ?? 1,
+      cycleDays: settings.cycleDays ?? 30,
+      cycleAnchorDate: settings.cycleAnchorDate || '',
+      managerCanEditAmount: settings.managerCanEditAmount !== false,
+      staffCanEditAmount: settings.staffCanEditAmount === true
     });
   }, [settings]);
 
@@ -234,7 +245,14 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
       receiptFooter: billingFormData.receiptFooter,
       billingCycleMode: billingFormData.billingCycleMode,
       gracePeriodDays: Number(billingFormData.gracePeriodDays) || 3,
-      calendarBillingDay: Number(billingFormData.calendarBillingDay) || 1
+      calendarBillingDay: Number(billingFormData.calendarBillingDay) || 1,
+      cycleDays: Math.max(1, Number(billingFormData.cycleDays) || 30),
+      cycleAnchorDate: billingFormData.cycleAnchorDate || '',
+      // Issue #9: only the owner may change who can edit amounts (server enforces too).
+      ...(isOwnerSession ? {
+        managerCanEditAmount: !!billingFormData.managerCanEditAmount,
+        staffCanEditAmount: !!billingFormData.staffCanEditAmount
+      } : {})
     }));
     toast.success('Library branding, contact & billing configuration saved!');
   };
@@ -1035,8 +1053,10 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
             </button>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' }}>
-            {displayedShifts.map(sh => {
+          {/* Issue #6: shifts under the sections whose plans use them (derived, nothing stored). */}
+          {(() => {
+            const shiftGroups = groupShiftsBySection(displayedShifts, displayedPlans, displayedSections);
+            const renderShift = (sh, gkey) => {
               const isUnsynced = getUnsyncedShifts ? getUnsyncedShifts().some(s => s.id === sh.id) : false;
               let scopeLabel = 'All Branches';
               if (sh.branchId && sh.branchId !== 'all') {
@@ -1045,7 +1065,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
               }
 
               return (
-                <div key={sh.id} style={{ padding: '14px', background: '#f8fafc', border: isUnsynced ? '1px solid #fde68a' : '1px solid var(--border-light)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div key={`${gkey}-${sh.id}`} data-shift={sh.name} style={{ padding: '14px', background: '#f8fafc', border: isUnsynced ? '1px solid #fde68a' : '1px solid var(--border-light)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                       <strong style={{ fontSize: '14px' }}>{sh.name}</strong>
@@ -1082,8 +1102,18 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                   </div>
                 </div>
               );
-            })}
-          </div>
+            };
+            return shiftGroups.map(g => (
+              <div key={g.key} className="section-group" style={{ marginBottom: '16px' }}>
+                {(shiftGroups.length > 1 || g.key !== '__shared') && (
+                  <h4 className="section-group-title" style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 8px 0' }}>{g.title}</h4>
+                )}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' }}>
+                  {g.items.map(({ item }) => renderShift(item, g.key))}
+                </div>
+              </div>
+            ));
+          })()}
         </div>
       )}
 
@@ -1112,11 +1142,10 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
             </button>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
-            {displayedSeatTypes.map(st => {
-              const physicalSeats = (seats || []).filter(s => s.seatTypeId === st.id);
-              const seatCount = physicalSeats.length;
-
+          {/* Issue #5: seat types under their section heading (derived, nothing stored). */}
+          {(() => {
+            const groups = groupSeatTypesBySection(displayedSeatTypes, seats || [], displayedSections);
+            const renderCard = (st, seatCount, gkey) => {
               let capacitySubtitle = '';
               if (st.allocationMode === 'Fixed') {
                 capacitySubtitle = `Fixed (${seatCount} ${seatCount === 1 ? 'seat' : 'seats'})`;
@@ -1129,7 +1158,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
               }
 
               return (
-                <div key={st.id} style={{ padding: '14px 16px', background: '#f8fafc', borderRadius: '8px', border: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div key={`${gkey}-${st.id}`} data-seat-type={st.name} style={{ padding: '14px 16px', background: '#f8fafc', borderRadius: '8px', border: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <strong style={{ fontSize: '14px' }}>{st.name}</strong>
                     <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px', fontWeight: 500 }}>
@@ -1146,8 +1175,18 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                   </div>
                 </div>
               );
-            })}
-          </div>
+            };
+            return groups.map(g => (
+              <div key={g.key} className="section-group" style={{ marginBottom: '16px' }}>
+                {(groups.length > 1 || g.key !== '__shared') && (
+                  <h4 className="section-group-title" style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 8px 0' }}>{g.title}</h4>
+                )}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
+                  {g.items.map(({ item, seatCount }) => renderCard(item, seatCount, g.key))}
+                </div>
+              </div>
+            ));
+          })()}
         </div>
       )}
 
@@ -1432,11 +1471,16 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                   >
                     <option value="ANNIVERSARY">Anniversary-Based (Join Date to same date next month)</option>
                     <option value="CALENDAR_MONTH">Calendar-Month Based (1st to month-end)</option>
+                    <option value="N_DAYS">Every N Days (fixed library cycle)</option>
+                    <option value="YEARLY">Yearly (library-wide year)</option>
                   </select>
                   <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
                     {billingFormData.billingCycleMode === 'ANNIVERSARY' 
                       ? 'Example: Joined 15 Feb → Due 15 Mar (coverage 15 Feb–14 Mar).' 
-                      : 'Example: Billed on 1st of each calendar month.'}
+                      : billingFormData.billingCycleMode === 'CALENDAR_MONTH' ? 'Example: Billed on 1st of each calendar month. New joiners pay pro-rated days to month-end.'
+                      : billingFormData.billingCycleMode === 'N_DAYS' ? 'Example: 30-day cycle; joining on day 10 pays for days 10–30 only.'
+                      : 'Example: One library year; joining mid-year pays the remaining days only.'}
+                    {' '}Existing students keep their current dates; they can be aligned at their next renewal.
                   </span>
                 </div>
 
@@ -1462,6 +1506,31 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                     />
                   </div>
                 )}
+                {(billingFormData.billingCycleMode === 'N_DAYS' || billingFormData.billingCycleMode === 'YEARLY') && (
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontSize: '12px', fontWeight: 600 }}>Cycle Start Date</label>
+                    <input type="date" className="form-input" value={billingFormData.cycleAnchorDate} onChange={e => setBillingFormData(p => ({ ...p, cycleAnchorDate: e.target.value }))} />
+                  </div>
+                )}
+                {billingFormData.billingCycleMode === 'N_DAYS' && (
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontSize: '12px', fontWeight: 600 }}>Cycle Length (Days)</label>
+                    <NumericInput className="form-input" value={billingFormData.cycleDays} onChange={e => setBillingFormData(p => ({ ...p, cycleDays: Number(e.target.value) || 0 }))} />
+                  </div>
+                )}
+                <div className="form-group">
+                  <label className="form-label" style={{ fontSize: '12px', fontWeight: 600 }}>Who can change fee amounts</label>
+                  <label style={{ display: 'flex', gap: '8px', alignItems: 'center', fontSize: '13px' }}>
+                    <input type="checkbox" checked disabled /> Admin (always)
+                  </label>
+                  <label style={{ display: 'flex', gap: '8px', alignItems: 'center', fontSize: '13px' }}>
+                    <input type="checkbox" data-testid="perm-manager" disabled={!isOwnerSession} checked={!!billingFormData.managerCanEditAmount} onChange={e => setBillingFormData(p => ({ ...p, managerCanEditAmount: e.target.checked }))} /> Manager
+                  </label>
+                  <label style={{ display: 'flex', gap: '8px', alignItems: 'center', fontSize: '13px' }}>
+                    <input type="checkbox" data-testid="perm-staff" disabled={!isOwnerSession} checked={!!billingFormData.staffCanEditAmount} onChange={e => setBillingFormData(p => ({ ...p, staffCanEditAmount: e.target.checked }))} /> Other staff
+                  </label>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Every changed amount is recorded in the audit log.{isOwnerSession ? '' : ' Only the library owner can change this.'}</span>
+                </div>
               </div>
 
               {/* Library Identity & Contact Settings */}

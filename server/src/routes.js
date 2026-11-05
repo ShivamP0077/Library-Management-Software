@@ -10,10 +10,12 @@ import { createWhatsappRouter, createWhatsappWebhookRouter } from './whatsapp.js
 import { createFinanceRouter, validatePaymentBatch } from './finance.js';
 import { createStudentRouter, recordStudentDiff, recordArchiveDiff, checkCapacity } from './students.js';
 import { audit } from './audit.js';
+import { enforceAmountEdits, amountSettingsChanged, isOwnerRole } from './amountPermission.js';
 import { createNotificationRouter } from './notifications.js';
 import { createInsightsRouter } from './insights.js';
 import { createSupportRouter, createSupportAdminRouter } from './support.js';
 import { createPartnerAdminRouter, createPartnerPortalRouter } from './partners.js';
+import { createTemplateRouter } from './templates.js';
 import { createReminderRouter, autoSendReceipts, receiptsForNewStudents } from './reminders.js';
 
 // Auto-receipts never block or fail the save; in tests we await so results are observable.
@@ -21,7 +23,14 @@ const sendReceiptsAfterSave = async (tenantId, payments, newStudentKeys) => {
   const p = (newStudentKeys ? receiptsForNewStudents(tenantId, newStudentKeys) : autoSendReceipts(tenantId, payments)).catch(e => console.error('[receipts]', e.message));
   if (process.env.NODE_ENV === 'test') await p;
 };
-import { createPublicAccountRouter, createTenantAccountRouter, auditSuperadminAccess } from './accounts.js';
+import { deleteLibraryData } from './deleteLibrary.js';
+import { createSignupRouter, createGoogleSignupPending, signupEnabled } from './signup.js';
+import { createSubscriptionRouter } from './subscription.js';
+import { requireActiveSubscription, requireFeature, refreshSubscriptionStatus, accessFor } from './subscriptionAccess.js';
+import { createPlanAdminRouter, SoftwarePlan, checkBranchLimit, checkStaffLimit } from './plans.js';
+import { createPaymentsAdminRouter } from './paymentsAdmin.js';
+import { refreshPaymentProvider } from './paymentConfig.js';
+import { createPublicAccountRouter, createTenantAccountRouter, auditSuperadminAccess, acceptInvite } from './accounts.js';
 import { createSeatRouter, reconcileStudents, releaseForStudents, validateSeatSync, SeatAllocation, seatMatchesAllocation, SeatConflictError } from './seats.js';
 
 const router = express.Router();
@@ -63,7 +72,14 @@ async function issueSession(user, res) {
   const { library, denial } = await resolveSession(user);
   if (denial) return res.status(denial.status).json({ error: denial.message });
   await User.updateOne({ _id: user._id }, { $set: { lastLoginAt: new Date() } });
-  res.json({ token: signToken(user), user: user.toSafeJSON(), library: library && { libraryId: library.libraryId, name: library.name, status: library.status } });
+  const access = library ? accessFor(library, { role: user.role }) : { ok: true, status: null };
+  const subscriptionAccess = { ok: access.ok, status: access.status, code: access.code || null, message: access.message || null };
+  res.json({
+    token: signToken(user),
+    user: user.toSafeJSON(),
+    library: library && { libraryId: library.libraryId, name: library.name, status: library.status },
+    subscriptionAccess,
+  });
 }
 
 // ---------------------------------------------------------------- Server-side Google OAuth
@@ -112,7 +128,14 @@ router.get('/auth/google/start', (req, res) => {
   const state = crypto.randomBytes(32).toString('base64url');
   const codeVerifier = crypto.randomBytes(32).toString('base64url');
   const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
-  const cookieValue = Buffer.from(JSON.stringify({ s: state, v: codeVerifier }), 'utf8').toString('base64url');
+  // Issue #13: invite token may ride along. Issue #15: signup=1 starts Google owner signup.
+  const invite = typeof req.query.invite === 'string' && /^[A-Za-z0-9_-]{16,200}$/.test(req.query.invite) ? req.query.invite : undefined;
+  const signup = req.query.signup === '1' || req.query.signup === 'true';
+  const cookieValue = Buffer.from(JSON.stringify({
+    s: state, v: codeVerifier,
+    ...(invite ? { i: invite } : {}),
+    ...(signup ? { su: 1 } : {}),
+  }), 'utf8').toString('base64url');
 
   res.cookie(GOOGLE_COOKIE, cookieValue, { ...googleCookieOptions(), maxAge: 600 * 1000 });
   return res.redirect(302, buildAuthUrl({ state, codeChallenge }));
@@ -149,8 +172,19 @@ router.get('/auth/google/callback', wrap(async (req, res) => {
       throw err;
     }
 
-    const user = await User.findOne({ email: identity.email });
-    if (!user) return fail('not_registered'); // Google identity never creates users or grants roles
+    let user = await User.findOne({ email: identity.email });
+    if (!user && cookieData.i) {
+      // Only a valid invite for this exact email creates the account (never self-signup).
+      const r = await acceptInvite({ token: String(cookieData.i), google: identity, ip: req.ip });
+      if (r.error) return fail(r.code);
+      user = r.user;
+    }
+    // Issue #15: Google owner signup — park identity and let the frontend finish plan + library.
+    if (!user && cookieData.su && signupEnabled()) {
+      const pending = await createGoogleSignupPending(identity);
+      return res.redirect(302, `${frontendUrl}/#google_signup=${encodeURIComponent(pending)}`);
+    }
+    if (!user) return fail('not_registered'); // Google identity never creates users or grants roles outside signup
     if (user.googleSub && user.googleSub !== identity.sub) return fail('account_mismatch');
 
     const { denial } = await resolveSession(user);
@@ -195,6 +229,7 @@ router.post('/auth/google', wrap(async (req, res) => {
 }));
 
 router.use(createPublicAccountRouter({ issueSession }));
+router.use(createSignupRouter({ issueSession })); // Issue #15 (off unless OWNER_SIGNUP_ENABLED=true)
 
 // Evolution delivery webhook: no login, verified by a per-instance HMAC token.
 router.use('/whatsapp', createWhatsappWebhookRouter());
@@ -204,15 +239,32 @@ router.use(requireAuth);
 router.get('/auth/me', wrap(async (req, res) => {
   const user = await User.findById(req.user.id);
   const tenantId = tenantOfUser(user);
-  const library = tenantId ? await Library.findOne({ libraryId: tenantId }).lean() : null;
-  res.json({ user: user.toSafeJSON(), library: library && { libraryId: library.libraryId, name: library.name, status: library.status } });
+  let library = tenantId ? await refreshSubscriptionStatus(tenantId) : null;
+  if (!library && tenantId) library = await Library.findOne({ libraryId: tenantId }).lean();
+  const access = accessFor(library, { role: user.role });
+  res.json({
+    user: user.toSafeJSON(),
+    library: library && { libraryId: library.libraryId, name: library.name, status: library.status, planId: library.planId || null, subscription: library.subscription || null },
+    subscriptionAccess: { ok: access.ok, status: access.status, code: access.code, message: access.message || null },
+  });
 }));
 
+const pwTries = new Map();
 router.post('/auth/change-password', wrap(async (req, res) => {
   const { currentPassword, newPassword } = req.body || {};
   if (!validatePassword(newPassword)) return res.status(400).json({ error: 'New password must be at least 8 characters' });
   const user = await User.findById(req.user.id).select('+passwordHash');
-  if (user.passwordHash && !(await bcrypt.compare(String(currentPassword || ''), user.passwordHash))) return res.status(401).json({ error: 'Current password is incorrect' });
+  if (!user) return res.status(401).json({ error: 'Not signed in' });
+  // Issue #15: slow down guessing of the current password (5 wrong tries per 15 minutes).
+  const key = String(user._id); const now = Date.now();
+  const tries = (pwTries.get(key) || []).filter(t => now - t < 15 * 60 * 1000);
+  if (tries.length >= 5) return res.status(429).json({ error: 'Too many wrong attempts. Try again in 15 minutes.' });
+  if (user.passwordHash && !(await bcrypt.compare(String(currentPassword || ''), user.passwordHash))) {
+    pwTries.set(key, [...tries, now]);
+    return res.status(400).json({ error: 'Current password is incorrect' }); // 400, not 401: a 401 signs the user out in the app
+  }
+  pwTries.delete(key);
+  if (user.passwordHash && await bcrypt.compare(String(newPassword), user.passwordHash)) return res.status(400).json({ error: 'New password must be different from the current one' });
   user.passwordHash = await hashPassword(newPassword);
   user.authProviders = [...new Set([...(user.authProviders || []), 'password'])];
   await user.save();
@@ -227,6 +279,8 @@ admin.use(requireRole('superadmin'));
 admin.use(createInsightsRouter());
 admin.use(createPartnerAdminRouter());
 admin.use(createSupportAdminRouter());
+admin.use(createPlanAdminRouter());
+admin.use(createPaymentsAdminRouter()); // Issue #19
 
 admin.get('/libraries', wrap(async (_req, res) => {
   const libs = await Library.find().sort({ createdAt: 1 }).lean();
@@ -234,7 +288,8 @@ admin.get('/libraries', wrap(async (_req, res) => {
   const admins = await User.find({ role: 'client_admin' }).lean();
   const m = Object.fromEntries(perLibrary.map(x => [x.libraryId, x]));
   res.json(libs.map(l => ({
-    libraryId: l.libraryId, name: l.name, status: l.status, contactEmail: l.contactEmail, createdAt: l.createdAt,
+    libraryId: l.libraryId, name: l.name, status: l.status, contactEmail: l.contactEmail, createdAt: l.createdAt, planId: l.planId || null, studentLimit: l.studentLimit || null,
+    billing: l.subscription || null, deletionRequest: l.deletionRequest || null,
     admins: admins.filter(a => tenantOfUser(a) === l.libraryId).map(a => ({ id: String(a._id), email: a.email, name: a.name, status: a.status })),
     metrics: m[l.libraryId],
   })));
@@ -258,9 +313,23 @@ admin.patch('/libraries/:libraryId', wrap(async (req, res) => {
   if (req.body?.contactEmail !== undefined) set.contactEmail = req.body.contactEmail;
   if (req.body?.city !== undefined) set.city = req.body.city ? String(req.body.city).trim().slice(0, 80) : null;
   if (req.body?.studentLimit !== undefined) { const n = req.body.studentLimit === null ? null : Number(req.body.studentLimit); if (n !== null && !(n >= 0)) return res.status(400).json({ error: 'Invalid studentLimit' }); set.studentLimit = n || null; }
+  if (req.body?.planId !== undefined) {
+    if (req.body.planId && !(await SoftwarePlan.exists({ planId: req.body.planId }))) return res.status(400).json({ error: 'Unknown plan' });
+    set.planId = req.body.planId || null;
+  }
   await audit(req, 'library.update', { tenantId: req.params.libraryId, target: req.params.libraryId, detail: set });
   const lib = await Library.findOneAndUpdate({ libraryId: req.params.libraryId }, { $set: set }, { new: true, lean: true });
   lib ? res.json({ libraryId: lib.libraryId, name: lib.name, status: lib.status }) : res.status(404).json({ error: 'Library not found' });
+}));
+
+// Issue #16: permanent delete. The exact library name must be typed back; only that tenant's data is removed.
+admin.delete('/libraries/:libraryId', wrap(async (req, res) => {
+  const lib = await Library.findOne({ libraryId: req.params.libraryId }).lean();
+  if (!lib) return res.status(404).json({ error: 'Library not found' });
+  if (String(req.body?.confirmName ?? '').trim() !== String(lib.name).trim()) return res.status(400).json({ error: 'Type the library name exactly to confirm', code: 'confirm_mismatch' });
+  const r = await deleteLibraryData(lib.libraryId, { evolution: req.app.locals.evolutionClient });
+  await audit(req, 'library.deleted', { tenantId: lib.libraryId, target: lib.libraryId, detail: { name: lib.name, ...r } });
+  res.json({ ok: true, libraryId: lib.libraryId, ...r });
 }));
 
 admin.get('/metrics', wrap(async (_req, res) => {
@@ -310,6 +379,7 @@ router.use('/partner', createPartnerPortalRouter());
 const tenant = express.Router();
 tenant.use(tenantScope);
 tenant.use(auditSuperadminAccess);
+tenant.use(requireActiveSubscription); // Issue #14: lock writes when unpaid / trial ended / cancelled
 tenant.use(createTenantAccountRouter());
 
 // Client admins manage login accounts for their own library (staff / co-admins)
@@ -318,6 +388,7 @@ tenant.get('/users', requireRole('client_admin', 'superadmin'), wrap(async (req,
 }));
 tenant.post('/users', requireRole('client_admin', 'superadmin'), wrap(async (req, res) => {
   const role = req.body?.role === 'client_admin' ? 'client_admin' : 'staff';
+  if (role === 'staff') await checkStaffLimit(req.tenantId); // Issue #14: all user-creation endpoints
   const r = await createUser({ ...req.body, role, tenantId: req.tenantId, libraryId: req.tenantId });
   await audit(req, 'user.create', { target: r.user.email, detail: { role } });
   res.status(201).json({ user: r.user.toSafeJSON(), generatedPassword: r.generatedPassword || undefined });
@@ -351,6 +422,11 @@ tenant.get('/settings', wrap(async (req, res) => {
   res.json(s ? clean(s) : null);
 }));
 tenant.put('/settings', requireRole('client_admin', 'superadmin', 'staff'), wrap(async (req, res) => {
+  const before = await Settings.findOne({ tenantId: req.tenantId }).lean();
+  if (amountSettingsChanged(before || {}, req.body || {})) {
+    if (!isOwnerRole(req.user)) return res.status(403).json({ error: 'Only the owner can change who may edit payment amounts.', code: 'owner_only' });
+    await audit(req, 'settings.amount_edit_permission', { tenantId: req.tenantId, detail: { managerCanEditAmount: req.body?.managerCanEditAmount ?? null, staffCanEditAmount: req.body?.staffCanEditAmount ?? null } });
+  }
   const s = await Settings.findOneAndReplace({ tenantId: req.tenantId }, { ...stripMeta(req.body), tenantId: req.tenantId, libraryId: req.tenantId }, { upsert: true, new: true, lean: true });
   res.json(clean(s));
 }));
@@ -369,11 +445,13 @@ tenant.delete('/documents/:key', wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+tenant.use(createSubscriptionRouter());
 tenant.use(createSeatRouter());
 tenant.use(createFinanceRouter());
 tenant.use(createStudentRouter());
 tenant.use(createNotificationRouter());
 tenant.use(createReminderRouter());
+tenant.use(createTemplateRouter());
 tenant.use(createSupportRouter());
 
 // Generic REST for each entity collection, always filtered by req.tenantId
@@ -404,7 +482,8 @@ tenant.post('/:col', colParam, wrap(async (req, res) => {
     await checkCapacity(req.tenantId, n + 1, n);
     await reconcileStudents(req.tenantId, [body], { actor: req.user.email });
   }
-  if (req.params.col === 'payments') validatePaymentBatch([body]);
+  if (req.params.col === 'payments') { validatePaymentBatch([body]); await enforceAmountEdits(req, [body]); }
+  if (req.params.col === 'branches') { const n = await req.Model.countDocuments({ tenantId: req.tenantId }); await checkBranchLimit(req.tenantId, n + 1, n); }
   const d = await req.Model.create({ ...body, _key, tenantId: req.tenantId, libraryId: req.tenantId });
   if (req.params.col === 'students') await recordStudentDiff(req.tenantId, new Map(), [{ ...body, id: _key }], req.user.email);
   if (req.params.col === 'payments') await sendReceiptsAfterSave(req.tenantId, [{ ...body, _key }]);
@@ -422,6 +501,7 @@ tenant.put('/:col/:key', colParam, wrap(async (req, res) => {
   if (req.params.col === 'payments') {
     const prev = await req.Model.findOne({ tenantId: req.tenantId, _key: req.params.key }).lean();
     if (prev) validatePaymentBatch([{ ...clean(prev), ...stripMeta(req.body) }], new Map([[req.params.key, prev]]));
+    await enforceAmountEdits(req, [{ ...(prev ? clean(prev) : {}), ...stripMeta(req.body), receiptNo: prev?.receiptNo ?? req.params.key }], prev ? new Map([[String(prev.receiptNo ?? req.params.key), prev]]) : new Map());
   }
   const d = await req.Model.findOneAndUpdate({ tenantId: req.tenantId, _key: req.params.key }, { $set: stripMeta(req.body) }, { new: true, lean: true });
   d ? res.json(clean(d)) : res.status(404).json({ error: 'Not found' });
@@ -450,8 +530,13 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
   if (col === 'payments') {
     const prevDocs = await req.Model.find({ tenantId: req.tenantId }).lean();
     validatePaymentBatch(req.body.map(stripMeta), new Map(prevDocs.map(d => [String(d._key), d])));
+    await enforceAmountEdits(req, req.body.map(stripMeta), new Map(prevDocs.map(d => [String(d._key), d])));
     const had = new Set(prevDocs.map(d => String(d._key)));
     newPayments = req.body.map(stripMeta).map(b => ({ ...b, _key: keyOf(col, b) })).filter(b => b._key && !had.has(String(b._key)));
+  }
+  if (col === 'branches') {
+    const n = await req.Model.countDocuments({ tenantId: req.tenantId });
+    await checkBranchLimit(req.tenantId, new Set(req.body.map(stripMeta).map(b => keyOf(col, b)).filter(Boolean)).size, n);
   }
   if (col === 'students') {
     const prevDocs = await req.Model.find({ tenantId: req.tenantId }).lean();
@@ -485,6 +570,6 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
 }));
 
 // WhatsApp (Evolution API) is proxied server-side; mounted before the generic /:col routes
-router.use('/whatsapp', tenantScope, auditSuperadminAccess, createWhatsappRouter());
+router.use('/whatsapp', tenantScope, auditSuperadminAccess, requireActiveSubscription, requireFeature('whatsapp'), createWhatsappRouter());
 router.use('/', tenant);
 export default router;

@@ -37,7 +37,7 @@ export const SupportDesk = ({ libraries = [], onAccessLibrary }) => {
       </div>
       <Thread ticket={open} fetchAttachment={(m, a) => api.adminTicketAttachment(open.id, m, a)} />
       <ReplyBox placeholder="Reply as Library OS Support…" onSend={async (b) => setOpen(await api.adminReplyTicket(open.id, { ...b, status: replyStatus }))}
-        extra={<select className="input-field" style={{ width: 'auto' }} value={replyStatus} onChange={e => setReplyStatus(e.target.value)} aria-label="Status after reply">{STATUSES.map(s => <option key={s} value={s}>then: {label(s)}</option>)}</select>} />
+        extra={<select className="input-field" style={{ width: 'auto', maxWidth: '100%', minWidth: 0 }} value={replyStatus} onChange={e => setReplyStatus(e.target.value)} aria-label="Status after reply">{STATUSES.map(s => <option key={s} value={s}>then: {label(s)}</option>)}</select>} />
     </div>
   );
 

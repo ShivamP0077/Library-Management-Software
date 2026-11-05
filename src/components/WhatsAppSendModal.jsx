@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import { api, getToken } from '../utils/api';
 import { useWhatsappStatus, isDisconnected, fillTemplate, navigateTo, refreshWhatsappStatus } from '../utils/whatsappStatus';
 import { WhatsAppMessages } from './WhatsAppMessages';
+import { useLibrary } from '../context/LibraryContext';
 
 export const SEND_TYPES = [
   { id: 'fee_reminder', label: 'Fee reminder', text: 'Hi {name} 👋\nThis is a reminder that your fee of ₹{amount} for {month} is due on {dueDate}.\nPlease pay at the desk or via UPI. Thank you!' },
@@ -13,14 +14,14 @@ export const SEND_TYPES = [
   { id: 'seat_info', label: 'Seat / shift info', text: 'Hi {name}, your seat details:\nSeat: {seat}\nShift: {shift}\nValid till: {dueDate}\nSee you at the library 📚' },
   { id: 'custom', label: 'Custom', text: 'Hi {name}, ' },
 ];
-const VARS = ['{name}', '{amount}', '{month}', '{dueDate}', '{seat}'];
+export const VARS = ['{name}', '{amount}', '{dueDate}', '{library}', '{seat}', '{month}'];
 
 const monthName = (d) => { const x = d ? new Date(d) : new Date(); return isNaN(x) ? '' : x.toLocaleString('en-IN', { month: 'short', year: 'numeric' }); };
 const money = (n) => (n == null || n === '' ? '' : Number(n).toLocaleString('en-IN'));
 const payAmount = (p) => p?.amountPaid ?? p?.netTotal ?? p?.amount;
 const sortedPayments = (s) => [...(s?.paymentHistory || [])].filter(p => p?.receiptNo).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
 
-export function varsFor(student, payment) {
+export function varsFor(student, payment, library = '') {
   const last = payment || sortedPayments(student)[0];
   return {
     name: String(student?.name || '').split(' ')[0] || 'there',
@@ -30,6 +31,7 @@ export function varsFor(student, payment) {
     seat: student?.seatNo || '',
     shift: student?.shift || '',
     receiptNo: payment?.receiptNo || '',
+    library: library || '',
   };
 }
 
@@ -48,15 +50,26 @@ export const WhatsAppSendModal = ({ students = [], onClose }) => {
   const payments = useMemo(() => sortedPayments(student), [student]);
   const [receiptNo, setReceiptNo] = useState(payments[0]?.receiptNo || '');
   const [text, setText] = useState(types[0].text);
+  // Issue #17: the library's saved templates replace the built-in text for that type.
+  const [saved, setSaved] = useState({});
+  const { settings } = useLibrary() || {};
+  const libName = settings?.name || '';
+  const textFor = (id, tpl = saved) => tpl[id] || SEND_TYPES.find(t => t.id === id).text;
+  useEffect(() => {
+    if (!getToken()) return;
+    let on = true;
+    api.whatsappTemplates().then(t => { if (on && t) { setSaved(t); setText(prev => (prev === types[0].text ? textFor(types[0].id, t) : prev)); } }).catch(() => {});
+    return () => { on = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [sending, setSending] = useState(false);
   const [results, setResults] = useState(null); // bulk: [{ student, ok, error }]
   const [historyKey, setHistoryKey] = useState(0);
   const wa = useWhatsappStatus();
   useEffect(() => { refreshWhatsappStatus(); }, []);
 
-  const pickType = (id) => { setType(id); setText(SEND_TYPES.find(t => t.id === id).text); };
+  const pickType = (id) => { setType(id); setText(textFor(id)); };
   const payment = type === 'fee_receipt' ? payments.find(p => p.receiptNo === receiptNo) : null;
-  const preview = fillTemplate(text, varsFor(student, payment));
+  const preview = fillTemplate(text, varsFor(student, payment, libName));
 
   const offline = !getToken();
   const blocked = offline ? 'Sign in to a cloud account to send WhatsApp messages.'
@@ -67,7 +80,7 @@ export const WhatsAppSendModal = ({ students = [], onClose }) => {
 
   const sendOne = async (s, msgText) => {
     const pay = type === 'fee_receipt' ? payment : null;
-    const r = await api.whatsappSendToStudent(s.id, { type, text: fillTemplate(msgText, varsFor(s, pay)), receiptNo: pay?.receiptNo });
+    const r = await api.whatsappSendToStudent(s.id, { type, text: fillTemplate(msgText, varsFor(s, pay, libName)), receiptNo: pay?.receiptNo });
     if (r?.status === 'sent' || r?.status === 'duplicate') return { ok: true };
     return { ok: false, error: r?.message?.error || r?.error || (r?.status === 'skipped' ? 'Not sent (WhatsApp is off or the student opted out)' : 'Could not send') };
   };

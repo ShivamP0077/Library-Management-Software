@@ -1036,8 +1036,10 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
             </button>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' }}>
-            {displayedShifts.map(sh => {
+          {/* Issue #6: shifts under the sections whose plans use them (derived, nothing stored). */}
+          {(() => {
+            const shiftGroups = groupShiftsBySection(displayedShifts, displayedPlans, displayedSections);
+            const renderShift = (sh, gkey) => {
               const isUnsynced = getUnsyncedShifts ? getUnsyncedShifts().some(s => s.id === sh.id) : false;
               let scopeLabel = 'All Branches';
               if (sh.branchId && sh.branchId !== 'all') {
@@ -1046,7 +1048,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
               }
 
               return (
-                <div key={sh.id} style={{ padding: '14px', background: '#f8fafc', border: isUnsynced ? '1px solid #fde68a' : '1px solid var(--border-light)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div key={`${gkey}-${sh.id}`} data-shift={sh.name} style={{ padding: '14px', background: '#f8fafc', border: isUnsynced ? '1px solid #fde68a' : '1px solid var(--border-light)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                       <strong style={{ fontSize: '14px' }}>{sh.name}</strong>
@@ -1083,8 +1085,18 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                   </div>
                 </div>
               );
-            })}
-          </div>
+            };
+            return shiftGroups.map(g => (
+              <div key={g.key} className="section-group" style={{ marginBottom: '16px' }}>
+                {(shiftGroups.length > 1 || g.key !== '__shared') && (
+                  <h4 className="section-group-title" style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 8px 0' }}>{g.title}</h4>
+                )}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' }}>
+                  {g.items.map(({ item }) => renderShift(item, g.key))}
+                </div>
+              </div>
+            ));
+          })()}
         </div>
       )}
 

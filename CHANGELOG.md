@@ -2,6 +2,8 @@
 
 ## 2026-11-05 (IST)
 
+- **#19 Payment providers (Razorpay + PayPal)** — 18:20 IST. Super Admin **Payments** tab stores Razorpay/PayPal keys encrypted (AES-256-GCM). Active provider powers `POST /subscription/checkout` (Payment Links / PayPal Orders), signature-verified webhooks, software invoices, AutoPay helpers (Razorpay subscriptions), lock-at-expiry via existing #14 statuses (`past_due` on failed charge). Deletion requests email Super Admins and appear under Payments for acknowledge/dismiss.
+
 - **#15 Google signup + payment step hooks** — 17:55 IST. Owner signup (still gated by `OWNER_SIGNUP_ENABLED`) can continue with Google (`?signup=1` OAuth → pending token → `/auth/signup/complete-google`). Config exposes `googleSignup` and `paymentsConfigured`. Signup responses include `needsPayment` + `paymentHook` pointing at `POST /api/subscription/checkout` (402 until a provider is registered in #19). UI shows a payment step after creating a paid library.
 
 - **#14 Subscription enforcement** — 17:40 IST. Libraries with a subscription that is awaiting payment, expired (including ended trials), cancelled or past-due can still read data and manage their plan, but writes are blocked (402). Plan feature lists gate WhatsApp when the plan does not include it (empty list = all features). Staff limits apply on invites, invite accept, and POST /users. `/auth/me` returns `subscriptionAccess` and the app shows a lock banner.

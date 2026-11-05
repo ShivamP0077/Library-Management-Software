@@ -11,9 +11,11 @@ import { LibrarySettings } from './components/LibrarySettings';
 import { NewStudentModal } from './components/Modals/NewStudentModal';
 import { PrintReceiptModal } from './components/Modals/PrintReceiptModal';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Toaster } from 'react-hot-toast';
+import toast, { Toaster } from 'react-hot-toast';
 import { ShieldAlert, ArrowLeft, LogOut, Eye, WifiOff, Cloud, KeyRound } from 'lucide-react';
 import { ChangePasswordModal } from './auth/ChangePasswordModal';
+import { initHistory, navTab, TAB_FROM_HASH } from './utils/appHistory';
+import { useBackClose } from './utils/useBackClose';
 import { NotificationsCenter } from './components/NotificationsCenter';
 import { SupportCenter } from './components/SupportCenter';
 import { PreviousStudentRecords } from './components/PreviousStudentRecords';
@@ -37,7 +39,16 @@ const pageVariants = {
 
 export const AppContent = () => {
   const { settings, hasPermission, currentStaff } = useLibrary();
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const KNOWN_TABS = ['dashboard', 'students', 'seats', 'payments', 'expenses', 'reports', 'settings', 'whatsapp', 'archives', 'notifications', 'support'];
+  const [activeTab, setActiveTab] = useState(() => { const t = TAB_FROM_HASH(); return KNOWN_TABS.includes(t) ? t : 'dashboard'; });
+  // Issue #1: browser Back/Forward move between screens.
+  React.useEffect(() => initHistory(activeTab, (t) => { if (KNOWN_TABS.includes(t)) setActiveTab(t); }), []); // eslint-disable-line react-hooks/exhaustive-deps
+  React.useEffect(() => { navTab(activeTab); }, [activeTab]);
+  React.useEffect(() => {
+    const onStart = () => toast('You are on the first screen. Use Sign out to leave.', { id: 'back-at-start' });
+    window.addEventListener('libos:back-at-start', onStart);
+    return () => window.removeEventListener('libos:back-at-start', onStart);
+  }, []);
   const [whatsappPage, setWhatsappPage] = useState('messages');
   const canManageWhatsapp = !currentStaff || currentStaff.role === 'Admin' || currentStaff.role === 'Manager' || hasPermission('settings', 'manage') || hasPermission('settings', 'edit');
   // Deep links from anywhere (banner Reconnect, Settings shortcuts): navigateTo(tab, sub)
@@ -52,6 +63,10 @@ export const AppContent = () => {
   const [renewActionStudent, setRenewActionStudent] = useState(null);
   const [relocateActionStudent, setRelocateActionStudent] = useState(null);
   const [activeReceiptToPrint, setActiveReceiptToPrint] = useState(null);
+  // Back closes these first (issue #1).
+  useBackClose(isNewStudentModalOpen, () => setIsNewStudentModalOpen(false));
+  useBackClose(!!selectedStudent, () => setSelectedStudent(null));
+  useBackClose(!!activeReceiptToPrint, () => setActiveReceiptToPrint(null));
   
   // Integrity deep-link action & Setup Wizard state
   const [settingsAction, setSettingsAction] = useState(null);
@@ -235,6 +250,7 @@ export const AppContent = () => {
 const SessionBar = ({ libraryName, readOnly, onBack, isOffline = false, onSwitchToCloud }) => {
   const { user, logout } = useAuth();
   const [pwOpen, setPwOpen] = useState(false);
+  useBackClose(pwOpen, () => setPwOpen(false));
   return (
     <div id="session-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '6px 16px', fontSize: 12, background: readOnly ? '#fef3c7' : isOffline ? '#1e293b' : '#111827', color: readOnly ? '#92400e' : '#e5e7eb' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

@@ -18,6 +18,7 @@ export const Library = mongoose.model('Library', new mongoose.Schema({
   isDefault: { type: Boolean, default: false },
   city: { type: String, trim: true, default: null }, // used for Library Insights location filters
   studentLimit: { type: Number, default: null }, // active + expired cap (null = unlimited)
+  planId: { type: String, default: null }, // Issue #14: software plan (limits come from it unless overridden)
 }, { timestamps: true }));
 
 export const ROLES = ['superadmin', 'client_admin', 'staff', 'partner', 'agent'];

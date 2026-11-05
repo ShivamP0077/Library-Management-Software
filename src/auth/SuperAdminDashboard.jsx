@@ -6,6 +6,7 @@ import { useAuth } from './AuthContext';
 import { LibraryInsights } from './LibraryInsights';
 import { PartnersAdmin } from './PartnersAdmin';
 import { SupportDesk } from './SupportDesk';
+import { PlansAdmin } from './PlansAdmin';
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—');
 
@@ -99,10 +100,12 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
           <button role="tab" aria-selected={view === 'business'} className={`btn btn-sm ${view === 'business' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView('business')}>Business dashboard</button>
           <button role="tab" aria-selected={view === 'insights'} className={`btn btn-sm ${view === 'insights' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView('insights')}>Library Insights &amp; Analytics</button>
           <button role="tab" aria-selected={view === 'partners'} className={`btn btn-sm ${view === 'partners' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView('partners')}>Partners &amp; Commissions</button>
+          <button role="tab" aria-selected={view === 'plans'} className={`btn btn-sm ${view === 'plans' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView('plans')}>Software plans</button>
           <button role="tab" aria-selected={view === 'support'} className={`btn btn-sm ${view === 'support' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView('support')}>Support tickets{summary?.kpis?.support?.value ? ` (${summary.kpis.support.value})` : ''}</button>
         </div>
 
         {view === 'insights' && <LibraryInsights libraries={libraries} />}
+        {view === 'plans' && <PlansAdmin libraries={libraries} onChanged={load} />}
         {view === 'partners' && <PartnersAdmin libraries={libraries} onChanged={load} />}
         {view === 'support' && <SupportDesk libraries={libraries} onAccessLibrary={(id) => { const l = libraries.find(x => x.libraryId === id); if (l) onOpenLibrary(l, true); }} />}
 

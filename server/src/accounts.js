@@ -12,6 +12,7 @@ import { hashPassword, validatePassword } from './services.js';
 import { sendMail } from './mailer.js';
 import { audit, AuditLog, pubAudit } from './audit.js';
 import { requireRole } from './auth.js';
+import { checkStaffLimit } from './plans.js';
 
 const sha = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -172,6 +173,7 @@ export function createTenantAccountRouter() {
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'A valid email is required' });
     if (await User.exists({ email })) return res.status(409).json({ error: 'This email already has an account' });
     const role = req.body?.role === 'client_admin' ? 'client_admin' : 'staff';
+    if (role === 'staff') await checkStaffLimit(req.tenantId, { Invite, excludeEmail: email }); // Issue #14
     const hours = Math.min(Math.max(Number(req.body?.expiresInHours || INVITE_HOURS()), 1), 24 * 14);
     await Invite.updateMany({ tenantId: req.tenantId, email, usedAt: null, revokedAt: null }, { $set: { revokedAt: new Date() } }); // one live invite per email
     const token = crypto.randomBytes(32).toString('base64url');

@@ -24,6 +24,7 @@ const sendReceiptsAfterSave = async (tenantId, payments, newStudentKeys) => {
   if (process.env.NODE_ENV === 'test') await p;
 };
 import { deleteLibraryData } from './deleteLibrary.js';
+import { createPlanAdminRouter, SoftwarePlan, checkBranchLimit } from './plans.js';
 import { createPublicAccountRouter, createTenantAccountRouter, auditSuperadminAccess, acceptInvite } from './accounts.js';
 import { createSeatRouter, reconcileStudents, releaseForStudents, validateSeatSync, SeatAllocation, seatMatchesAllocation, SeatConflictError } from './seats.js';
 
@@ -249,6 +250,7 @@ admin.use(requireRole('superadmin'));
 admin.use(createInsightsRouter());
 admin.use(createPartnerAdminRouter());
 admin.use(createSupportAdminRouter());
+admin.use(createPlanAdminRouter());
 
 admin.get('/libraries', wrap(async (_req, res) => {
   const libs = await Library.find().sort({ createdAt: 1 }).lean();
@@ -256,7 +258,7 @@ admin.get('/libraries', wrap(async (_req, res) => {
   const admins = await User.find({ role: 'client_admin' }).lean();
   const m = Object.fromEntries(perLibrary.map(x => [x.libraryId, x]));
   res.json(libs.map(l => ({
-    libraryId: l.libraryId, name: l.name, status: l.status, contactEmail: l.contactEmail, createdAt: l.createdAt,
+    libraryId: l.libraryId, name: l.name, status: l.status, contactEmail: l.contactEmail, createdAt: l.createdAt, planId: l.planId || null, studentLimit: l.studentLimit || null,
     admins: admins.filter(a => tenantOfUser(a) === l.libraryId).map(a => ({ id: String(a._id), email: a.email, name: a.name, status: a.status })),
     metrics: m[l.libraryId],
   })));
@@ -280,6 +282,10 @@ admin.patch('/libraries/:libraryId', wrap(async (req, res) => {
   if (req.body?.contactEmail !== undefined) set.contactEmail = req.body.contactEmail;
   if (req.body?.city !== undefined) set.city = req.body.city ? String(req.body.city).trim().slice(0, 80) : null;
   if (req.body?.studentLimit !== undefined) { const n = req.body.studentLimit === null ? null : Number(req.body.studentLimit); if (n !== null && !(n >= 0)) return res.status(400).json({ error: 'Invalid studentLimit' }); set.studentLimit = n || null; }
+  if (req.body?.planId !== undefined) {
+    if (req.body.planId && !(await SoftwarePlan.exists({ planId: req.body.planId }))) return res.status(400).json({ error: 'Unknown plan' });
+    set.planId = req.body.planId || null;
+  }
   await audit(req, 'library.update', { tenantId: req.params.libraryId, target: req.params.libraryId, detail: set });
   const lib = await Library.findOneAndUpdate({ libraryId: req.params.libraryId }, { $set: set }, { new: true, lean: true });
   lib ? res.json({ libraryId: lib.libraryId, name: lib.name, status: lib.status }) : res.status(404).json({ error: 'Library not found' });
@@ -443,6 +449,7 @@ tenant.post('/:col', colParam, wrap(async (req, res) => {
     await reconcileStudents(req.tenantId, [body], { actor: req.user.email });
   }
   if (req.params.col === 'payments') { validatePaymentBatch([body]); await enforceAmountEdits(req, [body]); }
+  if (req.params.col === 'branches') { const n = await req.Model.countDocuments({ tenantId: req.tenantId }); await checkBranchLimit(req.tenantId, n + 1, n); }
   const d = await req.Model.create({ ...body, _key, tenantId: req.tenantId, libraryId: req.tenantId });
   if (req.params.col === 'students') await recordStudentDiff(req.tenantId, new Map(), [{ ...body, id: _key }], req.user.email);
   if (req.params.col === 'payments') await sendReceiptsAfterSave(req.tenantId, [{ ...body, _key }]);
@@ -492,6 +499,10 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
     await enforceAmountEdits(req, req.body.map(stripMeta), new Map(prevDocs.map(d => [String(d._key), d])));
     const had = new Set(prevDocs.map(d => String(d._key)));
     newPayments = req.body.map(stripMeta).map(b => ({ ...b, _key: keyOf(col, b) })).filter(b => b._key && !had.has(String(b._key)));
+  }
+  if (col === 'branches') {
+    const n = await req.Model.countDocuments({ tenantId: req.tenantId });
+    await checkBranchLimit(req.tenantId, new Set(req.body.map(stripMeta).map(b => keyOf(col, b)).filter(Boolean)).size, n);
   }
   if (col === 'students') {
     const prevDocs = await req.Model.find({ tenantId: req.tenantId }).lean();

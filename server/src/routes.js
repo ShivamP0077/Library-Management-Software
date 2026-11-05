@@ -26,7 +26,8 @@ const sendReceiptsAfterSave = async (tenantId, payments, newStudentKeys) => {
 import { deleteLibraryData } from './deleteLibrary.js';
 import { createSignupRouter } from './signup.js';
 import { createSubscriptionRouter } from './subscription.js';
-import { createPlanAdminRouter, SoftwarePlan, checkBranchLimit } from './plans.js';
+import { requireActiveSubscription, requireFeature, refreshSubscriptionStatus, accessFor } from './subscriptionAccess.js';
+import { createPlanAdminRouter, SoftwarePlan, checkBranchLimit, checkStaffLimit } from './plans.js';
 import { createPublicAccountRouter, createTenantAccountRouter, auditSuperadminAccess, acceptInvite } from './accounts.js';
 import { createSeatRouter, reconcileStudents, releaseForStudents, validateSeatSync, SeatAllocation, seatMatchesAllocation, SeatConflictError } from './seats.js';
 
@@ -69,7 +70,14 @@ async function issueSession(user, res) {
   const { library, denial } = await resolveSession(user);
   if (denial) return res.status(denial.status).json({ error: denial.message });
   await User.updateOne({ _id: user._id }, { $set: { lastLoginAt: new Date() } });
-  res.json({ token: signToken(user), user: user.toSafeJSON(), library: library && { libraryId: library.libraryId, name: library.name, status: library.status } });
+  const access = library ? accessFor(library, { role: user.role }) : { ok: true, status: null };
+  const subscriptionAccess = { ok: access.ok, status: access.status, code: access.code || null, message: access.message || null };
+  res.json({
+    token: signToken(user),
+    user: user.toSafeJSON(),
+    library: library && { libraryId: library.libraryId, name: library.name, status: library.status },
+    subscriptionAccess,
+  });
 }
 
 // ---------------------------------------------------------------- Server-side Google OAuth
@@ -219,8 +227,14 @@ router.use(requireAuth);
 router.get('/auth/me', wrap(async (req, res) => {
   const user = await User.findById(req.user.id);
   const tenantId = tenantOfUser(user);
-  const library = tenantId ? await Library.findOne({ libraryId: tenantId }).lean() : null;
-  res.json({ user: user.toSafeJSON(), library: library && { libraryId: library.libraryId, name: library.name, status: library.status } });
+  let library = tenantId ? await refreshSubscriptionStatus(tenantId) : null;
+  if (!library && tenantId) library = await Library.findOne({ libraryId: tenantId }).lean();
+  const access = accessFor(library, { role: user.role });
+  res.json({
+    user: user.toSafeJSON(),
+    library: library && { libraryId: library.libraryId, name: library.name, status: library.status, planId: library.planId || null, subscription: library.subscription || null },
+    subscriptionAccess: { ok: access.ok, status: access.status, code: access.code, message: access.message || null },
+  });
 }));
 
 const pwTries = new Map();
@@ -352,6 +366,7 @@ router.use('/partner', createPartnerPortalRouter());
 const tenant = express.Router();
 tenant.use(tenantScope);
 tenant.use(auditSuperadminAccess);
+tenant.use(requireActiveSubscription); // Issue #14: lock writes when unpaid / trial ended / cancelled
 tenant.use(createTenantAccountRouter());
 
 // Client admins manage login accounts for their own library (staff / co-admins)
@@ -360,6 +375,7 @@ tenant.get('/users', requireRole('client_admin', 'superadmin'), wrap(async (req,
 }));
 tenant.post('/users', requireRole('client_admin', 'superadmin'), wrap(async (req, res) => {
   const role = req.body?.role === 'client_admin' ? 'client_admin' : 'staff';
+  if (role === 'staff') await checkStaffLimit(req.tenantId); // Issue #14: all user-creation endpoints
   const r = await createUser({ ...req.body, role, tenantId: req.tenantId, libraryId: req.tenantId });
   await audit(req, 'user.create', { target: r.user.email, detail: { role } });
   res.status(201).json({ user: r.user.toSafeJSON(), generatedPassword: r.generatedPassword || undefined });
@@ -541,6 +557,6 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
 }));
 
 // WhatsApp (Evolution API) is proxied server-side; mounted before the generic /:col routes
-router.use('/whatsapp', tenantScope, auditSuperadminAccess, createWhatsappRouter());
+router.use('/whatsapp', tenantScope, auditSuperadminAccess, requireActiveSubscription, requireFeature('whatsapp'), createWhatsappRouter());
 router.use('/', tenant);
 export default router;

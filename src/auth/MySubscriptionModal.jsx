@@ -6,7 +6,7 @@ import { api } from '../utils/api';
 
 const fmt = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }) : '—');
 const lim = (n) => (n ? n.toLocaleString() : 'Unlimited');
-const STATUS = { active: 'Active', trialing: 'Free trial', pending_payment: 'Awaiting payment' };
+const STATUS = { active: 'Active', trialing: 'Free trial', pending_payment: 'Awaiting payment', expired: 'Expired', cancelled: 'Cancelled', past_due: 'Payment failed' };
 
 export function MySubscriptionModal({ libraryName, onClose }) {
   const [v, setV] = useState(null);

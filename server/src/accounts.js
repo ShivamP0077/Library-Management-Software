@@ -77,6 +77,10 @@ export async function acceptInvite({ token, name, passwordHash, google, ip }) {
   }
   const lib = await Library.findOne({ libraryId: i.tenantId }).lean();
   if (!lib || lib.status !== 'Active') { await release(); return { status: 403, error: 'Library is disabled', code: 'library_disabled' }; }
+  if (i.role === 'staff') {
+    try { await checkStaffLimit(i.tenantId, { Invite }); }
+    catch (e) { await release(); return { status: e.status || 409, error: e.message, code: e.code || 'staff_limit' }; }
+  }
   if (await User.exists({ email: i.email })) {
     await release();
     return { status: 409, error: 'An account with this email already exists. Sign in instead.', code: 'account_exists' };

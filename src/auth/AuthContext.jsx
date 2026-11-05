@@ -72,7 +72,7 @@ export function AuthProvider({ children }) {
       .catch(() => { setToken(null); setStatus('anonymous'); });
   }, []);
 
-  const completeLogin = (r) => { setSession({ user: r.user, library: r.library }); setStatus('authenticated'); };
+  const completeLogin = (r) => { setSession({ user: r.user, library: r.library, subscriptionAccess: r.subscriptionAccess || null }); setStatus('authenticated'); };
   const loginWithPassword = async (email, password) => completeLogin(await api.login({ email, password }));
   const loginWithGoogle = async (credential) => completeLogin(await api.loginWithGoogle(credential));
 

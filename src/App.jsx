@@ -249,11 +249,19 @@ export const AppContent = () => {
 
 /** Thin bar above the app showing who is signed in, read-only state, offline mode, and navigation. */
 const SessionBar = ({ libraryName, readOnly, onBack, isOffline = false, onSwitchToCloud }) => {
-  const { user, logout } = useAuth();
+  const { user, logout, subscriptionAccess } = useAuth();
   const [pwOpen, setPwOpen] = useState(false);
   const [subOpen, setSubOpen] = useState(false);
   useBackClose(pwOpen, () => setPwOpen(false));
+  const locked = subscriptionAccess && subscriptionAccess.ok === false;
   return (
+    <>
+    {locked && (
+      <div data-testid="subscription-lock-banner" style={{ padding: '8px 16px', background: '#fef2f2', color: '#991b1b', fontSize: 13, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <span>{subscriptionAccess.message || 'Your plan is inactive. Renew to keep editing.'}</span>
+        {user?.role === 'client_admin' && <button type="button" className="btn btn-primary btn-sm" onClick={() => setSubOpen(true)}>View plan</button>}
+      </div>
+    )}
     <div id="session-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '6px 16px', fontSize: 12, background: readOnly ? '#fef3c7' : isOffline ? '#1e293b' : '#111827', color: readOnly ? '#92400e' : '#e5e7eb' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         {onBack && <button className="btn btn-ghost btn-sm" onClick={onBack} style={{ color: 'inherit' }}><ArrowLeft size={14} /> <span>All libraries</span></button>}
@@ -282,6 +290,7 @@ const SessionBar = ({ libraryName, readOnly, onBack, isOffline = false, onSwitch
         )}
       </div>
     </div>
+    </>
   );
 };
 

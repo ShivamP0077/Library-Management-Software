@@ -2,6 +2,8 @@
 
 ## 2026-11-05 (IST)
 
+- **#14 Subscription enforcement** — 17:40 IST. Libraries with a subscription that is awaiting payment, expired (including ended trials), cancelled or past-due can still read data and manage their plan, but writes are blocked (402). Plan feature lists gate WhatsApp when the plan does not include it (empty list = all features). Staff limits apply on invites, invite accept, and POST /users. `/auth/me` returns `subscriptionAccess` and the app shows a lock banner.
+
 - **#11 Voided payments kept in history** — 17:25 IST. Voiding a renewal (or admission) no longer deletes the payment. The row stays visible as **Voided**, is struck through in the ledger and student profile, and is excluded from income totals and P&L. Admission void still frees the seat.
 
 - **#9 Server-side payment price lock** — 17:10 IST. Staff without amount-edit permission can no longer bypass the lock by omitting `amountEdited`. The server recomputes the fee from the seat plan (and approved pro-rate maths) and rejects any custom amount or discount. Client flags are ignored for the decision. Matching plan prices still work for Librarians. Owner/Admin always; Manager on by default.

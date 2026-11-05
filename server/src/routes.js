@@ -24,6 +24,7 @@ const sendReceiptsAfterSave = async (tenantId, payments, newStudentKeys) => {
   if (process.env.NODE_ENV === 'test') await p;
 };
 import { deleteLibraryData } from './deleteLibrary.js';
+import { createSignupRouter } from './signup.js';
 import { createPlanAdminRouter, SoftwarePlan, checkBranchLimit } from './plans.js';
 import { createPublicAccountRouter, createTenantAccountRouter, auditSuperadminAccess, acceptInvite } from './accounts.js';
 import { createSeatRouter, reconcileStudents, releaseForStudents, validateSeatSync, SeatAllocation, seatMatchesAllocation, SeatConflictError } from './seats.js';
@@ -207,6 +208,7 @@ router.post('/auth/google', wrap(async (req, res) => {
 }));
 
 router.use(createPublicAccountRouter({ issueSession }));
+router.use(createSignupRouter({ issueSession })); // Issue #15 (off unless OWNER_SIGNUP_ENABLED=true)
 
 // Evolution delivery webhook: no login, verified by a per-instance HMAC token.
 router.use('/whatsapp', createWhatsappWebhookRouter());

@@ -3,6 +3,7 @@ import { LogIn, ShieldCheck, ArrowLeft, KeyRound } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth, googleOAuthErrorMessage } from './AuthContext';
 import { api } from '../utils/api';
+import { SignupPanel } from './SignupPanel';
 
 const GoogleIcon = () => (
   <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
@@ -37,6 +38,7 @@ export function LoginScreen({ onContinueOffline }) {
   const [busy, setBusy] = useState(false);
   const [googleEnabled, setGoogleEnabled] = useState(false);
   const [redirecting, setRedirecting] = useState(false);
+  const [signup, setSignup] = useState(null);
 
   // 'login' | 'forgot' | 'invite'
   const [mode, setMode] = useState(() => (readInviteToken() ? 'invite' : 'login'));
@@ -62,6 +64,10 @@ export function LoginScreen({ onContinueOffline }) {
     let cancelled = false;
     api.authConfig()
       .then(cfg => { if (!cancelled) setGoogleEnabled(Boolean(cfg?.googleEnabled)); })
+      .catch(() => {});
+    // Issue #15: the signup link only appears when the server has signup switched on.
+    api.signupConfig?.()
+      .then(cfg => { if (!cancelled) setSignup(cfg?.enabled ? cfg : null); })
       .catch(() => {});
     return () => { cancelled = true; };
   }, []);
@@ -178,7 +184,7 @@ export function LoginScreen({ onContinueOffline }) {
   };
 
   const alertMessage = error || (mode === 'login' && oauthError ? googleOAuthErrorMessage(oauthError) : '');
-  const subtitle = mode === 'invite' ? 'Accept your invitation' : mode === 'forgot' ? 'Recover your account' : 'Sign in to continue';
+  const subtitle = mode === 'signup' ? 'Start your library' : mode === 'invite' ? 'Accept your invitation' : mode === 'forgot' ? 'Recover your account' : 'Sign in to continue';
   const inviteLibraryName = typeof inviteInfo?.library === 'string' ? inviteInfo.library : inviteInfo?.library?.name;
 
   return (
@@ -245,7 +251,17 @@ export function LoginScreen({ onContinueOffline }) {
                 Forgot password?
               </button>
             </div>
+            {signup && (
+              <div style={{ marginTop: 4, textAlign: 'center', fontSize: 13 }}>
+                New library?{' '}
+                <button id="signup-link" type="button" className="btn btn-ghost" onClick={() => { setError(''); setMode('signup'); }} style={{ fontSize: 13, color: 'var(--brand-primary, #2563eb)', padding: '4px 8px' }}>Create an account</button>
+              </div>
+            )}
           </>
+        )}
+
+        {mode === 'signup' && signup && (
+          <SignupPanel plans={signup.plans || []} onBack={backToLogin} onDone={(result) => completeLogin(result)} />
         )}
 
         {mode === 'forgot' && (

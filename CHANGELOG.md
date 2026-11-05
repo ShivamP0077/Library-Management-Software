@@ -2,6 +2,8 @@
 
 ## 2026-11-05 (IST)
 
+- **#15 Owner self-signup (off by default)** — 14:40 IST. New owners can create a library from the sign-in screen: email → 6-digit code (15 min, 5 tries, single use) → plan choice (monthly/yearly) → name, library name, password. Only visible when the server sets `OWNER_SIGNUP_ENABLED=true`. Plans with a trial start as trialing; paid plans without a trial are recorded as `pending_payment` (no payment provider is connected yet — provider interface only). Existing emails get a notice email, never a second account.
+
 - **#14 Super Admin plan builder** (4:10 PM IST): new "Software plans" tab. Super Admin can create, edit and archive plans with a monthly/yearly price, student, staff and branch limits, a free-trial length, a feature list, and whether the plan is offered at signup. Each library can be put on a plan. The server enforces the plan's limits (only when adding more; existing data is never locked). A library's own student limit still wins over the plan's. No payment provider is connected.
 
 - **#16 Delete library** (3:45 PM IST): Super Admin has a separate Delete button (Disable is unchanged). You must type the exact library name; the server checks it again, removes only that library's data (students, payments, settings, staff logins, invites, WhatsApp settings and log, and the rest), logs out its WhatsApp instance if possible, and keeps an audit entry. Other libraries are never touched. No library was deleted on the live system.

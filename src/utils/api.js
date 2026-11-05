@@ -69,6 +69,8 @@ export const api = {
   reminderSettings: () => apiRequest('/reminders/settings'),
   saveReminderSettings: (body) => apiRequest('/reminders/settings', { method: 'PUT', body }),
   reminders: (q = '') => apiRequest(`/reminders${q}`),
+  whatsappTemplates: () => apiRequest('/whatsapp-templates'),
+  saveWhatsappTemplates: (body) => apiRequest('/whatsapp-templates', { method: 'PUT', body }),
   whatsappMessages: (q = '') => apiRequest(`/whatsapp/messages${q}`),
   whatsappResend: (id) => apiRequest(`/whatsapp/messages/${encodeURIComponent(id)}/resend`, { method: 'POST' }),
   whatsappSendToStudent: (studentId, body) => apiRequest(`/whatsapp/students/${encodeURIComponent(studentId)}/send`, { method: 'POST', body }),

@@ -2,6 +2,10 @@
 
 ## 2026-11-05 (IST)
 
+- **Issue #17: WhatsApp Templates and Auto reminders tabs now work** (branch `feat/17-templates-reminders`, merged into `release/21-issues` only).
+  - **Templates:** edit the fee reminder, renewal reminder, fee receipt and seat info messages. Variables are {name}, {amount}, {dueDate}, {library} and {seat}, with a live preview. Reset to default is available. Templates are saved per library. The send window uses them, and automatic reminders use the fee and renewal templates. Until a template is saved, the old wording is used.
+  - **Auto reminders:** up to 10 rules, each with days before, on or after the due date, a send time (9 AM–7 PM), on/off, and "only if unpaid". Each message is sent once and is cancelled when the student renews or pays. With no rules, the old single expiry timing still applies. Fee repeat timing moved to this tab. Quiet hours stay 9 AM–8 PM. No existing data is changed.
+
 - **Issue #18: WhatsApp Login copes with a sleeping WhatsApp server and never shows raw HTML** (branch `fix/18-whatsapp-login-429`, merged into `release/21-issues` only).
   The WhatsApp Login page could show an HTTP 429 error full of HTML/CSS text. Its status and connect calls did not wake the sleeping free-plan WhatsApp (Evolution) server and did not retry. Now:
   - These calls wake the server and retry on 429/5xx.

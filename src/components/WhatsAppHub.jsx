@@ -2,6 +2,8 @@ import React from 'react';
 import { MessageCircle, FileText, BellRing, QrCode } from 'lucide-react';
 import { WhatsAppMessages } from './WhatsAppMessages';
 import { WhatsAppSettings } from './WhatsAppSettings';
+import { WhatsAppTemplates } from './WhatsAppTemplates';
+import { WhatsAppReminders } from './WhatsAppReminders';
 
 export const WHATSAPP_PAGES = [
   { id: 'messages', label: 'Messages', icon: MessageCircle },
@@ -9,14 +11,6 @@ export const WHATSAPP_PAGES = [
   { id: 'reminders', label: 'Auto reminders', icon: BellRing },
   { id: 'login', label: 'WhatsApp Login', icon: QrCode },
 ];
-
-const ComingSoon = ({ title, text }) => (
-  <div className="premium-card" style={{ padding: '28px 20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
-    <h3 style={{ fontSize: '16px', fontWeight: 700, margin: '0 0 6px 0', color: 'var(--text-primary)' }}>{title}</h3>
-    <p style={{ fontSize: '14px', margin: 0 }}>{text}</p>
-    <span className="badge badge-expiring" style={{ marginTop: '12px', display: 'inline-block' }}>Coming soon</span>
-  </div>
-);
 
 /** WhatsApp section: Messages, Templates, Auto reminders and WhatsApp Login (QR connect). */
 export const WhatsAppHub = ({ page = 'messages', setPage, canManage }) => (
@@ -36,8 +30,8 @@ export const WhatsAppHub = ({ page = 'messages', setPage, canManage }) => (
       })}
     </div>
     {page === 'messages' && (canManage ? <WhatsAppMessages /> : <div className="premium-card" style={{ padding: '20px', fontSize: '14px', color: 'var(--text-secondary)' }}>You don't have permission to view WhatsApp messages.</div>)}
-    {page === 'templates' && <ComingSoon title="Message templates" text="Save your own fee reminder, receipt and renewal messages here." />}
-    {page === 'reminders' && <ComingSoon title="Auto reminders" text="Choose when reminders go out, like 3 days before and on the due date. Current reminder timing is under WhatsApp Login." />}
+    {page === 'templates' && (canManage ? <WhatsAppTemplates /> : <div className="premium-card" style={{ padding: '20px', fontSize: '14px', color: 'var(--text-secondary)' }}>You don't have permission to manage WhatsApp.</div>)}
+    {page === 'reminders' && (canManage ? <WhatsAppReminders /> : <div className="premium-card" style={{ padding: '20px', fontSize: '14px', color: 'var(--text-secondary)' }}>You don't have permission to manage WhatsApp.</div>)}
     {page === 'login' && <WhatsAppSettings canManage={canManage} />}
   </div>
 );

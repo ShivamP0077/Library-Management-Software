@@ -484,7 +484,7 @@ const WhatsAppSettingsInner = () => {
             onChange={(value) => handleToggle('otp', value)}
           />
 
-          {(toggles.feeReminders || toggles.expiryReminders) && <ReminderTiming />}
+          {(toggles.feeReminders || toggles.expiryReminders) && <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '8px 0 0' }}>Reminder timing is under <strong>Auto reminders</strong>.</p>}
 
           <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '12px 0 0 0' }}>
             Messages are sent only to students who have not opted out, and are prefixed with your library name.
@@ -497,7 +497,7 @@ const WhatsAppSettingsInner = () => {
 
 
 /** Reminder timing (spec §6): when expiry & fee reminders go out, plus recent reminder log. */
-const ReminderTiming = () => {
+export const ReminderTiming = () => {
   const [cfg, setCfg] = React.useState(null);
   const [log, setLog] = React.useState([]);
   const [saving, setSaving] = React.useState(false);
@@ -509,13 +509,14 @@ const ReminderTiming = () => {
   const set = (k) => (e) => setCfg(c => ({ ...c, [k]: e.target.value === '' ? null : Number(e.target.value) }));
   const save = async () => {
     setSaving(true);
-    try { setCfg(await api.saveReminderSettings(cfg)); toast.success('Reminder timing saved'); }
+    try { const { rules: _r, ...timing } = cfg; setCfg(await api.saveReminderSettings(timing)); toast.success('Reminder timing saved'); }
     catch (e) { toast.error(e.message || 'Could not save'); } finally { setSaving(false); }
   };
   const field = { display: 'grid', gap: 4, fontSize: 13, color: 'var(--text-secondary)', minWidth: 0 };
   return (
-    <div id="reminder-timing" style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-light)', display: 'grid', gap: 10 }}>
-      <strong style={{ fontSize: 14 }}>Reminder timing</strong>
+    <div id="reminder-timing" style={{ display: 'grid', gap: 10 }}>
+      <strong style={{ fontSize: 14 }}>{cfg.rules?.length ? 'Fee repeat timing' : 'Reminder timing'}</strong>
+      {cfg.rules?.length > 0 && <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>Your reminder rules above replace the expiry timing here. Fee repeats still use these settings.</p>}
       <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
         <label style={field}>Expiry: days before end<input className="form-input" type="number" min={0} max={30} value={cfg.expiryDaysBefore ?? ''} onChange={set('expiryDaysBefore')} /></label>
         <label style={field}>Or fixed day of month (1–28)<input className="form-input" type="number" min={1} max={28} placeholder="Off" value={cfg.expiryFixedDay ?? ''} onChange={set('expiryFixedDay')} /></label>
@@ -529,7 +530,7 @@ const ReminderTiming = () => {
           <strong style={{ fontSize: 13 }}>Recent reminders</strong>
           {log.map(r => (
             <div key={r.id} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', color: 'var(--text-secondary)' }}>
-              <span>{r.sendOn}</span><span>{r.type === 'fee_reminder' ? 'Fee' : 'Expiry'}</span><span>student {r.studentId}</span>
+              <span>{r.sendOn}</span><span>{r.type === 'fee_reminder' ? 'Fee' : 'Expiry'}{r.ruleId ? ' (rule)' : ''}</span><span>student {r.studentId}</span>
               <span style={{ fontWeight: 600 }}>{r.status}{r.reason ? ` (${r.reason})` : ''}</span>
             </div>
           ))}

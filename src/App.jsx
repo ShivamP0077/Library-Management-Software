@@ -88,7 +88,7 @@ export const AppContent = () => {
       <div className="page-body-wrapper" style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         
         {/* Scroller for the main content */}
-        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+        <div className="page-scroller" style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
           <main className="main-content">
             <AnimatePresence mode="wait">
               <motion.div
@@ -277,7 +277,7 @@ const LibraryWorkspace = ({ libraryId, libraryName, readOnly = false, lockedStaf
 
   if (!ready) return null;
   return (
-    <div className="lib-workspace" style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+    <div className="lib-workspace" style={{ display: 'flex', flexDirection: 'column' }}>
       <SessionBar libraryName={libraryName} readOnly={readOnly} onBack={onBack} isOffline={isOffline} onSwitchToCloud={onSwitchToCloud} />
       <div style={{ flex: 1, minHeight: 0 }}>
         <LibraryProvider key={`${libraryId || 'local'}-${readOnly}-${isOffline}`} readOnly={readOnly} lockedStaffId={lockedStaffId}>

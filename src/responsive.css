@@ -72,7 +72,8 @@ img, svg, canvas, video { max-width: 100%; }
     font-size: 11px; color: var(--text-secondary); cursor: pointer; border-radius: 8px;
   }
   .mobile-bottom-nav button.active { color: var(--text-primary); font-weight: 600; background: rgba(0, 0, 0, 0.04); }
-  .page-body-wrapper { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+  /* Issue #21: pad the element that actually scrolls, so the last item clears the bottom bar. */
+  .page-scroller { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
 
   /* Session bar: compact */
   #session-bar { padding: 4px 8px !important; }
@@ -249,3 +250,6 @@ button:has(> svg.lucide-x:only-child) {
   touch-action: manipulation;
 }
 button:has(> svg.lucide-x:only-child) > svg.lucide-x { width: 20px !important; height: 20px !important; }
+
+/* Issue #21: fit the visible screen on mobile browsers (100vh is taller than the screen there). */
+.lib-workspace, .app-container { height: 100vh; height: 100dvh; }

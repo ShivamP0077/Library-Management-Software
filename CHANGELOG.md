@@ -2,6 +2,9 @@
 
 ## 2026-11-05 (IST)
 
+- **Issue #21: mobile bottom bar no longer hides the last item** (branch `fix/21-bottom-bar`, merged into `release/21-issues` only).
+  The bottom padding (bar height plus the phone's safe area) now sits on the box that actually scrolls. The app height now uses `100dvh`, so it fits the visible screen on mobile browsers, with `100vh` as a fallback. The 5-button bar itself is unchanged.
+
 - **Issue #7: close (X) buttons are easy to tap on mobile** (branch `fix/07-close-buttons`, merged into `release/21-issues` only).
   One shared style in `responsive.css` gives every icon-only X button the same 20px icon and a tap area of at least 44×44px, in all 30+ modals and panels, with no change to their look or layout. Buttons with an X plus text (like "Exit Setup") are not affected.
 

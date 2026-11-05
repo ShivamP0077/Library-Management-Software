@@ -148,7 +148,7 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
                     <td>{l.expiry ? fmtDate(l.expiry) : '—'}</td>
                     <td>{l.paymentStatus || '—'}</td>
                     <td style={{ fontSize: 12 }}>{l.partner?.name || '—'}</td>
-                    <td><span className={`badge ${l.status === 'Active' ? 'badge-active' : 'badge-expired'}`}>{l.status}</span></td>
+                    <td><span className={`badge ${l.status === 'Active' ? 'badge-active' : 'badge-expired'}`}>{l.status}</span>{l.deletionRequested && <div style={{ fontSize: 11, color: '#dc2626', marginTop: 2 }} title={l.deletionRequest?.reason || ''}>Deletion requested</div>}</td>
                     <td style={{ fontSize: 12 }}>{fmtDate(l.lastActiveAt)}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       <button className="btn btn-ghost btn-sm" title="View read-only" onClick={() => onOpenLibrary(l, true)}><Eye size={14} /></button>

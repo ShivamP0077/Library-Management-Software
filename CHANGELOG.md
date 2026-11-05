@@ -2,6 +2,8 @@
 
 ## 2026-11-05 (IST)
 
+- **#19 My Subscription (owners)** — 15:10 IST. New "Plan" button for owners: current plan, status, renewal/trial dates, usage against limits, change plan (free/cheaper plans; downgrades during a paid period are scheduled for period end; blocked if usage exceeds the new plan's limits), cancel at period end / resume, invoices list (empty until a payment provider exists), and a deletion *request* (exact library name; nothing is deleted — Super Admin reviews and uses the existing delete flow). Paid upgrades reply "Online payments are not set up yet". Super Admin's business table now shows real plan/status/renewal and a "Deletion requested" flag.
+
 - **#15 Owner self-signup (off by default)** — 14:40 IST. New owners can create a library from the sign-in screen: email → 6-digit code (15 min, 5 tries, single use) → plan choice (monthly/yearly) → name, library name, password. Only visible when the server sets `OWNER_SIGNUP_ENABLED=true`. Plans with a trial start as trialing; paid plans without a trial are recorded as `pending_payment` (no payment provider is connected yet — provider interface only). Existing emails get a notice email, never a second account.
 
 - **#14 Super Admin plan builder** (4:10 PM IST): new "Software plans" tab. Super Admin can create, edit and archive plans with a monthly/yearly price, student, staff and branch limits, a free-trial length, a feature list, and whether the plan is offered at signup. Each library can be put on a plan. The server enforces the plan's limits (only when adding more; existing data is never locked). A library's own student limit still wins over the plan's. No payment provider is connected.

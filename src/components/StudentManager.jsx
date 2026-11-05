@@ -23,6 +23,8 @@ import { useBackClose } from '../utils/useBackClose';
 import { useStudentPhoto } from '../utils/useStudentPhoto';
 import { getCanonicalShifts, matchesShiftFilter, isShiftInPlan, resolveCanonicalShift, normalizeShiftName } from '../utils/shiftUtils';
 import { getPlanBasePrice, getPlanDefaultDuration } from '../utils/pricingCalculator';
+import { clientCanEditAmount } from '../utils/amountPermission';
+import { cycleConfig, cycleFor, addDays, bridgeCharge, upgradeCharge } from '../utils/billingCycle';
 import { isAdmissionVoid } from '../utils/admissionVoid.js';
 import { areSeatTypesEquivalent } from '../utils/seatTypeUtils';
 
@@ -218,8 +220,11 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     settings, students, branches, sections, activeBranchId, setActiveBranchId, plans, shifts, seatTypes, 
     renewSubscription, changeSeat, addStudentDocument, extendStudentDueDate, archiveStudent, 
     cancelAdmission, cancelRenewalTransaction, getValidDesksList, getAvailableEligibleSeats, 
-    currentStaff, waitingList, removeFromWaitingList, updateWaitingListStatus, hasPermission, updateStudentDetails
+    currentStaff, waitingList, removeFromWaitingList, updateWaitingListStatus, hasPermission, updateStudentDetails,
+    lockedStaffId, getMatchingPlans, todayStr
   } = useLibrary();
+  const canEditAmount = clientCanEditAmount({ lockedStaffId, currentStaff, settings });
+  const cycleCfg = cycleConfig(settings);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
@@ -322,7 +327,14 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   const [renewShiftId, setRenewShiftId] = useState('');
   const [renewPaymentMethod, setRenewPaymentMethod] = useState('');
   const [renewSplitBreakdown, setRenewSplitBreakdown] = useState([{ method: '', amount: '' }]);
-  const [renewAmount, setRenewAmount] = useState(0);
+  const [renewAmount, setRenewAmountRaw] = useState(0);
+  // Issue #9: system-computed price, so a manual change is flagged for the server permission check + audit.
+  const [renewSuggested, setRenewSuggested] = useState(0);
+  const [renewAlign, setRenewAlign] = useState(null);
+  const setRenewAmount = (v) => { setRenewAmountRaw(v); setRenewSuggested(v); setRenewAlign(null); };
+  const [relocCollect, setRelocCollect] = useState(true);
+  const [relocMethod, setRelocMethod] = useState('Cash');
+  const [relocOverride, setRelocOverride] = useState(null);
   const [renewDiscount, setRenewDiscount] = useState(0);
   const [renewFine, setRenewFine] = useState(0);
   
@@ -605,7 +617,12 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
 
     const plan = plans.find(p => p.id === renewPlanId) || plans[0];
     const startStr = calculateRenewalStartDate(selectedStudent.expiryDate);
-    const expiryStr = calculateSubscriptionExpiry(startStr, renewDuration);
+    let expiryStr = calculateSubscriptionExpiry(startStr, renewDuration);
+    if (renewAlign) {
+      // Issue #9 (owner-chosen): bridge days up to the library cycle end, then whole library cycles.
+      let next = addDays(renewAlign.to, 1);
+      for (let i = 0; i < parsedDur; i++) { const c = cycleFor(next, cycleCfg); expiryStr = c.end; next = addDays(c.end, 1); }
+    }
     
     const result = renewSubscription(selectedStudent.id, {
       planId: plan.id,
@@ -616,6 +633,8 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       startDate: startStr,
       expiryDate: expiryStr,
       amountPaid: renewAmount,
+      ...(Number(renewAmount) !== Number(renewSuggested) ? { amountEdited: true, suggestedAmount: Number(renewSuggested) } : {}),
+      ...(renewAlign ? { bridge: renewAlign } : {}),
       discount: renewDiscount,
       fine: renewFine,
       paymentMethod: renewPaymentMethod,
@@ -630,17 +649,39 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     }
   };
 
+  // Issue #9: fee difference for the rest of the paid period when the new seat/shift has a different plan price.
+  const relocPriceChange = (() => {
+    if (!isSeatModalOpen || !selectedStudent || !newBlockId || !newShiftId || !selectedStudent.expiryDate) return null;
+    const oldPlan = plans.find(p => p.id === selectedStudent.planId);
+    const branchId = relocateBranchId || selectedStudent.branchId;
+    const newPlan = (getMatchingPlans?.(settings.libraryId, branchId, newBlockId, newSeatTypeId, newShiftId) || [])[0];
+    if (!oldPlan || !newPlan || oldPlan.id === newPlan.id) return null;
+    const oldFee = getPlanBasePrice(oldPlan, 1), newFee = getPlanBasePrice(newPlan, 1);
+    if (!oldFee || !newFee || oldFee === newFee) return null;
+    const totalDays = cycleFor(todayStr, cycleCfg).totalDays;
+    const r = upgradeCharge(oldFee, newFee, todayStr, selectedStudent.expiryDate, totalDays);
+    return { amount: r.amount, days: r.remainingDays, oldFee, newFee, totalDays, newPlanId: newPlan.id };
+  })();
+
   const handleExecuteSeatChange = (e) => {
     e.preventDefault();
     if (!selectedStudent || !newSeatNo || !newShiftId || !newBlockId || !newSeatTypeId) return;
     const effectiveBranchId = relocateBranchId || selectedStudent.branchId;
-    const success = changeSeat(selectedStudent.id, newBlockId, newSeatTypeId, newSeatNo, seatChangeReason, newShiftId, effectiveBranchId);
+    const pc = relocPriceChange;
+    const priceChange = pc && pc.amount !== 0 ? {
+      ...pc,
+      amount: relocOverride != null ? Number(relocOverride) : pc.amount,
+      ...(relocOverride != null && Number(relocOverride) !== pc.amount ? { amountEdited: true, suggestedAmount: pc.amount } : {}),
+      collect: relocCollect, method: relocMethod
+    } : null;
+    const success = changeSeat(selectedStudent.id, newBlockId, newSeatTypeId, newSeatNo, seatChangeReason, newShiftId, effectiveBranchId, priceChange);
     if (success !== false) {
       toast.success(`Desk for ${selectedStudent.name} updated to ${newSeatNo}`);
       setIsSeatModalOpen(false);
       setNewSeatNo('');
       setNewShiftId('');
       setSeatChangeReason('');
+      setRelocOverride(null);
     }
   };
 
@@ -1619,7 +1660,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                     </div>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
-                    <div className="form-group"><label className="form-label">Price (₹) per student</label><NumericInput className="form-input" value={renewAmount} onChange={(e) => setRenewAmount(Number(e.target.value))} /></div>
+                    <div className="form-group"><label className="form-label">Price (₹) per student</label><NumericInput className="form-input" value={renewAmount} readOnly={!canEditAmount} onChange={(e) => canEditAmount && setRenewAmountRaw(Number(e.target.value))} /></div>
                     <div className="form-group"><label className="form-label">Discount (₹) per student</label><NumericInput className="form-input" value={renewDiscount} onChange={(e) => setRenewDiscount(Number(e.target.value))} /></div>
                     <div className="form-group"><label className="form-label">Fine (₹) per student</label><NumericInput className="form-input" value={renewFine} onChange={(e) => setRenewFine(Number(e.target.value))} /></div>
                   </div>
@@ -1816,8 +1857,23 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                       </button>
                     </div>
                   )}
+                  {(() => {
+                    if (cycleCfg.mode === 'ANNIVERSARY' || !selectedStudent?.expiryDate) return null;
+                    const monthly = (renewAlign ? renewAlign.baseSuggested : Number(renewSuggested)) / Math.max(1, Number(renewDuration) || 1);
+                    const b = bridgeCharge(monthly, selectedStudent.expiryDate, cycleCfg);
+                    if (!b || b.aligned) return null;
+                    return (
+                      <label data-testid="align-box" style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', marginTop: '16px', fontSize: '12px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '8px 10px' }}>
+                        <input type="checkbox" checked={!!renewAlign} onChange={e => {
+                          if (e.target.checked) { const base = Number(renewSuggested); const sum = Number(renewAmount) + b.amount; setRenewAmountRaw(sum); setRenewSuggested(base + b.amount); setRenewAlign({ ...b, baseSuggested: base }); }
+                          else { const base = renewAlign.baseSuggested; setRenewAmountRaw(Number(renewAmount) - renewAlign.amount); setRenewSuggested(base); setRenewAlign(null); }
+                        }} />
+                        <span>Align to library cycle: add bridge ₹{b.amount.toLocaleString()} for {b.days} of {b.totalDays} days ({b.from} to {b.to}), then renew from the cycle start. Leave unticked to keep this student's own dates.</span>
+                      </label>
+                    );
+                  })()}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginTop: '16px' }}>
-                    <div className="form-group"><label className="form-label">Price (₹)</label><NumericInput className="form-input" value={renewAmount} onChange={(e) => setRenewAmount(Number(e.target.value))} /></div>
+                    <div className="form-group"><label className="form-label">Price (₹)</label><NumericInput className="form-input" value={renewAmount} readOnly={!canEditAmount} title={canEditAmount ? undefined : 'You do not have permission to change amounts'} onChange={(e) => canEditAmount && setRenewAmountRaw(Number(e.target.value))} /></div>
                     <div className="form-group"><label className="form-label">Discount (₹)</label><NumericInput className="form-input" value={renewDiscount} onChange={(e) => setRenewDiscount(Number(e.target.value))} /></div>
                     <div className="form-group"><label className="form-label">Fine (₹)</label><NumericInput className="form-input" value={renewFine} onChange={(e) => setRenewFine(Number(e.target.value))} /></div>
                   </div>
@@ -1938,6 +1994,25 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                       )}
                     </select>
                   </div>
+                {relocPriceChange && relocPriceChange.amount !== 0 && (
+                  <div data-testid="reloc-price" style={{ fontSize: '12px', background: relocPriceChange.amount > 0 ? '#fff7ed' : '#ecfdf5', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '8px 10px', marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <span>
+                      {relocPriceChange.amount > 0 ? 'Upgrade charge' : 'Credit to student'}: ₹{Math.abs(relocPriceChange.amount).toLocaleString()}
+                      {' '}(₹{relocPriceChange.oldFee} → ₹{relocPriceChange.newFee}/month, {relocPriceChange.days} of {relocPriceChange.totalDays} days left)
+                    </span>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                      <NumericInput className="form-input" style={{ maxWidth: '120px' }} value={relocOverride != null ? relocOverride : relocPriceChange.amount} readOnly={!canEditAmount} onChange={e => canEditAmount && setRelocOverride(Number(e.target.value))} />
+                      {relocPriceChange.amount > 0 && (
+                        <>
+                          <label style={{ display: 'flex', gap: '4px', alignItems: 'center' }}><input type="checkbox" checked={relocCollect} onChange={e => setRelocCollect(e.target.checked)} /> Collect now</label>
+                          <select className="form-select" style={{ maxWidth: '110px' }} value={relocMethod} onChange={e => setRelocMethod(e.target.value)}>
+                            <option>Cash</option><option>UPI</option><option>Card</option>
+                          </select>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
                   <div className="form-group">
                     <label className="form-label">Reason</label>
                     <input type="text" className="form-input" value={seatChangeReason} onChange={(e) => setSeatChangeReason(e.target.value)} required />

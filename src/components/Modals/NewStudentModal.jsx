@@ -18,13 +18,17 @@ const formatFileSize = (bytes) => {
 };
 
 import { getCanonicalShifts, isShiftInPlan } from '../../utils/shiftUtils';
+import { clientCanEditAmount } from '../../utils/amountPermission';
+import { cycleConfig, firstAdmissionCharge } from '../../utils/billingCycle';
 import { getCanonicalSeatTypes, areSeatTypesEquivalent } from '../../utils/seatTypeUtils';
 
 export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPayload }) => {
   const { 
     settings, branches, sections, plans, shifts, seatTypes, addStudent, students, archivedStudents, 
-    todayStr, getAvailableEligibleSeats, canAdmitStudent, addToWaitingList, getMatchingPlans, getUnsyncedShifts, getUnsyncedPlans
+    todayStr, getAvailableEligibleSeats, canAdmitStudent, addToWaitingList, getMatchingPlans, getUnsyncedShifts, getUnsyncedPlans,
+    currentStaff, lockedStaffId
   } = useLibrary();
+  const canEditAmount = clientCanEditAmount({ lockedStaffId, currentStaff, settings });
 
   const libId = settings.libraryId;
 
@@ -131,7 +135,11 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
   const [isManualDuration, setIsManualDuration] = useState(false);
 
   // Transaction-Level Pricing & Discount Overrides
-  const [baseAmount, setBaseAmount] = useState(0);
+  const [baseAmount, setBaseAmountRaw] = useState(0);
+  // Issue #9: remember the system amount so a manual change can be flagged (server checks permission + audits).
+  const [suggestedBase, setSuggestedBase] = useState(0);
+  const [proRateApplied, setProRateApplied] = useState(null);
+  const setBaseAmount = (v) => { setBaseAmountRaw(v); setSuggestedBase(v); setProRateApplied(null); };
   const [discountType, setDiscountType] = useState('None'); // 'None' | 'Percentage' | 'Fixed'
   const [discountValue, setDiscountValue] = useState(0);
   const [fine, setFine] = useState(0);
@@ -448,6 +456,8 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
       seatNo: isFixed ? seatNo : 'Non-Fixed Seat',
       durationMonths: Number(durationMonths),
       amountPaid: Number(baseAmount),
+      ...(Number(baseAmount) !== Number(proRateApplied ? proRateApplied.amount : suggestedBase) ? { amountEdited: true, suggestedAmount: Number(suggestedBase) } : {}),
+      ...(proRateApplied ? { proRated: proRateApplied } : {}),
       discount: calculatedDiscount,
       fine: Number(fine),
       paymentMethod,
@@ -456,7 +466,7 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
       documents: docRecord ? [docRecord] : [],
       idProofStatus: submitDocLater ? 'Pending' : (docRecord ? 'Verified' : 'Not Required'),
       startDate: todayFormatted,
-      expiryDate: calculatedExpiry
+      expiryDate: proRateApplied ? proRateApplied.to : calculatedExpiry
     };
 
     const res = addStudent(studentData);
@@ -870,11 +880,28 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                     <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>FEE & DISCOUNT</span>
                     <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>Overrides apply to this admission only</span>
                   </div>
+                  {(() => {
+                    const cfg = cycleConfig(settings);
+                    if (cfg.mode === 'ANNIVERSARY' || !plans.find(p => p.id === planId) || Number(durationMonths) !== 1) return null;
+                    const unit = Number(suggestedBase) / Math.max(1, Number(durationMonths) || 1);
+                    const pr = firstAdmissionCharge(unit, todayStr, cfg);
+                    if (!pr.prorated) return null;
+                    return (
+                      <div data-testid="prorate-box" style={{ fontSize: '12px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '8px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <span>Library cycle: first payment ₹{pr.amount.toLocaleString()} for {pr.days} of {pr.totalDays} days (to {pr.to}). Then full fee.</span>
+                        {proRateApplied ? (
+                          <button type="button" className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => setBaseAmount(Number(suggestedBase))}>Use full fee</button>
+                        ) : (
+                          <button type="button" className="btn btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => { setBaseAmountRaw(pr.amount); setProRateApplied({ ...pr, fullFee: Number(suggestedBase) }); }}>Use pro-rated</button>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                     <div>
                       <label className="form-label" style={{ fontSize: '11px' }}>Base Price (₹)</label>
-                      <NumericInput className="form-input" value={baseAmount} onChange={e => setBaseAmount(Number(e.target.value))} />
+                      <NumericInput className="form-input" value={baseAmount} readOnly={!canEditAmount} title={canEditAmount ? undefined : 'You do not have permission to change amounts'} onChange={e => canEditAmount && setBaseAmountRaw(Number(e.target.value))} />
                     </div>
 
                     <div>

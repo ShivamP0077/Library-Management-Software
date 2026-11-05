@@ -2,6 +2,9 @@
 
 ## 2026-11-05 (IST)
 
+- **Issue #4: one way to select students** (branch `fix/04-bulk-select`, merged into `release/21-issues` only).
+  The separate sticky "N selected · Send WhatsApp" bar from PR #28 is gone, and Send WhatsApp is now in the old Bulk Actions bar next to Renew Selected and Remove Selected. Checkboxes still show on every row. Ticking one, or Select all, opens Select Students mode, so the menu's Select Students and a direct tick both lead to the same bar. Cancel Selection clears everything. Renew Selected now shows only for staff who can manage students, the same rule as the Select Students menu item.
+
 - **Issue #17: WhatsApp Templates and Auto reminders tabs now work** (branch `feat/17-templates-reminders`, merged into `release/21-issues` only).
   - **Templates:** edit the fee reminder, renewal reminder, fee receipt and seat info messages. Variables are {name}, {amount}, {dueDate}, {library} and {seat}, with a live preview. Reset to default is available. Templates are saved per library. The send window uses them, and automatic reminders use the fee and renewal templates. Until a template is saved, the old wording is used.
   - **Auto reminders:** up to 10 rules, each with days before, on or after the due date, a send time (9 AM–7 PM), on/off, and "only if unpaid". Each message is sent once and is cancelled when the student renews or pays. With no rules, the old single expiry timing still applies. Fee repeat timing moved to this tab. Quiet hours stay 9 AM–8 PM. No existing data is changed.

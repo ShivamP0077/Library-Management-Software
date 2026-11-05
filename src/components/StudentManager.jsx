@@ -632,8 +632,10 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     }
   };
 
+  // Issue #4: ticking a box (or Select all) opens the one Bulk Actions bar (Select Students mode).
   const handleToggleSelectAll = (e) => {
     if (e.target.checked) {
+      setIsSelectionMode(true);
       setSelectedIds(filteredStudents.map(s => s.id));
     } else {
       setSelectedIds([]);
@@ -641,6 +643,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   };
 
   const handleToggleSelect = (id) => {
+    setIsSelectionMode(true);
     setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
   };
 
@@ -917,6 +920,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
             <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)' }}>
               Bulk Actions ({selectedIds.length} selected):
             </span>
+            {canManageStudents && (
             <button 
               className="btn btn-primary" 
               disabled={selectedIds.length === 0} 
@@ -924,6 +928,17 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
               style={{ padding: '6px 12px', fontSize: '13px' }}
             >
               <RefreshCw size={14} /> Renew Selected
+            </button>
+            )}
+
+            <button
+              type="button"
+              className="btn btn-secondary wa-send-btn"
+              disabled={selectedIds.length === 0}
+              onClick={() => setWaTargets(students.filter(s => selectedIds.includes(s.id)))}
+              style={{ padding: '6px 12px', fontSize: '13px' }}
+            >
+              <MessageCircle size={14} /> Send WhatsApp
             </button>
             
             {currentStaff?.permissions?.canCancelAdmission && (
@@ -993,15 +1008,6 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
         })}
       </div>
 
-      {selectedIds.length > 0 && (
-        <div className="st-selbar" role="region" aria-label="Selected students">
-          <span><b>{selectedIds.length}</b> selected</span>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setSelectedIds([]); setIsSelectionMode(false); }}>Clear</button>
-          <button type="button" className="btn btn-primary btn-sm wa-send-btn" onClick={() => setWaTargets(students.filter(s => selectedIds.includes(s.id)))}>
-            <MessageCircle size={15} /> Send WhatsApp
-          </button>
-        </div>
-      )}
       {waTargets && <WhatsAppSendModal students={waTargets} onClose={() => setWaTargets(null)} />}
 
       </>

@@ -2,6 +2,8 @@
 
 ## 2026-11-05 (IST)
 
+- **Security: log redaction** — 22:00 IST. New `server/src/redact.js`: masks URL credentials, Bearer/Basic tokens, password/secret/key fields and values of sensitive env vars; console output is redacted at startup. `db.js` re-exports it. Tests added.
+
 - **#2 copied-data dry-run script + changelog PR #30 fix** — 18:35 IST. Added `server/scripts/copied-data-dry-run.mjs` (read-only pairwise fingerprint compare; never deletes). Changelog now correctly notes Issue #2 / PR #30 is merged into `release/21-issues`. Production overlap report still needs Atlas IP allow-list or a machine that can reach Mongo.
 
 - **#19 Payment providers (Razorpay + PayPal)** — 18:20 IST. Super Admin **Payments** tab stores Razorpay/PayPal keys encrypted (AES-256-GCM). Active provider powers `POST /subscription/checkout` (Payment Links / PayPal Orders), signature-verified webhooks, software invoices, AutoPay helpers (Razorpay subscriptions), lock-at-expiry via existing #14 statuses (`past_due` on failed charge). Deletion requests email Super Admins and appear under Payments for acknowledge/dismiss.

@@ -47,7 +47,7 @@ export function buildUriFromEnv(env = process.env) {
   return uri;
 }
 
-export const redact = (s) => String(s).replace(/\/\/[^@/]+@/g, '//****:****@');
+export { redact } from './redact.js';
 
 export async function connectDB() {
   const raw = buildUriFromEnv();

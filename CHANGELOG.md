@@ -2,6 +2,13 @@
 
 ## 2026-11-05 (IST)
 
+- **Issue #10: Student Profile layout** (branch `fix/10-profile-layout`, merged into `release/21-issues` only).
+  - Header: the student's photo (or their initial when there is none), their name, and a 44px close button.
+  - Details in pairs: ID | Gender, Desk | Shift, Expiry | Status. Mobile and Emergency each take a full row.
+  - Two columns on phones, one column below 300px width.
+  - Fixed: on phones the 5 tabs (History, Relocations, Payments, Documents, WhatsApp) were squashed to 1px tall and couldn't be seen or tapped. They now always show.
+  - All actions are unchanged.
+
 - **Issue #3: camera capture and document preview** (branch `fix/03-camera-preview`, merged into `release/21-issues` only).
   - A Camera button next to Attach/Upload opens the phone camera directly in three places: New Admission, the student profile Documents tab (custom and each required document), and new notices.
   - On computers it opens the normal file picker.

@@ -20,6 +20,7 @@ import { handleSplitAmountChange, handleAddSplitComponent, handleRemoveSplitComp
 import { calculateSubscriptionExpiry, calculateRenewalStartDate, getSubscriptionStatus, formatDate } from '../utils/dateUtils';
 import { getDocumentBlob, saveDocumentBlob } from '../utils/idbStorage';
 import { useBackClose } from '../utils/useBackClose';
+import { useStudentPhoto } from '../utils/useStudentPhoto';
 import { getCanonicalShifts, matchesShiftFilter, isShiftInPlan, resolveCanonicalShift, normalizeShiftName } from '../utils/shiftUtils';
 import { getPlanBasePrice, getPlanDefaultDuration } from '../utils/pricingCalculator';
 import { areSeatTypesEquivalent } from '../utils/seatTypeUtils';
@@ -223,6 +224,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   const [statusFilter, setStatusFilter] = useState('All');
   const [shiftFilter, setShiftFilter] = useState('All');
   const [activeDrawerTab, setActiveDrawerTab] = useState('history');
+  const profilePhoto = useStudentPhoto(selectedStudent);
   const [viewMode, setViewMode] = useState('active'); // active | waiting 
   const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
   const [isExcelViewOpen, setIsExcelViewOpen] = useState(false);
@@ -1169,54 +1171,35 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
               initial={{ scale: 0.95, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 20 }}
               transition={{ type: 'spring', damping: 25, stiffness: 300 }}>
               
-              <div className="modal-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--brand-primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '18px' }}>
-                    {((selectedStudent.name || 'S').charAt(0)).toUpperCase()}
-                  </div>
-                  <div>
-                    <h3 style={{ fontSize: '20px', fontWeight: 700, letterSpacing: '-0.02em' }}>{selectedStudent.name || 'Unnamed Student'}</h3>
-                    <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '2px', display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
-                      <span>{selectedStudent.id || 'N/A'}</span>
-                      <span>•</span>
-                      <span>Mobile: <strong style={{ color: selectedStudent.phone ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>{selectedStudent.phone || 'N/A'}</strong></span>
-                      <span>•</span>
-                      <span>{selectedStudent.gender || 'Male'}</span>
-                      <span>•</span>
-                      <span>Emergency: <strong style={{ color: selectedStudent.emergencyPhone ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>{selectedStudent.emergencyPhone || 'Not Provided'}</strong></span>
-                    </div>
-                  </div>
+              <div className="modal-header sp-header">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+                  {profilePhoto
+                    ? <img src={profilePhoto} alt={`${selectedStudent.name || 'Student'} photo`} className="sp-avatar" style={{ width: '48px', height: '48px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+                    : <div className="sp-avatar" style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--brand-primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '18px', flexShrink: 0 }}>
+                        {((selectedStudent.name || 'S').charAt(0)).toUpperCase()}
+                      </div>}
+                  <h3 style={{ fontSize: '20px', fontWeight: 700, letterSpacing: '-0.02em', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedStudent.name || 'Unnamed Student'}</h3>
                 </div>
-                <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', color: 'var(--text-secondary)' }} onClick={() => setSelectedStudent(null)}><X size={24} /></button>
+                <button aria-label="Close profile" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', minWidth: 44, minHeight: 44 }} onClick={() => setSelectedStudent(null)}><X size={20} /></button>
               </div>
 
-              <div style={{ padding: '24px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '16px', background: 'var(--bg-main)' }}>
-                <div>
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>ASSIGNED DESK</span>
-                  <div style={{ fontSize: '18px', fontWeight: 700, marginTop: '4px' }}>{selectedStudent.seatNo || 'None'}</div>
-                </div>
-                <div>
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>SHIFT</span>
-                  <div style={{ fontSize: '16px', fontWeight: 500, marginTop: '4px' }}>{selectedStudent.shift || 'N/A'}</div>
-                </div>
-                <div>
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>EXPIRY DATE</span>
-                  <div style={{ fontSize: '16px', fontWeight: 600, color: selectedStudent.status === 'Expired' ? 'var(--text-primary)' : '#10b981', marginTop: '4px' }}>
-                    {selectedStudent.expiryDate || 'N/A'}
+              {/* Issue #10: paired facts, two columns where space allows */}
+              <div className="sp-grid" style={{ padding: '16px 24px', background: 'var(--bg-main)' }}>
+                {[
+                  ['STUDENT ID', selectedStudent.id || 'N/A'],
+                  ['GENDER', selectedStudent.gender || 'Male'],
+                  ['ASSIGNED DESK', selectedStudent.seatNo || 'None', { fontSize: '18px', fontWeight: 700 }],
+                  ['SHIFT', selectedStudent.shift || 'N/A'],
+                  ['EXPIRY DATE', selectedStudent.expiryDate || 'N/A', { fontWeight: 600, color: selectedStudent.status === 'Expired' ? 'var(--text-primary)' : '#10b981' }],
+                  ['STATUS', selectedStudent.status || 'N/A', { fontWeight: 600, color: selectedStudent.status === 'Expired' ? 'var(--status-error, #dc2626)' : 'var(--text-primary)' }],
+                  ['STUDENT MOBILE NUMBER', selectedStudent.phone || 'N/A', { fontWeight: 600, color: selectedStudent.phone ? 'var(--text-primary)' : 'var(--text-tertiary)' }, true],
+                  ['EMERGENCY CONTACT NUMBER', selectedStudent.emergencyPhone || 'Not Provided', { fontWeight: 600, color: selectedStudent.emergencyPhone ? 'var(--text-primary)' : 'var(--text-tertiary)' }, true],
+                ].map(([label, value, vs, full]) => (
+                  <div key={label} className={full ? 'sp-full' : undefined} style={{ minWidth: 0 }}>
+                    <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>{label}</span>
+                    <div style={{ fontSize: '16px', fontWeight: 500, marginTop: '2px', overflowWrap: 'anywhere', ...(vs || {}) }}>{value}</div>
                   </div>
-                </div>
-                <div>
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>STUDENT MOBILE NUMBER</span>
-                  <div style={{ fontSize: '16px', fontWeight: 600, color: selectedStudent.phone ? 'var(--text-primary)' : 'var(--text-tertiary)', marginTop: '4px' }}>
-                    {selectedStudent.phone || 'N/A'}
-                  </div>
-                </div>
-                <div>
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>EMERGENCY CONTACT NUMBER</span>
-                  <div style={{ fontSize: '16px', fontWeight: 600, color: selectedStudent.emergencyPhone ? 'var(--text-primary)' : 'var(--text-tertiary)', marginTop: '4px' }}>
-                    {selectedStudent.emergencyPhone || 'Not Provided'}
-                  </div>
-                </div>
+                ))}
                 {selectedStudent.idProofStatus === 'Pending' && (
                   <div style={{ gridColumn: '1 / -1', padding: '12px', background: 'var(--bg-warning)', border: '1px solid var(--border-warning)', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <AlertCircle size={16} color="var(--warning-color)" />
@@ -1262,7 +1245,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                 )}
               </div>
 
-              <div style={{ display: 'flex', borderBottom: '1px solid var(--border-light)', padding: '0 24px', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+              <div className="sp-tabs" style={{ display: 'flex', borderBottom: '1px solid var(--border-light)', padding: '0 24px', overflowX: 'auto', WebkitOverflowScrolling: 'touch', flexShrink: 0 }}>
                 {['history', 'relocations', 'payments', 'documents', 'whatsapp'].map(tab => (
                   <button key={tab} onClick={() => setActiveDrawerTab(tab)} style={{ 
                     padding: '16px 24px', background: 'transparent', border: 'none', cursor: 'pointer',

@@ -1420,10 +1420,16 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                         <h4 style={{ fontSize: '14px', fontWeight: 600, margin: 0 }}>Required Verification Documents</h4>
                         <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0 0' }}>Verification status and compliance checklist</p>
                       </div>
-                      <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
-                        + Add Custom Document
-                        <input type="file" style={{ display: 'none' }} accept="image/*,.pdf" onChange={(e) => handleAttachDocumentToStudent(e)} />
-                      </label>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
+                          + Add Custom Document
+                          <input type="file" style={{ display: 'none' }} accept="image/*,.pdf" onChange={(e) => handleAttachDocumentToStudent(e)} />
+                        </label>
+                        <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0 }} aria-label="Add document with camera">
+                          Camera
+                          <input type="file" style={{ display: 'none' }} accept="image/*" capture="environment" onChange={(e) => handleAttachDocumentToStudent(e)} />
+                        </label>
+                      </div>
                     </div>
 
                     {/* Required Document Types Checklist */}
@@ -1500,6 +1506,10 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                                   <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer', margin: 0, padding: '4px 8px' }}>
                                     {matchingDoc ? 'Replace' : 'Upload'}
                                     <input type="file" style={{ display: 'none' }} accept="image/*,.pdf" onChange={(e) => handleAttachDocumentToStudent(e, docType.name)} />
+                                  </label>
+                                  <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer', margin: 0, padding: '4px 8px' }} aria-label={`${docType.name} from camera`}>
+                                    Camera
+                                    <input type="file" style={{ display: 'none' }} accept="image/*" capture="environment" onChange={(e) => handleAttachDocumentToStudent(e, docType.name)} />
                                   </label>
                                 </div>
                               </div>

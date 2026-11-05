@@ -1,3 +1,4 @@
+import { DocPreview } from '../DocPreview';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useLibrary } from '../../context/LibraryContext';
 import { X, UserPlus, ShieldAlert, AlertCircle, Clock, Check, RefreshCw } from 'lucide-react';
@@ -45,6 +46,10 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
   const [isUploadingDoc, setIsUploadingDoc] = useState(false);
   const [submitDocLater, setSubmitDocLater] = useState(false);
   const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+  const lastSourceRef = useRef('upload'); // which picker was used, for Retake
+  const [docPreviewUrl, setDocPreviewUrl] = useState(null);
+  const [isDocPreviewOpen, setIsDocPreviewOpen] = useState(false);
 
   const selectedDocTypeObj = settings.documentTypes?.find(d => d.name === selectedDocType);
   const effectiveDocRequirement = selectedDocTypeObj?.requirement || settings.idProofRequirement || 'Required';
@@ -52,10 +57,12 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
 
   const resetFileInput = () => {
     if (fileInputRef.current) fileInputRef.current.value = '';
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
   };
 
   const handleFileChange = (e) => {
     const file = e.target.files?.[0];
+    lastSourceRef.current = e.target === cameraInputRef.current ? 'camera' : 'upload';
 
     // Cancelling the picker (or selecting nothing) must never mark a document as attached.
     if (!file) {
@@ -80,6 +87,7 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
           uploadedAt: new Date().toISOString()
         });
         setDocFile(file);
+        setDocPreviewUrl(base64Data);
         setDocFileAttached(true);
         setSubmitDocLater(false);
         toast.success(`Attached ${file.name}`);
@@ -103,6 +111,8 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
     const storageKey = docFileMeta?.storageKey;
     setDocFile(null);
     setDocFileMeta(null);
+    setDocPreviewUrl(null);
+    setIsDocPreviewOpen(false);
     setDocFileAttached(false);
     resetFileInput();
     if (storageKey) {
@@ -572,6 +582,16 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                   >
                     {isUploadingDoc ? 'Attaching...' : (docFileAttached ? 'Replace' : 'Attach')}
                   </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ fontSize: '12px', border: '1px solid var(--border-light)', cursor: isUploadingDoc ? 'not-allowed' : 'pointer', opacity: isUploadingDoc ? 0.6 : 1, flexShrink: 0 }}
+                    onClick={() => cameraInputRef.current?.click()}
+                    disabled={isUploadingDoc}
+                    aria-label="Take photo with camera"
+                  >
+                    Camera
+                  </button>
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -579,6 +599,16 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                     accept="image/*,.pdf"
                     onChange={handleFileChange}
                     disabled={isUploadingDoc}
+                  />
+                  <input
+                    ref={cameraInputRef}
+                    type="file"
+                    style={{ display: 'none' }}
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handleFileChange}
+                    disabled={isUploadingDoc}
+                    data-testid="doc-camera-input"
                   />
                 </div>
 
@@ -593,6 +623,16 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                         ? `${docFileName}${docFileSize ? ` (${docFileSize})` : ''}`
                         : 'No file selected'}
                   </span>
+                  {docFileAttached && !isUploadingDoc && docPreviewUrl && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      style={{ fontSize: '11px', padding: '2px 8px', flexShrink: 0 }}
+                      onClick={() => setIsDocPreviewOpen(true)}
+                    >
+                      Preview
+                    </button>
+                  )}
                   {docFileAttached && !isUploadingDoc && (
                     <button
                       type="button"
@@ -612,6 +652,16 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                   </label>
                 )}
                 {errors.document && <span style={{ color: '#ef4444', fontSize: '11px', display: 'block', marginTop: '4px' }}>{errors.document}</span>}
+                {isDocPreviewOpen && docPreviewUrl && (
+                  <DocPreview
+                    src={docPreviewUrl}
+                    name={`${selectedDocType}: ${docFileName}`}
+                    fileType={docFileMeta?.fileType}
+                    onClose={() => setIsDocPreviewOpen(false)}
+                    onRemove={handleRemoveDoc}
+                    onRetake={() => { setIsDocPreviewOpen(false); (lastSourceRef.current === 'camera' ? cameraInputRef : fileInputRef).current?.click(); }}
+                  />
+                )}
               </div>
 
               <div className="form-group" style={{ marginBottom: 0 }}>

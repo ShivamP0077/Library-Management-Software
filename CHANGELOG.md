@@ -2,6 +2,9 @@
 
 ## 2026-11-05 (IST)
 
+- **Issue #7: close (X) buttons are easy to tap on mobile** (branch `fix/07-close-buttons`, merged into `release/21-issues` only).
+  One shared style in `responsive.css` gives every icon-only X button the same 20px icon and a tap area of at least 44×44px, in all 30+ modals and panels, with no change to their look or layout. Buttons with an X plus text (like "Exit Setup") are not affected.
+
 - **Issue #4: one way to select students** (branch `fix/04-bulk-select`, merged into `release/21-issues` only).
   The separate sticky "N selected · Send WhatsApp" bar from PR #28 is gone, and Send WhatsApp is now in the old Bulk Actions bar next to Renew Selected and Remove Selected. Checkboxes still show on every row. Ticking one, or Select all, opens Select Students mode, so the menu's Select Students and a direct tick both lead to the same bar. Cancel Selection clears everything. Renew Selected now shows only for staff who can manage students, the same rule as the Select Students menu item.
 

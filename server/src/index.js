@@ -1,4 +1,6 @@
 import 'dotenv/config';
+import { installConsoleRedaction } from './redact.js';
+installConsoleRedaction();
 import { connectDB, redact } from './db.js';
 import { createApp } from './app.js';
 import { ensureSuperAdmin } from './seed.js';

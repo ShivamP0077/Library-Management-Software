@@ -23,6 +23,7 @@ import { useBackClose } from '../utils/useBackClose';
 import { useStudentPhoto } from '../utils/useStudentPhoto';
 import { getCanonicalShifts, matchesShiftFilter, isShiftInPlan, resolveCanonicalShift, normalizeShiftName } from '../utils/shiftUtils';
 import { getPlanBasePrice, getPlanDefaultDuration } from '../utils/pricingCalculator';
+import { isVoidedPayment } from '../utils/paymentVoid';
 import { clientCanEditAmount } from '../utils/amountPermission';
 import { cycleConfig, cycleFor, addDays, bridgeCharge, upgradeCharge } from '../utils/billingCycle';
 import { isAdmissionVoid } from '../utils/admissionVoid.js';
@@ -1437,7 +1438,10 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                           {pay.reason && <div style={{ fontSize: '11px', color: '#ef4444', marginTop: '2px' }}>Reason: {pay.reason}</div>}
                         </div>
                         <div style={{ textAlign: 'right' }}>
-                          <div style={{ fontWeight: 700, color: (pay.type === 'Refund' || pay.amount < 0) ? '#ef4444' : '#10b981' }}>
+                          {isVoidedPayment(pay) && (
+                            <div data-testid="payment-voided-badge" style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: '#fee2e2', color: '#b91c1c', display: 'inline-block', marginBottom: 4 }}>Voided</div>
+                          )}
+                          <div style={{ fontWeight: 700, color: isVoidedPayment(pay) ? '#9ca3af' : ((pay.type === 'Refund' || pay.amount < 0) ? '#ef4444' : '#10b981'), textDecoration: isVoidedPayment(pay) ? 'line-through' : 'none' }}>
                             {pay.type === 'Refund' || pay.amount < 0 ? `-₹${Math.abs(pay.amount).toLocaleString()} (Refund)` : `₹${(pay.netTotal || pay.amount).toLocaleString()}`}
                           </div>
                         </div>

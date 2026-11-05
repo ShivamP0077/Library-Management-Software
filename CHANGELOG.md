@@ -2,6 +2,8 @@
 
 ## 2026-11-05 (IST)
 
+- **#11 Voided payments kept in history** — 17:25 IST. Voiding a renewal (or admission) no longer deletes the payment. The row stays visible as **Voided**, is struck through in the ledger and student profile, and is excluded from income totals and P&L. Admission void still frees the seat.
+
 - **#9 Server-side payment price lock** — 17:10 IST. Staff without amount-edit permission can no longer bypass the lock by omitting `amountEdited`. The server recomputes the fee from the seat plan (and approved pro-rate maths) and rejects any custom amount or discount. Client flags are ignored for the decision. Matching plan prices still work for Librarians. Owner/Admin always; Manager on by default.
 
 - **#19 My Subscription (owners)** — 15:10 IST. New "Plan" button for owners: current plan, status, renewal/trial dates, usage against limits, change plan (free/cheaper plans; downgrades during a paid period are scheduled for period end; blocked if usage exceeds the new plan's limits), cancel at period end / resume, invoices list (empty until a payment provider exists), and a deletion *request* (exact library name; nothing is deleted — Super Admin reviews and uses the existing delete flow). Paid upgrades reply "Online payments are not set up yet". Super Admin's business table now shows real plan/status/renewal and a "Deletion requested" flag.

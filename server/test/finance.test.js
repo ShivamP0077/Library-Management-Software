@@ -79,3 +79,13 @@ test('P&L reconciles fees, refunds, one-time + paid recurring expenses; CSV expo
   assert.equal(csv.status, 200); assert.match(csv.body, /Net collections,-1540/);
   assert.equal((await call('GET', '/api/reports/pnl', { token: ctx.tokens.b })).body.feeCollections, 0);
 });
+
+test('voided receipts stay stored but out of P&L totals', async () => {
+  assert.equal((await call('POST', '/api/payments', { token: A(), body: { receiptNo: 'VOID-KEEP-1', studentId: 'S1', amount: 777, netTotal: 777, method: 'Cash', date: '2026-11-05' } })).status, 201);
+  assert.equal((await call('POST', '/api/payments', { token: A(), body: { receiptNo: 'VOID-KEEP-2', studentId: 'S1', amount: 333, netTotal: 333, method: 'Cash', date: '2026-11-05', voided: true, status: 'Voided' } })).status, 201);
+  const list = (await call('GET', '/api/payments', { token: A() })).body;
+  assert.ok(list.some(p => p.receiptNo === 'VOID-KEEP-2' && p.voided === true), 'voided row kept');
+  const p = (await call('GET', '/api/reports/pnl?from=2026-11-05&to=2026-11-05', { token: A() })).body;
+  assert.equal(p.feeCollections, 777, 'only the live receipt counts');
+  assert.equal(p.byMethod.Cash, 777);
+});

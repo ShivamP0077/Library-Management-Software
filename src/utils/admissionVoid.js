@@ -41,7 +41,7 @@ export function buildAdmissionVoid(student, renewalId, { today, staffName = 'Adm
     receiptNo: rec.receiptNo,
     updates: {
       renewalHistory: student.renewalHistory.map(r => r.renewalId === renewalId ? { ...r, voided: true, voidedAt: today, voidedBy: staffName } : r),
-      paymentHistory: (student.paymentHistory || []).map(p => p.receiptNo === rec.receiptNo ? { ...p, voided: true } : p),
+      paymentHistory: (student.paymentHistory || []).map(p => p.receiptNo === rec.receiptNo ? { ...p, voided: true, status: 'Voided' } : p),
       seatNo: 'None',
       status: 'Expired',
       expiryDate: dayBefore(start) < start ? dayBefore(start) : start,

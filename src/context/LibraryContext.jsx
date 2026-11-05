@@ -5,6 +5,7 @@ import { getDefaultPermissionsForRole, syncLegacyPermissions } from '../utils/st
 import { isShiftInPlan, resolveCanonicalShift, getCanonicalShifts, normalizeShiftName, shiftsOverlap } from '../utils/shiftUtils';
 import { areSeatTypesEquivalent } from '../utils/seatTypeUtils';
 import { buildAdmissionVoid } from '../utils/admissionVoid.js';
+import { buildRenewalVoid, markPaymentVoided } from '../utils/paymentVoid.js';
 import { scopedStorage, canSeedServer } from '../utils/tenantCache';
 // Issue #2: all cache reads/writes in this file go to the current library's own namespace.
 const localStorage = scopedStorage;
@@ -2189,54 +2190,45 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
     const renewalIndex = student.renewalHistory?.findIndex(r => r.renewalId === renewalId);
     if (renewalIndex === -1 || renewalIndex === undefined) return false;
 
+    const staffName = currentStaff?.name || 'Admin';
     // Issue #11: voiding the initial admission ends the plan and frees the seat (record kept, audited).
-    const admissionVoid = buildAdmissionVoid(student, renewalId, { today: todayStr, staffName: currentStaff?.name || 'Admin' });
+    const admissionVoid = buildAdmissionVoid(student, renewalId, { today: todayStr, staffName });
     if (admissionVoid) {
       setStudents(prev => prev.map(s => s.id === studentId ? { ...s, ...admissionVoid.updates } : s));
-      setPayments(prev => prev.filter(p => p.receiptNo !== admissionVoid.receiptNo));
+      // Keep the payment row, marked Voided (no longer deleted).
+      setPayments(prev => prev.map(p => p.receiptNo === admissionVoid.receiptNo ? markPaymentVoided(p, { today: todayStr, staffName }) : p));
       return 'admission';
     }
-    if (student.renewalHistory[renewalIndex].voided) return false;
 
-    const renewalToCancel = student.renewalHistory[renewalIndex];
-    const newRenewalHistory = student.renewalHistory.filter(r => r.renewalId !== renewalId);
-    const newPaymentHistory = student.paymentHistory.filter(p => p.receiptNo !== renewalToCancel.receiptNo);
+    // Issue #11: renewal void keeps the record as Voided (no delete) and rolls dates back when it was the current period.
+    const renewalVoid = buildRenewalVoid(student, renewalId, { today: todayStr, staffName });
+    if (!renewalVoid) return false;
 
-    let updates = {
-      renewalHistory: newRenewalHistory,
-      paymentHistory: newPaymentHistory
-    };
-
+    let updates = renewalVoid.updates;
     if (renewalIndex === 0) {
-      let newStartDate, newExpiryDate, newPlanId, newPlanName, newShift, newSeatNo;
-      if (newRenewalHistory.length > 0) {
-        newStartDate = newRenewalHistory[0].startDate;
-        newExpiryDate = newRenewalHistory[0].endDate;
-        newPlanId = newRenewalHistory[0].planId || student.planId;
-        newPlanName = newRenewalHistory[0].planName;
-        newShift = newRenewalHistory[0].shift || student.shift;
-        newSeatNo = newRenewalHistory[0].seatNo || student.seatNo;
+      const previous = (updates.renewalHistory || []).find(r => !r.voided);
+      if (previous) {
+        updates = {
+          ...updates,
+          startDate: previous.startDate,
+          expiryDate: previous.endDate,
+          planId: previous.planId || student.planId,
+          planName: previous.planName,
+          shift: previous.shift || student.shift,
+          seatNo: previous.seatNo || student.seatNo,
+        };
       } else {
-        newStartDate = student.joinedDate;
-        newExpiryDate = student.expiryDate;
-        newPlanId = student.planId;
-        newPlanName = student.planName;
-        newShift = student.shift;
-        newSeatNo = student.seatNo;
+        updates = {
+          ...updates,
+          startDate: student.joinedDate,
+          expiryDate: student.joinedDate,
+          status: 'Expired',
+        };
       }
-      updates = {
-        ...updates,
-        startDate: newStartDate,
-        expiryDate: newExpiryDate,
-        planId: newPlanId,
-        planName: newPlanName,
-        shift: newShift,
-        seatNo: newSeatNo
-      };
     }
 
     setStudents(prev => prev.map(s => s.id === studentId ? { ...s, ...updates } : s));
-    setPayments(prev => prev.filter(p => p.receiptNo !== renewalToCancel.receiptNo));
+    setPayments(prev => prev.map(p => p.receiptNo === renewalVoid.receiptNo ? markPaymentVoided(p, { today: todayStr, staffName }) : p));
     return true;
   };
 

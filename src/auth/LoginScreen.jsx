@@ -342,6 +342,27 @@ export function LoginScreen({ onContinueOffline }) {
                   You've been invited to <strong>{inviteLibraryName || 'this library'}</strong> as <strong>{roleLabel(inviteInfo.role)}</strong> ({inviteInfo.email})
                 </p>
 
+                {googleEnabled && (
+                  <>
+                    <a
+                      id="google-invite"
+                      href={`${api.googleStartUrl()}?invite=${encodeURIComponent(inviteToken)}`}
+                      onClick={() => setRedirecting(true)}
+                      style={{
+                        display: 'flex', width: '100%', minHeight: 44, boxSizing: 'border-box',
+                        alignItems: 'center', justifyContent: 'center', gap: 10, padding: '8px 16px',
+                        background: '#ffffff', border: '1px solid var(--border-light, #e5e7eb)', borderRadius: 8,
+                        color: 'var(--text-primary, #111827)', fontSize: 14, fontWeight: 600, textDecoration: 'none',
+                      }}
+                    >
+                      <GoogleIcon />
+                      <span>{redirecting ? 'Redirecting…' : `Join with Google (${inviteInfo.email})`}</span>
+                    </a>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '16px 0', color: 'var(--text-tertiary)', fontSize: 12 }}>
+                      <div style={{ flex: 1, height: 1, background: 'var(--border-light, #e5e7eb)' }} /> or set a password <div style={{ flex: 1, height: 1, background: 'var(--border-light, #e5e7eb)' }} />
+                    </div>
+                  </>
+                )}
                 <form onSubmit={submitInvite}>
                   <div className="form-group">
                     <label className="form-label" htmlFor="invite-name">Your name</label>

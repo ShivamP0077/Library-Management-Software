@@ -14,6 +14,9 @@ export const OAUTH_ERROR_MESSAGES = {
   invalid_request: 'Your sign-in session expired. Please try again.',
   access_denied: 'Google sign-in was cancelled.',
   not_configured: 'Google sign-in is not available right now.',
+  invite_invalid: 'This invite link is invalid, expired or already used.',
+  invite_email_mismatch: 'That Google account does not match the invited email. Use the invited email.',
+  account_exists: 'An account with this email already exists. Sign in instead.',
 };
 
 /** Maps a `google_error` code from the OAuth redirect to a friendly message. */

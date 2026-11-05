@@ -10,6 +10,7 @@ import { createWhatsappRouter, createWhatsappWebhookRouter } from './whatsapp.js
 import { createFinanceRouter, validatePaymentBatch } from './finance.js';
 import { createStudentRouter, recordStudentDiff, recordArchiveDiff, checkCapacity } from './students.js';
 import { audit } from './audit.js';
+import { enforceAmountEdits, amountSettingsChanged, isOwnerRole } from './amountPermission.js';
 import { createNotificationRouter } from './notifications.js';
 import { createInsightsRouter } from './insights.js';
 import { createSupportRouter, createSupportAdminRouter } from './support.js';
@@ -363,6 +364,11 @@ tenant.get('/settings', wrap(async (req, res) => {
   res.json(s ? clean(s) : null);
 }));
 tenant.put('/settings', requireRole('client_admin', 'superadmin', 'staff'), wrap(async (req, res) => {
+  const before = await Settings.findOne({ tenantId: req.tenantId }).lean();
+  if (amountSettingsChanged(before || {}, req.body || {})) {
+    if (!isOwnerRole(req.user)) return res.status(403).json({ error: 'Only the owner can change who may edit payment amounts.', code: 'owner_only' });
+    await audit(req, 'settings.amount_edit_permission', { tenantId: req.tenantId, detail: { managerCanEditAmount: req.body?.managerCanEditAmount ?? null, staffCanEditAmount: req.body?.staffCanEditAmount ?? null } });
+  }
   const s = await Settings.findOneAndReplace({ tenantId: req.tenantId }, { ...stripMeta(req.body), tenantId: req.tenantId, libraryId: req.tenantId }, { upsert: true, new: true, lean: true });
   res.json(clean(s));
 }));
@@ -417,7 +423,7 @@ tenant.post('/:col', colParam, wrap(async (req, res) => {
     await checkCapacity(req.tenantId, n + 1, n);
     await reconcileStudents(req.tenantId, [body], { actor: req.user.email });
   }
-  if (req.params.col === 'payments') validatePaymentBatch([body]);
+  if (req.params.col === 'payments') { validatePaymentBatch([body]); await enforceAmountEdits(req, [body]); }
   const d = await req.Model.create({ ...body, _key, tenantId: req.tenantId, libraryId: req.tenantId });
   if (req.params.col === 'students') await recordStudentDiff(req.tenantId, new Map(), [{ ...body, id: _key }], req.user.email);
   if (req.params.col === 'payments') await sendReceiptsAfterSave(req.tenantId, [{ ...body, _key }]);
@@ -435,6 +441,7 @@ tenant.put('/:col/:key', colParam, wrap(async (req, res) => {
   if (req.params.col === 'payments') {
     const prev = await req.Model.findOne({ tenantId: req.tenantId, _key: req.params.key }).lean();
     if (prev) validatePaymentBatch([{ ...clean(prev), ...stripMeta(req.body) }], new Map([[req.params.key, prev]]));
+    await enforceAmountEdits(req, [{ ...(prev ? clean(prev) : {}), ...stripMeta(req.body), receiptNo: prev?.receiptNo ?? req.params.key }], prev ? new Map([[String(prev.receiptNo ?? req.params.key), prev]]) : new Map());
   }
   const d = await req.Model.findOneAndUpdate({ tenantId: req.tenantId, _key: req.params.key }, { $set: stripMeta(req.body) }, { new: true, lean: true });
   d ? res.json(clean(d)) : res.status(404).json({ error: 'Not found' });
@@ -463,6 +470,7 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
   if (col === 'payments') {
     const prevDocs = await req.Model.find({ tenantId: req.tenantId }).lean();
     validatePaymentBatch(req.body.map(stripMeta), new Map(prevDocs.map(d => [String(d._key), d])));
+    await enforceAmountEdits(req, req.body.map(stripMeta), new Map(prevDocs.map(d => [String(d._key), d])));
     const had = new Set(prevDocs.map(d => String(d._key)));
     newPayments = req.body.map(stripMeta).map(b => ({ ...b, _key: keyOf(col, b) })).filter(b => b._key && !had.has(String(b._key)));
   }

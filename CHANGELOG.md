@@ -2,6 +2,8 @@
 
 ## 2026-11-05 (IST)
 
+- **#9 Billing cycles & fee changes** (2:55 PM IST): library-wide cycle modes (anniversary, calendar month, every N days, yearly). New joiners get a pro-rated first payment option (calendar days, final amount rounded to the rupee). Seat/shift moves to a different-priced plan charge the pro-rated difference (separate receipt) or add a credit to the student; logged in seat history. Renewals can optionally be aligned to the library cycle with a bridge payment; existing students keep their stored dates otherwise (no data migration). Amount-edit permission: Admin always, Manager on by default, other staff off; owner-only setting, enforced on the server and every change audited.
+
 - **#8 Recurring bill schedule** — New recurring bills use a clear **First due date** and **Repeat every N days / months / years**. Month and year steps keep the original day and use the last day of short months (Jan 31 → Feb 28/29 → Mar 31; Feb 29 → Feb 28 in normal years). Payment date stays separate; reminders unchanged. Old bills keep their old due-day schedule and dates (no data changed).
 
 - **#11 Void admission frees the seat** — Voiding the first admission (History tab > Void) now ends the plan, frees the seat (server releases it) and marks the record "Voided" instead of deleting it. An audit entry is saved in the student's voidHistory. Renewal voids and Cancel Admission work as before. Refunds stay separate.

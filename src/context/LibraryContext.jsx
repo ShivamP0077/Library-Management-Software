@@ -1577,6 +1577,8 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       netTotal,
       method: studentData.paymentMethod || "UPI",
       breakdown: studentData.breakdown,
+      ...(studentData.amountEdited ? { amountEdited: true, suggestedAmount: studentData.suggestedAmount ?? null } : {}),
+      ...(studentData.proRated ? { proRated: studentData.proRated } : {}),
       date: todayStr,
       staffName: currentStaff?.name || "Admin"
     };
@@ -1809,6 +1811,8 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       netTotal,
       method: renewalData.paymentMethod || "UPI",
       breakdown: renewalData.breakdown,
+      ...(renewalData.amountEdited ? { amountEdited: true, suggestedAmount: renewalData.suggestedAmount ?? null } : {}),
+      ...(renewalData.bridge ? { bridge: renewalData.bridge } : {}),
       date: todayStr,
       staffName: currentStaff?.name || "Admin"
     };
@@ -1871,7 +1875,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
   };
 
   // Change Student Seat (Full Scope & Shift-Overlap Relocation)
-  const changeSeat = (studentId, newSectionId, newSeatTypeId, newSeatNo, reason, newShiftId, newBranchId) => {
+  const changeSeat = (studentId, newSectionId, newSeatTypeId, newSeatNo, reason, newShiftId, newBranchId, priceChange = null) => {
     if (!hasPermission('students', 'edit')) {
       toast.error('Permission Denied: You do not have permission to change seats.');
       return false;
@@ -1938,13 +1942,44 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       newShift: reqShiftObj ? reqShiftObj.name : student.shift,
       reason: reason || "Relocation",
       date: todayStr,
-      staffName: currentStaff?.name || "Admin"
+      staffName: currentStaff?.name || "Admin",
+      // Issue #9: pro-rated fee difference for the rest of the paid period (+ charge, - credit).
+      ...(priceChange ? { priceChange } : {})
     };
+
+    // Issue #9: an upgrade charge is a separate receipt; a downgrade becomes credit on the student.
+    let upgradePayment = null;
+    const changeAmt = priceChange ? Number(priceChange.amount) || 0 : 0;
+    if (changeAmt > 0 && priceChange.collect) {
+      upgradePayment = {
+        receiptNo: generateReceiptNo(),
+        studentId: student.id,
+        studentName: student.name,
+        branchId,
+        branchName: newBranchObj?.name || settings.name || "Main Branch",
+        branchCode: newBranchObj?.code || "BR",
+        seatNo: newSeatNo,
+        seatName: newSeatNo,
+        planName: `Seat upgrade (${priceChange.days}/${priceChange.totalDays} days)`,
+        type: 'upgrade',
+        amount: changeAmt,
+        discount: 0,
+        fine: 0,
+        netTotal: changeAmt,
+        method: priceChange.method || "Cash",
+        ...(priceChange.amountEdited ? { amountEdited: true, suggestedAmount: priceChange.suggestedAmount ?? null } : {}),
+        date: todayStr,
+        staffName: currentStaff?.name || "Admin"
+      };
+      newSeatLog.receiptNo = upgradePayment.receiptNo;
+    }
 
     setStudents(prev => prev.map(s => {
       if (s.id === studentId) {
         return {
           ...s,
+          ...(changeAmt < 0 ? { creditBalance: (Number(s.creditBalance) || 0) + Math.abs(changeAmt) } : {}),
+          ...(upgradePayment ? { paymentHistory: [upgradePayment, ...(s.paymentHistory || [])] } : {}),
           branchId,
           sectionId,
           blockId: sectionId,
@@ -1957,6 +1992,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       }
       return s;
     }));
+    if (upgradePayment) setPayments(prev => [upgradePayment, ...prev]);
     return true;
   };
 

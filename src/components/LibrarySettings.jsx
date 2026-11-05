@@ -32,6 +32,8 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
     copyFromBranch, getSetupStatus, generateTestStudents, clearTestData,
     addStaffMember, updateStaffMember, toggleStaffStatus, deleteStaffMember, hasPermission
   } = useLibrary();
+  const { lockedStaffId } = useLibrary();
+  const isOwnerSession = !lockedStaffId;
 
   const canManageWhatsapp = !currentStaff || currentStaff.role === 'Admin' || currentStaff.role === 'Manager' || hasPermission?.('settings', 'manage') || hasPermission?.('settings', 'edit');
 
@@ -108,7 +110,11 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
     receiptFooter: settings.receiptFooter || '',
     billingCycleMode: settings.billingCycleMode || 'ANNIVERSARY',
     gracePeriodDays: settings.gracePeriodDays ?? 3,
-    calendarBillingDay: settings.calendarBillingDay ?? 1
+    calendarBillingDay: settings.calendarBillingDay ?? 1,
+    cycleDays: settings.cycleDays ?? 30,
+    cycleAnchorDate: settings.cycleAnchorDate || '',
+    managerCanEditAmount: settings.managerCanEditAmount !== false,
+    staffCanEditAmount: settings.staffCanEditAmount === true
   });
 
   // Keep billingFormData in sync if settings changes externally
@@ -125,7 +131,11 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
       receiptFooter: settings.receiptFooter || '',
       billingCycleMode: settings.billingCycleMode || 'ANNIVERSARY',
       gracePeriodDays: settings.gracePeriodDays ?? 3,
-      calendarBillingDay: settings.calendarBillingDay ?? 1
+    calendarBillingDay: settings.calendarBillingDay ?? 1,
+      cycleDays: settings.cycleDays ?? 30,
+      cycleAnchorDate: settings.cycleAnchorDate || '',
+      managerCanEditAmount: settings.managerCanEditAmount !== false,
+      staffCanEditAmount: settings.staffCanEditAmount === true
     });
   }, [settings]);
 
@@ -235,7 +245,14 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
       receiptFooter: billingFormData.receiptFooter,
       billingCycleMode: billingFormData.billingCycleMode,
       gracePeriodDays: Number(billingFormData.gracePeriodDays) || 3,
-      calendarBillingDay: Number(billingFormData.calendarBillingDay) || 1
+      calendarBillingDay: Number(billingFormData.calendarBillingDay) || 1,
+      cycleDays: Math.max(1, Number(billingFormData.cycleDays) || 30),
+      cycleAnchorDate: billingFormData.cycleAnchorDate || '',
+      // Issue #9: only the owner may change who can edit amounts (server enforces too).
+      ...(isOwnerSession ? {
+        managerCanEditAmount: !!billingFormData.managerCanEditAmount,
+        staffCanEditAmount: !!billingFormData.staffCanEditAmount
+      } : {})
     }));
     toast.success('Library branding, contact & billing configuration saved!');
   };
@@ -1454,11 +1471,16 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                   >
                     <option value="ANNIVERSARY">Anniversary-Based (Join Date to same date next month)</option>
                     <option value="CALENDAR_MONTH">Calendar-Month Based (1st to month-end)</option>
+                    <option value="N_DAYS">Every N Days (fixed library cycle)</option>
+                    <option value="YEARLY">Yearly (library-wide year)</option>
                   </select>
                   <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
                     {billingFormData.billingCycleMode === 'ANNIVERSARY' 
                       ? 'Example: Joined 15 Feb → Due 15 Mar (coverage 15 Feb–14 Mar).' 
-                      : 'Example: Billed on 1st of each calendar month.'}
+                      : billingFormData.billingCycleMode === 'CALENDAR_MONTH' ? 'Example: Billed on 1st of each calendar month. New joiners pay pro-rated days to month-end.'
+                      : billingFormData.billingCycleMode === 'N_DAYS' ? 'Example: 30-day cycle; joining on day 10 pays for days 10–30 only.'
+                      : 'Example: One library year; joining mid-year pays the remaining days only.'}
+                    {' '}Existing students keep their current dates; they can be aligned at their next renewal.
                   </span>
                 </div>
 
@@ -1484,6 +1506,31 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                     />
                   </div>
                 )}
+                {(billingFormData.billingCycleMode === 'N_DAYS' || billingFormData.billingCycleMode === 'YEARLY') && (
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontSize: '12px', fontWeight: 600 }}>Cycle Start Date</label>
+                    <input type="date" className="form-input" value={billingFormData.cycleAnchorDate} onChange={e => setBillingFormData(p => ({ ...p, cycleAnchorDate: e.target.value }))} />
+                  </div>
+                )}
+                {billingFormData.billingCycleMode === 'N_DAYS' && (
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontSize: '12px', fontWeight: 600 }}>Cycle Length (Days)</label>
+                    <NumericInput className="form-input" value={billingFormData.cycleDays} onChange={e => setBillingFormData(p => ({ ...p, cycleDays: Number(e.target.value) || 0 }))} />
+                  </div>
+                )}
+                <div className="form-group">
+                  <label className="form-label" style={{ fontSize: '12px', fontWeight: 600 }}>Who can change fee amounts</label>
+                  <label style={{ display: 'flex', gap: '8px', alignItems: 'center', fontSize: '13px' }}>
+                    <input type="checkbox" checked disabled /> Admin (always)
+                  </label>
+                  <label style={{ display: 'flex', gap: '8px', alignItems: 'center', fontSize: '13px' }}>
+                    <input type="checkbox" data-testid="perm-manager" disabled={!isOwnerSession} checked={!!billingFormData.managerCanEditAmount} onChange={e => setBillingFormData(p => ({ ...p, managerCanEditAmount: e.target.checked }))} /> Manager
+                  </label>
+                  <label style={{ display: 'flex', gap: '8px', alignItems: 'center', fontSize: '13px' }}>
+                    <input type="checkbox" data-testid="perm-staff" disabled={!isOwnerSession} checked={!!billingFormData.staffCanEditAmount} onChange={e => setBillingFormData(p => ({ ...p, staffCanEditAmount: e.target.checked }))} /> Other staff
+                  </label>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Every changed amount is recorded in the audit log.{isOwnerSession ? '' : ' Only the library owner can change this.'}</span>
+                </div>
               </div>
 
               {/* Library Identity & Contact Settings */}

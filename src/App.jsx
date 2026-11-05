@@ -12,8 +12,9 @@ import { NewStudentModal } from './components/Modals/NewStudentModal';
 import { PrintReceiptModal } from './components/Modals/PrintReceiptModal';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast, { Toaster } from 'react-hot-toast';
-import { ShieldAlert, ArrowLeft, LogOut, Eye, WifiOff, Cloud, KeyRound } from 'lucide-react';
+import { ShieldAlert, ArrowLeft, LogOut, Eye, WifiOff, Cloud, KeyRound, CreditCard } from 'lucide-react';
 import { ChangePasswordModal } from './auth/ChangePasswordModal';
+import { MySubscriptionModal } from './auth/MySubscriptionModal';
 import { initHistory, navTab, TAB_FROM_HASH } from './utils/appHistory';
 import { useBackClose } from './utils/useBackClose';
 import { NotificationsCenter } from './components/NotificationsCenter';
@@ -250,6 +251,7 @@ export const AppContent = () => {
 const SessionBar = ({ libraryName, readOnly, onBack, isOffline = false, onSwitchToCloud }) => {
   const { user, logout } = useAuth();
   const [pwOpen, setPwOpen] = useState(false);
+  const [subOpen, setSubOpen] = useState(false);
   useBackClose(pwOpen, () => setPwOpen(false));
   return (
     <div id="session-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '6px 16px', fontSize: 12, background: readOnly ? '#fef3c7' : isOffline ? '#1e293b' : '#111827', color: readOnly ? '#92400e' : '#e5e7eb' }}>
@@ -272,7 +274,9 @@ const SessionBar = ({ libraryName, readOnly, onBack, isOffline = false, onSwitch
           <>
             <span><span className="session-email">{user?.email} · </span>{user?.role === 'superadmin' ? 'Super Admin' : user?.role === 'client_admin' ? 'Client Admin' : user?.role === 'partner' ? 'Partner' : user?.role === 'agent' ? 'Agent' : 'Staff'}</span>
             {!onBack && <button className="btn btn-ghost btn-sm" onClick={() => setPwOpen(true)} style={{ color: 'inherit' }} aria-label="Change password"><KeyRound size={14} /> <span>Password</span></button>}
+            {!onBack && user?.role === 'client_admin' && <button className="btn btn-ghost btn-sm" onClick={() => setSubOpen(true)} style={{ color: 'inherit' }} aria-label="My subscription"><CreditCard size={14} /> <span>Plan</span></button>}
             <button className="btn btn-ghost btn-sm" onClick={logout} style={{ color: 'inherit' }}><LogOut size={14} /> <span>Sign out</span></button>
+            {subOpen && <MySubscriptionModal libraryName={libraryName} onClose={() => setSubOpen(false)} />}
             {pwOpen && <ChangePasswordModal onClose={() => setPwOpen(false)} hasPassword={!(user?.authProviders?.length && !user.authProviders.includes('password'))} />}
           </>
         )}

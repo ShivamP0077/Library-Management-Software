@@ -25,6 +25,7 @@ const sendReceiptsAfterSave = async (tenantId, payments, newStudentKeys) => {
 };
 import { deleteLibraryData } from './deleteLibrary.js';
 import { createSignupRouter } from './signup.js';
+import { createSubscriptionRouter } from './subscription.js';
 import { createPlanAdminRouter, SoftwarePlan, checkBranchLimit } from './plans.js';
 import { createPublicAccountRouter, createTenantAccountRouter, auditSuperadminAccess, acceptInvite } from './accounts.js';
 import { createSeatRouter, reconcileStudents, releaseForStudents, validateSeatSync, SeatAllocation, seatMatchesAllocation, SeatConflictError } from './seats.js';
@@ -261,6 +262,7 @@ admin.get('/libraries', wrap(async (_req, res) => {
   const m = Object.fromEntries(perLibrary.map(x => [x.libraryId, x]));
   res.json(libs.map(l => ({
     libraryId: l.libraryId, name: l.name, status: l.status, contactEmail: l.contactEmail, createdAt: l.createdAt, planId: l.planId || null, studentLimit: l.studentLimit || null,
+    billing: l.subscription || null, deletionRequest: l.deletionRequest || null,
     admins: admins.filter(a => tenantOfUser(a) === l.libraryId).map(a => ({ id: String(a._id), email: a.email, name: a.name, status: a.status })),
     metrics: m[l.libraryId],
   })));
@@ -414,6 +416,7 @@ tenant.delete('/documents/:key', wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+tenant.use(createSubscriptionRouter());
 tenant.use(createSeatRouter());
 tenant.use(createFinanceRouter());
 tenant.use(createStudentRouter());

@@ -1,9 +1,8 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { api, getToken, setToken, setTenantContext, onUnauthorized } from '../utils/api';
+import { setCacheScope, clearCacheScope } from '../utils/tenantCache';
 
 const AuthContext = createContext(null);
-const CACHE_OWNER_KEY = 'library_cache_owner';
-const PRESERVED_KEYS = new Set(['library_api_token', CACHE_OWNER_KEY]);
 
 export const OAUTH_ERROR_MESSAGES = {
   not_registered: "This Google account isn't registered with Library OS. Ask your library owner or administrator to add your email, then try again.",
@@ -22,11 +21,15 @@ export function googleOAuthErrorMessage(code) {
   return OAUTH_ERROR_MESSAGES[code] || 'Google sign-in failed. Please try again.';
 }
 
-/** Local cache (localStorage) is per library: safely preserve existing local data without destructive deletion. */
-export function prepareLocalCacheFor(ownerKey) {
-  if (!ownerKey || localStorage.getItem(CACHE_OWNER_KEY) === ownerKey) return;
-  // Non-destructive: preserve existing local state so user records and offline data are never wiped
-  localStorage.setItem(CACHE_OWNER_KEY, ownerKey);
+/**
+ * Issue #2: picks this library's own browser cache before the workspace mounts.
+ * Each library has its own namespace; read-only drill-in uses memory only.
+ * Nothing is deleted, and the old owner marker is no longer changed (it is
+ * the proof used to move old unprefixed data into the library it belongs to).
+ */
+export function prepareLocalCacheFor(libraryId, { readOnly = false } = {}) {
+  if (!libraryId) return clearCacheScope();
+  return setCacheScope({ tenantId: libraryId, readOnly });
 }
 
 export function AuthProvider({ children }) {
@@ -40,6 +43,7 @@ export function AuthProvider({ children }) {
   const logout = useCallback(() => {
     api.logout();
     setTenantContext({});
+    clearCacheScope();
     setSession(null);
     setStatus('anonymous');
   }, []);

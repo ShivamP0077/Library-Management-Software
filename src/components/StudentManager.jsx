@@ -23,6 +23,7 @@ import { useBackClose } from '../utils/useBackClose';
 import { useStudentPhoto } from '../utils/useStudentPhoto';
 import { getCanonicalShifts, matchesShiftFilter, isShiftInPlan, resolveCanonicalShift, normalizeShiftName } from '../utils/shiftUtils';
 import { getPlanBasePrice, getPlanDefaultDuration } from '../utils/pricingCalculator';
+import { isAdmissionVoid } from '../utils/admissionVoid.js';
 import { areSeatTypesEquivalent } from '../utils/seatTypeUtils';
 
 /**
@@ -1282,21 +1283,29 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                           return (
                             <div key={idx} style={{ padding: '16px', border: '1px solid var(--border-light)', borderRadius: '8px' }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                                <strong style={{ fontSize: '14px' }}>{record.planName} (Renewal)</strong>
+                                <strong style={{ fontSize: '14px', textDecoration: record.voided ? 'line-through' : 'none' }}>{record.planName} (Renewal)</strong>
                                 <span style={{ fontWeight: 600, color: '#10b981' }}>₹{record.amountPaid?.toLocaleString()}</span>
                               </div>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
                                   Valid: {record.startDate} to {record.endDate} • Staff: {record.staffName}
                                 </div>
-                                {currentStaff?.permissions?.canCancelAdmission && (
+                                {record.voided && (
+                                  <span data-testid="voided-badge" style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: '#fee2e2', color: '#b91c1c' }}>Voided</span>
+                                )}
+                                {!record.voided && currentStaff?.permissions?.canCancelAdmission && (
                                   <button
                                     className="btn btn-secondary"
                                     style={{ padding: '4px 8px', fontSize: '12px', color: '#ef4444', borderColor: '#fee2e2', background: '#fef2f2' }}
                                     onClick={() => {
-                                      if (window.confirm(`Are you sure you want to void this renewal (${record.planName})?`)) {
-                                        if (cancelRenewalTransaction(selectedStudent.id, record.renewalId)) {
-                                          toast.success("Renewal voided successfully.");
+                                      const isAdm = isAdmissionVoid(selectedStudent, record.renewalId);
+                                      const msg = isAdm
+                                        ? `Void this admission (${record.planName})? The plan ends and seat ${selectedStudent.seatNo || ''} is freed. The record is kept as voided. Record any refund separately.`
+                                        : `Are you sure you want to void this renewal (${record.planName})?`;
+                                      if (window.confirm(msg)) {
+                                        const res = cancelRenewalTransaction(selectedStudent.id, record.renewalId);
+                                        if (res) {
+                                          toast.success(res === 'admission' ? "Admission voided. Seat freed." : "Renewal voided successfully.");
                                           setSelectedStudent(null);
                                         } else {
                                           toast.error("Failed to void renewal.");

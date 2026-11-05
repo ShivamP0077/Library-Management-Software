@@ -4,6 +4,7 @@ import { api, createSyncQueue, SYNCED_COLLECTIONS } from '../utils/api';
 import { getDefaultPermissionsForRole, syncLegacyPermissions } from '../utils/staffPermissions';
 import { isShiftInPlan, resolveCanonicalShift, getCanonicalShifts, normalizeShiftName, shiftsOverlap } from '../utils/shiftUtils';
 import { areSeatTypesEquivalent } from '../utils/seatTypeUtils';
+import { buildAdmissionVoid } from '../utils/admissionVoid.js';
 import { scopedStorage, canSeedServer } from '../utils/tenantCache';
 // Issue #2: all cache reads/writes in this file go to the current library's own namespace.
 const localStorage = scopedStorage;
@@ -2136,6 +2137,15 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
 
     const renewalIndex = student.renewalHistory?.findIndex(r => r.renewalId === renewalId);
     if (renewalIndex === -1 || renewalIndex === undefined) return false;
+
+    // Issue #11: voiding the initial admission ends the plan and frees the seat (record kept, audited).
+    const admissionVoid = buildAdmissionVoid(student, renewalId, { today: todayStr, staffName: currentStaff?.name || 'Admin' });
+    if (admissionVoid) {
+      setStudents(prev => prev.map(s => s.id === studentId ? { ...s, ...admissionVoid.updates } : s));
+      setPayments(prev => prev.filter(p => p.receiptNo !== admissionVoid.receiptNo));
+      return 'admission';
+    }
+    if (student.renewalHistory[renewalIndex].voided) return false;
 
     const renewalToCancel = student.renewalHistory[renewalIndex];
     const newRenewalHistory = student.renewalHistory.filter(r => r.renewalId !== renewalId);

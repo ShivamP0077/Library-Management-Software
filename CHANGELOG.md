@@ -2,6 +2,8 @@
 
 ## 2026-11-05 (IST)
 
+- **#11 Void admission frees the seat** — Voiding the first admission (History tab > Void) now ends the plan, frees the seat (server releases it) and marks the record "Voided" instead of deleting it. An audit entry is saved in the student's voidHistory. Renewal voids and Cancel Admission work as before. Refunds stay separate.
+
 - **#6 Shifts grouped by section** — Settings > Operating Shifts now lists shifts under the section whose plans use them. Shifts not used by a section plan go under "All sections". Derived only, no data or schema change.
 
 - **#5 Seat types grouped by section** — Settings > Seat Types now shows types under each section heading (Hall A, Hall B…) and an "All sections" group for shared ones. Section comes from the type's own section or its seats. No data change.

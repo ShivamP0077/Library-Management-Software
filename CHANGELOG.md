@@ -2,6 +2,8 @@
 
 ## 2026-11-05 (IST)
 
+- **#8 Recurring bill schedule** — New recurring bills use a clear **First due date** and **Repeat every N days / months / years**. Month and year steps keep the original day and use the last day of short months (Jan 31 → Feb 28/29 → Mar 31; Feb 29 → Feb 28 in normal years). Payment date stays separate; reminders unchanged. Old bills keep their old due-day schedule and dates (no data changed).
+
 - **#11 Void admission frees the seat** — Voiding the first admission (History tab > Void) now ends the plan, frees the seat (server releases it) and marks the record "Voided" instead of deleting it. An audit entry is saved in the student's voidHistory. Renewal voids and Cancel Admission work as before. Refunds stay separate.
 
 - **#6 Shifts grouped by section** — Settings > Operating Shifts now lists shifts under the section whose plans use them. Shifts not used by a section plan go under "All sections". Derived only, no data or schema change.

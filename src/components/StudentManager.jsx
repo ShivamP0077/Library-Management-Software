@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { ErrorBoundary } from './ErrorBoundary';
 import { WhatsAppMessages } from './WhatsAppMessages';
-import { WhatsAppSendModal } from './WhatsAppSendModal';
+import { WhatsAppSendModal, WhatsAppPersonalSend } from './WhatsAppSendModal';
 import { NumericInput } from './NumericInput';
 import { ShiftManagerModal } from './Modals/ShiftManagerModal';
 import { StudentExcelViewModal } from './Modals/StudentExcelViewModal';
@@ -222,7 +222,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     renewSubscription, changeSeat, addStudentDocument, extendStudentDueDate, archiveStudent, 
     cancelAdmission, cancelRenewalTransaction, getValidDesksList, getAvailableEligibleSeats, 
     currentStaff, waitingList, removeFromWaitingList, updateWaitingListStatus, hasPermission, updateStudentDetails,
-    lockedStaffId, getMatchingPlans, todayStr
+    lockedStaffId, getMatchingPlans, todayStr, readOnly: isReadOnly
   } = useLibrary();
   const canEditAmount = clientCanEditAmount({ lockedStaffId, currentStaff, settings });
   const cycleCfg = cycleConfig(settings);
@@ -238,6 +238,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
 
   const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [waHistoryKey, setWaHistoryKey] = useState(0); // refresh the profile WhatsApp list after a personal send
   const [waTargets, setWaTargets] = useState(null); // students for the WhatsApp send window
   const [selectedIds, setSelectedIds] = useState([]);
   const [isBulkRenewModalOpen, setIsBulkRenewModalOpen] = useState(false);
@@ -1453,7 +1454,10 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                   </div>
                 )}
                 {activeDrawerTab === 'whatsapp' && (
-                  <WhatsAppMessages studentId={selectedStudent.id} compact />
+                  <>
+                    <WhatsAppPersonalSend student={selectedStudent} readOnly={isReadOnly} onSent={() => setWaHistoryKey(k => k + 1)} />
+                    <WhatsAppMessages key={waHistoryKey} studentId={selectedStudent.id} compact />
+                  </>
                 )}
                 {activeDrawerTab === 'documents' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>

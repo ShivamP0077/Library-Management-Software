@@ -35,3 +35,15 @@ test('receipt falls back to built receipt text', async () => {
   assert.match(sent[0].text, /Receipt: R1/);
   assert.equal(sent[0].type, 'fee_receipt');
 });
+
+test('profile personal message: goes only to that student\'s own number; no phone = not sent', async () => {
+  const sent = [];
+  const noPhone = { _key: 'S2', tenantId: 'L1', name: 'Ravi' };
+  const d = { ...deps(sent), Students: finder([stu, noPhone]) };
+  const r = await sendManualMessage({ tenantId: 'L1', libraryId: 'L1', studentId: 'S1', type: 'custom', text: 'Hello Asha, your locker key is ready.', to: '9999999999' }, d);
+  assert.equal(r.status, 'sent'); assert.equal(sent.length, 1);
+  assert.equal(sent[0].to, '9876543210', 'number comes from the student record, not the request');
+  assert.equal(sent[0].type, 'custom');
+  assert.equal((await sendManualMessage({ tenantId: 'L1', libraryId: 'L1', studentId: 'S2', type: 'custom', text: 'Hi' }, d)).httpStatus, 400);
+  assert.equal(sent.length, 1);
+});

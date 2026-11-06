@@ -171,4 +171,50 @@ export const WhatsAppSendModal = ({ students = [], onClose }) => {
     document.body
   );
 };
+
+/** Profile WhatsApp tab: write a personal message to this one student without leaving the profile.
+ *  Same server route and guards as every other manual send (type "custom"). */
+export const WhatsAppPersonalSend = ({ student, readOnly = false, onSent }) => {
+  const [text, setText] = useState('');
+  const [sending, setSending] = useState(false);
+  const [note, setNote] = useState(null); // { ok, text }
+  const wa = useWhatsappStatus();
+  useEffect(() => { refreshWhatsappStatus(); }, []);
+  const offline = !getToken();
+  const blocked = readOnly ? 'Read-only access.'
+    : offline ? 'Sign in to a cloud account to send WhatsApp messages.'
+    : isDisconnected(wa) ? 'WhatsApp is disconnected. Reconnect it to send.'
+    : !student?.phone ? 'This student has no phone number.' : null;
+  const send = async (e) => {
+    e?.preventDefault();
+    const body = text.trim();
+    if (!body || blocked || sending) return;
+    setSending(true); setNote(null);
+    try {
+      const r = await api.whatsappSendToStudent(student.id, { type: 'custom', text: body });
+      if (r?.status === 'sent' || r?.status === 'duplicate') { setNote({ ok: true, text: 'Message sent.' }); setText(''); toast.success('Message sent.'); }
+      else setNote({ ok: false, text: r?.message?.error || r?.error || (r?.status === 'skipped' ? 'Not sent (WhatsApp is off or the student opted out)' : 'Could not send') });
+    } catch (err) { setNote({ ok: false, text: err?.message || 'Could not send' }); }
+    finally { setSending(false); onSent && onSent(); }
+  };
+  return (
+    <form className="premium-card wa-personal" onSubmit={send} style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }} aria-label="Send personal WhatsApp message">
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
+        <MessageCircle size={16} color="#16a34a" />
+        <strong>Personal message</strong>
+        <span style={{ marginLeft: 'auto', color: 'var(--text-secondary)' }}>To: <span data-testid="wa-personal-to">{student?.phone || '—'}</span></span>
+      </div>
+      <textarea className="form-input" rows={3} maxLength={1800} placeholder={`Write to ${String(student?.name || 'student').split(' ')[0]}…`} value={text} onChange={(e) => { setText(e.target.value); setNote(null); }} style={{ fontSize: '16px', resize: 'vertical' }} aria-label="Personal message" />
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+        {(blocked || note) && (
+          <span role={note && !note.ok ? 'alert' : undefined} style={{ fontSize: '12px', color: note?.ok ? '#15803d' : '#b91c1c', flex: 1, minWidth: 0 }}>
+            {blocked || note.text}
+            {!note && isDisconnected(wa) && <> <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigateTo('whatsapp', 'login')}>Reconnect</button></>}
+          </span>
+        )}
+        <button type="submit" className="btn btn-primary wa-send-btn" style={{ marginLeft: 'auto' }} disabled={!!blocked || sending || !text.trim()}><Send size={15} /> {sending ? 'Sending…' : 'Send'}</button>
+      </div>
+    </form>
+  );
+};
 export default WhatsAppSendModal;

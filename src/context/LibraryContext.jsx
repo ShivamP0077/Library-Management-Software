@@ -2802,9 +2802,6 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       updateStaffMember,
       toggleStaffStatus,
       deleteStaffMember,
-      // Backend Status & Read-Only Context
-      backendStatus,
-      readOnly
     }}>
       {children}
     </LibraryContext.Provider>

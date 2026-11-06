@@ -38,8 +38,9 @@ export function createApp() {
 
   app.use((err, _req, res, _next) => {
     const status = err.status || (err.code === 11000 ? 409 : 500);
+    const message = err.type === 'entity.too.large' ? 'Upload is too large. Notices: 8 files, 5 MB each, 10 MB total. Support: 3 files per message, 8 MB total.' : status === 500 ? 'Internal server error' : redact(err.message);
     if (status === 500) console.error('[api] error:', redact(err.message));
-    res.status(status).json({ error: status === 500 ? 'Internal server error' : redact(err.message), ...(err.code && typeof err.code === 'string' ? { code: err.code } : {}), ...(err.details ? { details: err.details } : {}) });
+    res.status(status).json({ error: message, ...(err.code && typeof err.code === 'string' ? { code: err.code } : {}), ...(err.details ? { details: err.details } : {}) });
   });
   return app;
 }

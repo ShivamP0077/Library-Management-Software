@@ -2,7 +2,7 @@
 import express from 'express';
 import { requireRole } from './auth.js';
 import { audit } from './audit.js';
-import { getPaymentConfigPublic, updatePaymentConfig, refreshPaymentProvider } from './paymentConfig.js';
+import { getPaymentConfigPublic, updatePaymentConfig, refreshPaymentProvider, testPaymentConnection } from './paymentConfig.js';
 import { Library, User } from './models.js';
 import { sendMail } from './mailer.js';
 import { paymentProvider } from './billing.js';
@@ -30,11 +30,10 @@ export function createPaymentsAdminRouter() {
     res.json(view);
   }));
 
-  r.post('/payments/config/test', wrap(async (_req, res) => {
-    await refreshPaymentProvider();
-    const p = paymentProvider();
-    if (!p) return res.status(400).json({ ok: false, error: 'No active provider configured' });
-    res.json({ ok: true, provider: p.name, mode: p.mode || null });
+  r.post('/payments/config/test', wrap(async (req, res) => {
+    const view = await testPaymentConnection();
+    await audit(req, 'payments.provider_verified', { detail: { provider: view.verification?.provider, mode: view.verification?.mode } });
+    res.json({ ok: true, ...view });
   }));
 
   /** Libraries that asked to be deleted — Super Admin acts via existing delete flow. */

@@ -233,8 +233,8 @@ export function LoginScreen({ onContinueOffline }) {
           <>
             <form onSubmit={submit}>
               <div className="form-group">
-                <label className="form-label" htmlFor="login-email">Email</label>
-                <input id="login-email" className="form-input" type="email" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} required />
+                <label className="form-label" htmlFor="login-email">Email or mobile</label>
+                <input id="login-email" className="form-input" type="text" autoComplete="username" placeholder="you@example.com or 98765 43210" value={email} onChange={e => setEmail(e.target.value)} required />
               </div>
               <div className="form-group">
                 <label className="form-label" htmlFor="login-password">Password</label>

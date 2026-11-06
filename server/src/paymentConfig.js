@@ -22,6 +22,7 @@ const schema = new mongoose.Schema({
     webhookId: { type: String, default: '' },
     mode: { type: String, enum: ['sandbox', 'live'], default: 'sandbox' },
   },
+  verification: { provider: String, mode: String, status: String, at: Date, message: String },
   updatedBy: String,
   updatedAt: Date,
 }, { collection: 'payment_provider_config' });
@@ -48,6 +49,7 @@ function publicView(doc) {
       webhookId: d.paypal?.webhookId || '',
       mode: d.paypal?.mode || 'sandbox',
     },
+    verification: d.verification ? { provider: d.verification.provider || null, mode: d.verification.mode || null, status: d.verification.status || null, at: d.verification.at || null, message: d.verification.message || '' } : null,
     updatedBy: d.updatedBy || null,
     updatedAt: d.updatedAt || null,
     paymentsEnabled: Boolean(
@@ -124,6 +126,7 @@ export async function updatePaymentConfig(body, { updatedBy } = {}) {
       doc.paypal.clientSecretEnc = encryptSecret(p.clientSecret.trim());
     }
   }
+  doc.verification = { provider: doc.activeProvider, status: 'not_tested', message: 'Configuration saved. Provider response has not been tested.', at: null };
   doc.updatedBy = updatedBy || null;
   doc.updatedAt = new Date();
   await doc.save();
@@ -132,3 +135,21 @@ export async function updatePaymentConfig(body, { updatedBy } = {}) {
 }
 
 export { publicView, maskSecret };
+
+export async function testPaymentConnection() {
+  const config = await getPaymentConfig();
+  await refreshPaymentProvider();
+  const provider = paymentProvider();
+  if (!provider) throw Object.assign(new Error('No active provider is configured'), { status: 400, code: 'payments_not_configured' });
+  if (typeof provider.testConnection !== 'function') throw Object.assign(new Error('This provider cannot be tested yet. Configuration is saved, not verified.'), { status: 501, code: 'provider_test_unavailable' });
+  try {
+    await provider.testConnection();
+    config.verification = { provider: provider.name, mode: provider.mode, status: 'verified', at: new Date(), message: 'Provider accepted the configured credentials. No payment was created or charged.' };
+  } catch (e) {
+    config.verification = { provider: provider.name, mode: provider.mode, status: 'failed', at: new Date(), message: String(e.message || 'Provider verification failed').slice(0, 250) };
+    await config.save();
+    throw Object.assign(new Error(`Provider verification failed: ${config.verification.message}`), { status: e.status === 400 ? 400 : 502, code: 'provider_verification_failed' });
+  }
+  await config.save();
+  return publicView(config);
+}

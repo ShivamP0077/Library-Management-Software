@@ -285,3 +285,14 @@ select.input-field { text-overflow: ellipsis; white-space: nowrap; overflow: hid
   }
   .header-nav.drawer-open { max-height: none !important; overflow: visible !important; }
 }
+
+/* Issue #20: support chat. The composer is intentionally NOT fixed, so it never covers the
+   existing mobile bottom navigation. Extra scroll padding is handled by .page-scroller. */
+.support-thread .support-bubble { max-width: min(88%, 720px); }
+.support-filters { align-items: stretch; }
+@media (max-width: 767px) {
+  .support-center { padding-bottom: calc(8px + env(safe-area-inset-bottom)); }
+  .support-thread .support-bubble { max-width: 94%; }
+  .support-composer { position: static !important; }
+  .support-filters > * { flex: 1 1 100%; width: 100% !important; }
+}

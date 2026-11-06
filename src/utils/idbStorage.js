@@ -32,8 +32,8 @@ function openDB() {
   });
 }
 
-export async function saveDocumentBlob(key, dataUrlOrBlob) {
-  if (typeof dataUrlOrBlob === 'string') {
+export async function saveDocumentBlob(key, dataUrlOrBlob, { server = true } = {}) {
+  if (server && typeof dataUrlOrBlob === 'string') {
     api.saveDocument(key, dataUrlOrBlob).catch(err => console.warn(`[API] Could not upload document "${key}":`, err.message));
   }
   if (isMemoryOnly()) return false; // read-only drill-in never writes a local cache
@@ -52,13 +52,22 @@ export async function saveDocumentBlob(key, dataUrlOrBlob) {
   }
 }
 
-export async function getDocumentBlob(key) {
+/** Await both the local cache and the tenant-scoped server upload (issue #3/#22 bounded client). */
+export async function saveDocumentBlobNow(key, dataUrl, meta = {}) {
+  await api.saveDocument(key, dataUrl, meta);
+  if (!isMemoryOnly()) {
+    try { await saveDocumentBlob(key, dataUrl, { server: false }); } catch { /* server copy is authoritative */ }
+  }
+  return { ok: true, key };
+}
+
+export async function getDocumentBlob(key, { studentId } = {}) {
   if (!isMemoryOnly()) {
     const local = (await getLocalDocumentBlob(scopedDocKey(key))) || (legacyDocAllowed() && scopedDocKey(key) !== key ? await getLocalDocumentBlob(key) : null);
     if (local) return local;
   }
   try {
-    return await api.getDocument(key);
+    return studentId ? await api.getStudentDocument(studentId, key) : await api.getDocument(key);
   } catch {
     return null;
   }

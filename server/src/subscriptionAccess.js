@@ -10,6 +10,8 @@ const OPEN = new Set(['active', 'trialing']);
 /** Paths a locked library may still call (pay, ask for help, read their plan). */
 const ALLOW_PREFIXES = [
   '/subscription',
+  '/software-plan',
+  '/account',
   '/support',
   '/auth/',
 ];

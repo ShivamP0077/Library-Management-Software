@@ -8,7 +8,8 @@ import { audit } from './audit.js';
 import { SoftwarePlan, pubPlan, libraryLimits } from './plans.js';
 import { paymentProvider, planPrice, INTERVALS, initialSubscription } from './billing.js';
 import { refreshPaymentProvider } from './paymentConfig.js';
-import { listInvoices } from './payments/invoices.js';
+import { SoftwareInvoice, listInvoices, newInvoiceId } from './payments/invoices.js';
+import { getBillingConfig, publicBillingConfig, taxFor } from './billingConfig.js';
 import { notifySuperAdminsOfDeletionRequest } from './paymentsAdmin.js';
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -71,8 +72,24 @@ export function createSubscriptionRouter() {
     const now = new Date();
     let next;
     if (Number(newPrice) > 0 && Number(newPrice) > curPrice) {
-      if (!paymentProvider()) return res.status(402).json(NOT_SET_UP);
-      return res.status(501).json({ error: 'Checkout is not implemented for this provider yet' });
+      const configured = paymentProvider();
+      if (!configured || typeof configured.createCheckout !== 'function') return res.status(402).json(NOT_SET_UP);
+      const config = publicBillingConfig(await getBillingConfig());
+      if (!config.configured) return res.status(409).json({ error: 'Super Admin must explicitly choose currency and GST treatment before paid activation.', code: 'billing_not_configured' });
+      const baseMinor = Math.round(Number(newPrice) * 100);
+      const tax = taxFor(baseMinor, config);
+      const existingPending = await SoftwareInvoice.findOne({ tenantId: req.tenantId, status: 'open', kind: 'upgrade', planId, interval, baseMinor, provider: configured.name, currency: config.currency, gatewayMinor: tax.totalMinor }).sort({ createdAt: -1 });
+      if (existingPending?.providerRef) return res.json({ ...await view(req.tenantId), checkout: { invoiceId: existingPending.invoiceId, reference: existingPending.providerRef, amountMinor: existingPending.gatewayMinor, pendingPlanId: planId } });
+      const invoice = await SoftwareInvoice.create({
+        invoiceId: newInvoiceId(), tenantId: req.tenantId, kind: 'upgrade', changeType: 'upgrade', planId, interval,
+        amount: tax.totalMinor / 100, totalMinor: tax.totalMinor, baseMinor, discountMinor: 0, taxableMinor: tax.taxableMinor,
+        taxMinor: tax.taxMinor, taxIncluded: tax.mode === 'included', taxRate: tax.ratePct || null, walletMinor: 0,
+        gatewayMinor: tax.totalMinor, currency: config.currency, status: 'open', provider: configured.name, dueAt: now,
+      });
+      const result = await configured.createCheckout({ library: lib, plan: target, interval, amount: tax.totalMinor / 100, invoiceId: invoice.invoiceId, returnUrl: `${process.env.FRONTEND_URL || ''}/#software_plan` });
+      await SoftwareInvoice.updateOne({ invoiceId: invoice.invoiceId, tenantId: req.tenantId }, { $set: { providerRef: result.reference, 'raw.checkout': result } });
+      await audit(req, 'subscription.checkout_created', { tenantId: req.tenantId, target: invoice.invoiceId, detail: { planId, interval, amountMinor: tax.totalMinor, provider: configured.name } });
+      return res.status(201).json({ ...await view(req.tenantId), checkout: { ...result, invoiceId: invoice.invoiceId, amountMinor: tax.totalMinor, pendingPlanId: planId } });
     }
     if (sub.currentPeriodEnd && new Date(sub.currentPeriodEnd) > now && sub.status === 'active' && Number(newPrice) < curPrice) {
       next = { ...sub, pendingPlanId: planId, pendingInterval: interval };
@@ -101,12 +118,30 @@ export function createSubscriptionRouter() {
       return res.status(501).json({ error: 'Checkout is not implemented for this provider yet', code: 'checkout_not_implemented' });
     }
     const plan = lib.planId ? await SoftwarePlan.findOne({ planId: lib.planId }).lean() : null;
-    const amount = Number(sub.price) || planPrice(plan, sub.interval) || 0;
+    const amountMinor = Math.round((Number(sub.price) || planPrice(plan, sub.interval) || 0) * 100);
+    if (!(amountMinor > 0)) return res.status(400).json({ error: 'No payment amount is due', code: 'amount_missing' });
+    let invoice = await SoftwareInvoice.findOne({
+      tenantId: req.tenantId, status: 'open', kind: 'subscription', provider: provider.name,
+      planId: lib.planId || null,
+    }).sort({ createdAt: -1 });
+    if (!invoice) {
+      const config = publicBillingConfig(await getBillingConfig());
+      const tax = taxFor(amountMinor, config);
+      invoice = await SoftwareInvoice.create({
+        invoiceId: newInvoiceId(), tenantId: req.tenantId, kind: 'subscription', planId: lib.planId || null,
+        interval: sub.interval || 'month', amount: tax.totalMinor / 100, totalMinor: tax.totalMinor,
+        baseMinor: amountMinor, discountMinor: 0, taxableMinor: tax.taxableMinor, taxMinor: tax.taxMinor,
+        taxIncluded: tax.mode === 'included', taxRate: tax.ratePct || null, walletMinor: 0,
+        gatewayMinor: tax.totalMinor, currency: config.currency, status: 'open', provider: provider.name, dueAt: new Date(),
+      });
+    }
+    await SoftwareInvoice.updateOne({ invoiceId: invoice.invoiceId, tenantId: req.tenantId, providerRef: { $in: [null, ''] } }, { $set: { amount: invoice.amount, gatewayMinor: invoice.gatewayMinor, provider: provider.name } });
     const result = await provider.createCheckout({
-      library: lib, plan, interval: sub.interval, amount,
-      returnUrl: req.body?.returnUrl || undefined,
+      library: lib, plan, interval: sub.interval, amount: Number(invoice.gatewayMinor) / 100,
+      invoiceId: invoice.invoiceId, returnUrl: req.body?.returnUrl || undefined,
     });
-    return res.json({ ok: true, ...result });
+    await SoftwareInvoice.updateOne({ invoiceId: invoice.invoiceId, tenantId: req.tenantId, providerRef: { $in: [null, ''] } }, { $set: { providerRef: result.reference, 'raw.checkout': result } });
+    return res.json({ ok: true, ...result, invoiceId: invoice.invoiceId, amountMinor: invoice.gatewayMinor });
   }));
 
   r.post('/subscription/cancel', wrap(async (req, res) => {

@@ -1,8 +1,8 @@
 // Razorpay provider — Payment Links for checkout, Subscriptions for AutoPay, HMAC webhooks.
 import crypto from 'crypto';
-import { SoftwareInvoice, newInvoiceId, markInvoicePaid } from './invoices.js';
+import { SoftwareInvoice, newInvoiceId } from './invoices.js';
+import { settleInvoice } from './settlement.js';
 import { Library } from '../models.js';
-import { addInterval } from '../billing.js';
 
 const API = 'https://api.razorpay.com/v1';
 
@@ -59,24 +59,37 @@ export function createRazorpayProvider({ keyId, keySecret, webhookSecret = '', m
 
   return {
     name: 'razorpay',
+    // Reachability probe: this is not a payment, capture or charge.
+    async testConnection() {
+      await rzFetch('/payment_links?count=1', { ...cfg, method: 'GET' });
+      return true;
+    },
     mode,
 
-    async createCheckout({ library, plan, interval, amount, returnUrl }) {
+    async createCheckout({ library, plan, interval, amount, returnUrl, invoiceId: requestedInvoiceId }) {
       const amtPaise = Math.round(Number(amount) * 100);
       if (!amtPaise || amtPaise < 100) throw Object.assign(new Error('Amount too small'), { status: 400 });
-      const invoiceId = newInvoiceId();
-      const currency = 'INR';
-      await SoftwareInvoice.create({
-        invoiceId,
-        tenantId: library.libraryId,
-        planId: plan?.planId || library.planId,
-        interval: interval || library.subscription?.interval || 'month',
-        amount: Number(amount),
-        currency,
-        status: 'open',
-        provider: 'razorpay',
-        dueAt: new Date(),
-      });
+      const existing = requestedInvoiceId ? await SoftwareInvoice.findOne({ invoiceId: requestedInvoiceId, tenantId: library.libraryId, provider: 'razorpay', status: 'open' }).exec() : null;
+      if (requestedInvoiceId && !existing) throw Object.assign(new Error('Saved checkout invoice was not found for this library'), { status: 409, code: 'invoice_conflict' });
+      const invoiceId = requestedInvoiceId || newInvoiceId();
+      const currency = existing?.currency || 'INR';
+      if (existing) {
+        await SoftwareInvoice.updateOne({ invoiceId }, { $set: { amount: Number(amount), provider: 'razorpay', dueAt: new Date(), gatewayMinor: amtPaise,
+            ...(existing.totalMinor < amtPaise ? { totalMinor: amtPaise } : {}) } });
+      } else {
+        await SoftwareInvoice.create({
+          invoiceId,
+          tenantId: library.libraryId,
+          planId: plan?.planId || library.planId,
+          interval: interval || library.subscription?.interval || 'month',
+          amount: Number(amount),
+          totalMinor: amtPaise, baseMinor: amtPaise, taxableMinor: amtPaise,
+          currency,
+          status: 'open',
+          provider: 'razorpay',
+          dueAt: new Date(),
+        });
+      }
       const link = await rzFetch('/payment_links', {
         ...cfg,
         method: 'POST',
@@ -101,7 +114,7 @@ export function createRazorpayProvider({ keyId, keySecret, webhookSecret = '', m
           },
         },
       });
-      await SoftwareInvoice.updateOne({ invoiceId }, { $set: { providerRef: link.id } });
+      await SoftwareInvoice.updateOne({ invoiceId }, { $set: { providerRef: link.id, providerOrderRef: link.id } });
       return { url: link.short_url || link.url, reference: link.id, invoiceId, provider: 'razorpay' };
     },
 
@@ -159,18 +172,18 @@ export function createRazorpayProvider({ keyId, keySecret, webhookSecret = '', m
     async handleWebhook(event) {
       const type = event?.event;
       const payload = event?.payload || {};
-      // Payment link paid
       if (type === 'payment_link.paid') {
         const pl = payload.payment_link?.entity || payload.payment_link;
         const notes = pl?.notes || {};
         const payment = payload.payment?.entity;
+        const amountPaise = payment?.amount ?? pl?.amount_paid ?? pl?.amount;
         return activateFromPayment({
           tenantId: notes.tenantId,
           invoiceId: notes.invoiceId,
-          providerRef: pl?.id || payment?.id,
-          amount: payment?.amount ? payment.amount / 100 : undefined,
-          interval: notes.interval,
-          planId: notes.planId,
+          providerRef: payment?.id || pl?.id,
+          providerOrderRef: pl?.id,
+          currency: payment?.currency || pl?.currency,
+          amountMinor: amountPaise != null ? Number(amountPaise) : undefined,
           raw: event,
         });
       }
@@ -181,9 +194,9 @@ export function createRazorpayProvider({ keyId, keySecret, webhookSecret = '', m
           tenantId: notes.tenantId,
           invoiceId: notes.invoiceId,
           providerRef: payment?.id,
-          amount: payment?.amount ? payment.amount / 100 : undefined,
-          interval: notes.interval,
-          planId: notes.planId,
+          providerOrderRef: notes.paymentLinkId || notes.payment_link_id || null,
+          currency: payment?.currency,
+          amountMinor: payment?.amount != null ? Number(payment.amount) : undefined,
           raw: event,
         });
       }
@@ -191,79 +204,52 @@ export function createRazorpayProvider({ keyId, keySecret, webhookSecret = '', m
         const sub = payload.subscription?.entity;
         const payment = payload.payment?.entity;
         const notes = sub?.notes || {};
+        const lib = sub?.id ? await Library.findOne({ 'subscription.providerSubId': sub.id }).lean() : null;
+        const invoiceId = notes.invoiceId || (sub?.id ? (await SoftwareInvoice.findOne({ providerRef: sub.id, status: 'open' }).lean())?.invoiceId : null);
         return activateFromPayment({
-          tenantId: notes.tenantId,
+          tenantId: lib?.libraryId || null,
+          invoiceId,
           providerRef: payment?.id || sub?.id,
-          interval: notes.interval || (sub?.plan_id ? undefined : 'month'),
-          planId: notes.planId,
+          providerOrderRef: sub?.id,
+          currency: payment?.currency || sub?.currency,
+          amountMinor: payment?.amount != null ? Number(payment.amount) : undefined,
           raw: event,
           autoPay: true,
         });
       }
       if (type === 'subscription.pending' || type === 'subscription.halted') {
         const sub = payload.subscription?.entity;
-        const tenantId = sub?.notes?.tenantId;
-        if (tenantId) {
-          await Library.updateOne({ libraryId: tenantId }, { $set: { 'subscription.status': 'past_due' } });
-          return { ok: true, status: 'past_due', tenantId };
+        const lib = sub?.id ? await Library.findOne({ 'subscription.providerSubId': sub.id }) : null;
+        if (lib) {
+          await Library.updateOne({ libraryId: lib.libraryId }, { $set: { 'subscription.status': 'past_due' } });
+          return { ok: true, status: 'past_due', tenantId: lib.libraryId };
         }
       }
       if (type === 'subscription.cancelled' || type === 'subscription.completed') {
         const sub = payload.subscription?.entity;
-        const tenantId = sub?.notes?.tenantId;
-        if (tenantId) {
-          await Library.updateOne({ libraryId: tenantId }, { $set: { 'subscription.status': 'cancelled', 'subscription.cancelAtPeriodEnd': false } });
-          return { ok: true, status: 'cancelled', tenantId };
+        const lib = sub?.id ? await Library.findOne({ 'subscription.providerSubId': sub.id }) : null;
+        if (lib) {
+          await Library.updateOne({ libraryId: lib.libraryId }, { $set: { 'subscription.status': 'cancelled', 'subscription.cancelAtPeriodEnd': false } });
+          return { ok: true, status: 'cancelled', tenantId: lib.libraryId };
         }
       }
       return { ok: true, ignored: type };
-    },
+    }
   };
 }
 
-async function activateFromPayment({ tenantId, invoiceId, providerRef, amount, interval, planId, raw, autoPay }) {
-  if (!tenantId) return { ok: false, error: 'missing_tenant' };
-  const lib = await Library.findOne({ libraryId: tenantId });
-  if (!lib) return { ok: false, error: 'library_not_found' };
-  const now = new Date();
-  const iv = interval || lib.subscription?.interval || 'month';
-  const periodEnd = addInterval(now, iv);
-  const next = {
-    ...(lib.subscription?.toObject?.() || lib.subscription || {}),
-    status: 'active',
-    interval: iv,
-    price: amount != null ? Number(amount) : lib.subscription?.price,
-    currentPeriodEnd: periodEnd,
-    trialEndsAt: null,
-    cancelAtPeriodEnd: false,
-    pendingPlanId: null,
-    provider: 'razorpay',
-    lastPaymentAt: now,
-    lastPaymentRef: providerRef || null,
-    ...(autoPay ? {} : {}),
-  };
-  if (planId) next.planId = planId;
-  const set = { subscription: next };
-  if (planId) set.planId = planId;
-  else if (next.planId) set.planId = next.planId;
-  await Library.updateOne({ libraryId: tenantId }, { $set: set });
-  if (invoiceId) await markInvoicePaid(invoiceId, { providerRef, paidAt: now, raw });
-  else if (providerRef) {
-    await SoftwareInvoice.create({
-      invoiceId: newInvoiceId(),
-      tenantId,
-      planId: planId || lib.planId,
-      interval: iv,
-      amount: amount ?? next.price ?? 0,
-      currency: 'INR',
-      status: 'paid',
-      provider: 'razorpay',
-      providerRef,
-      paidAt: now,
-      periodStart: now,
-      periodEnd,
-      raw,
-    }).catch(() => {});
+async function activateFromPayment({ tenantId, invoiceId, providerRef, providerOrderRef, amountMinor, currency, raw }) {
+  // Never create an invoice from callback notes. A real, pre-created invoice must exist.
+  if (!invoiceId) return { ok: false, error: 'invoice_required' };
+  const invoice = await SoftwareInvoice.findOne({ invoiceId }).lean();
+  if (!invoice) return { ok: false, error: 'invoice_not_found' };
+  if (tenantId && invoice.tenantId !== tenantId) return { ok: false, error: 'tenant_invoice_mismatch' };
+  const settled = await settleInvoice(invoiceId, {
+    providerRef, providerOrderRef, raw, source: 'razorpay', provider: 'razorpay',
+    gatewayMinor: amountMinor, currency,
+  });
+  if (!settled.ok) {
+    return { ok: false, error: settled.error || 'settlement_failed', tenantId: invoice.tenantId, invoiceId };
   }
-  return { ok: true, tenantId, status: 'active', periodEnd };
+  return { ok: true, tenantId: invoice.tenantId, invoiceId, status: invoice.kind === 'topup' ? 'paid' : 'active', periodEnd: settled.invoice?.periodEnd, already: settled.already, requiresRecovery: settled.requiresRecovery };
 }

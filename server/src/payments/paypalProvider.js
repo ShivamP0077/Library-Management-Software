@@ -1,7 +1,7 @@
 // PayPal provider — Orders API checkout + webhook signature verify.
-import { SoftwareInvoice, newInvoiceId, markInvoicePaid } from './invoices.js';
+import { SoftwareInvoice, newInvoiceId } from './invoices.js';
+import { settleInvoice } from './settlement.js';
 import { Library } from '../models.js';
-import { addInterval } from '../billing.js';
 
 function baseUrl(mode) {
   return mode === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com';
@@ -44,23 +44,42 @@ export function createPaypalProvider({ clientId, clientSecret, webhookId = '', m
 
   return {
     name: 'paypal',
+    // Reachability probe: this is not a payment, capture or charge.
+    async testConnection() {
+      await paypalToken(cfg);
+      return true;
+    },
     mode,
 
-    async createCheckout({ library, plan, interval, amount, returnUrl, cancelUrl }) {
-      const currency = 'USD'; // PayPal commonly USD; Super Admin can note INR via Razorpay
-      const value = Number(amount).toFixed(2);
-      const invoiceId = newInvoiceId();
-      await SoftwareInvoice.create({
-        invoiceId,
-        tenantId: library.libraryId,
-        planId: plan?.planId || library.planId,
-        interval: interval || 'month',
-        amount: Number(amount),
-        currency,
-        status: 'open',
-        provider: 'paypal',
-        dueAt: new Date(),
-      });
+    async createCheckout({ library, plan, interval, amount, returnUrl, cancelUrl, invoiceId: requestedInvoiceId }) {
+      const existing = requestedInvoiceId ? await SoftwareInvoice.findOne({ invoiceId: requestedInvoiceId, tenantId: library.libraryId, provider: 'paypal', status: 'open' }).exec() : null;
+      if (requestedInvoiceId && !existing) throw Object.assign(new Error('Saved checkout invoice was not found for this library'), { status: 409, code: 'invoice_conflict' });
+      const invoiceId = requestedInvoiceId || newInvoiceId();
+      const currency = existing?.currency || 'USD';
+      const gatewayMinor = Math.round(Number(amount) * 100);
+      const value = (gatewayMinor / 100).toFixed(2);
+      if (existing) {
+        await SoftwareInvoice.updateOne({ invoiceId }, {
+          $set: { amount: gatewayMinor / 100, gatewayMinor, provider: 'paypal', dueAt: new Date(),
+            ...(existing.totalMinor < gatewayMinor ? { totalMinor: gatewayMinor } : {}) },
+        });
+      } else {
+        await SoftwareInvoice.create({
+          invoiceId,
+          tenantId: library.libraryId,
+          planId: plan?.planId || library.planId,
+          interval: interval || 'month',
+          amount: gatewayMinor / 100,
+          totalMinor: gatewayMinor,
+          baseMinor: gatewayMinor,
+          taxableMinor: gatewayMinor,
+          gatewayMinor,
+          currency,
+          status: 'open',
+          provider: 'paypal',
+          dueAt: new Date(),
+        });
+      }
       const order = await ppFetch('/v2/checkout/orders', cfg, {
         method: 'POST',
         body: {
@@ -80,7 +99,7 @@ export function createPaypalProvider({ clientId, clientSecret, webhookId = '', m
         },
       });
       const approve = (order.links || []).find(l => l.rel === 'approve')?.href;
-      await SoftwareInvoice.updateOne({ invoiceId }, { $set: { providerRef: order.id } });
+      await SoftwareInvoice.updateOne({ invoiceId }, { $set: { providerRef: order.id, providerOrderRef: order.id } });
       return { url: approve, reference: order.id, invoiceId, provider: 'paypal' };
     },
 
@@ -119,54 +138,78 @@ export function createPaypalProvider({ clientId, clientSecret, webhookId = '', m
     async handleWebhook(event) {
       const type = event?.event_type;
       if (type === 'CHECKOUT.ORDER.APPROVED' || type === 'PAYMENT.CAPTURE.COMPLETED') {
-        const resource = event.resource || {};
-        // Capture if only approved
-        let capture = resource;
+        let resource = event.resource || {};
+        const relatedOrder = (r) => r?.supplementary_data?.related_ids?.order_id
+          || r?.links?.find?.(l => l.rel === 'up')?.href?.split('/').pop() || null;
+        // orderId is declared once, before any use (previous TDZ bug in the capture flow).
+        let orderId = null;
+        let capture = null;
+        let unit = {};
         if (type === 'CHECKOUT.ORDER.APPROVED' && resource.id) {
-          capture = await ppFetch(`/v2/checkout/orders/${resource.id}/capture`, cfg, { method: 'POST', body: {} });
+          orderId = resource.id;
+          // Capture through PayPal; the capture object (not the order) is the payment evidence.
+          const order = await ppFetch(`/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`, cfg, { method: 'POST', body: {} });
+          if (order?.id && order.id !== orderId) return { ok: false, error: 'order_reference_mismatch' };
+          unit = order?.purchase_units?.[0] || {};
+          capture = unit.payments?.captures?.[0] || null;
+          if (!capture) return { ok: false, error: 'capture_missing' };
+        } else if (type === 'PAYMENT.CAPTURE.COMPLETED' && resource.id) {
+          orderId = relatedOrder(resource);
+          if (!orderId) return { ok: false, error: 'order_reference_missing' };
+          // Fetch the capture instead of trusting arbitrary callback fields.
+          capture = await ppFetch(`/v2/payments/captures/${encodeURIComponent(resource.id)}`, cfg);
+          const fetchedOrder = relatedOrder(capture);
+          if (fetchedOrder && fetchedOrder !== orderId) return { ok: false, error: 'order_reference_mismatch' };
+        } else {
+          return { ok: false, error: 'resource_missing' };
         }
-        const unit = capture.purchase_units?.[0] || resource.purchase_units?.[0] || {};
-        const custom = String(unit.custom_id || resource.custom_id || '');
-        const [tenantId, invoiceId, interval, planId] = custom.split('|');
-        const amount = Number(unit.amount?.value || resource.amount?.value || 0);
-        return activatePaypal({ tenantId, invoiceId, providerRef: capture.id || resource.id, amount, interval, planId, raw: event });
+        const custom = String(capture?.custom_id || unit.custom_id || '');
+        const [tenantId, customInvoiceId, interval, planId] = custom.split('|');
+        const invoiceId = customInvoiceId || unit.reference_id || null;
+        if (!invoiceId) return { ok: false, error: 'invoice_required' };
+        const saved = await SoftwareInvoice.findOne({ invoiceId }).select('providerRef providerOrderRef tenantId').lean();
+        if (!saved) return { ok: false, error: 'invoice_not_found' };
+        if (tenantId && saved.tenantId !== tenantId) return { ok: false, error: 'tenant_invoice_mismatch' };
+        const expectedOrder = saved.providerOrderRef || saved.providerRef;
+        if (!expectedOrder || expectedOrder !== orderId) return { ok: false, error: 'order_reference_mismatch' };
+        // Pending/declined captures never activate anything.
+        if (!capture?.id || capture.status !== 'COMPLETED') return { ok: false, error: 'payment_not_completed', status: capture?.status || null };
+        const amountValue = capture.amount?.value;
+        const currencyCode = capture.amount?.currency_code;
+        if (amountValue == null || !currencyCode) return { ok: false, error: 'amount_unverified' };
+        resource = capture;
+        return activatePaypal({
+          tenantId, invoiceId, providerRef: capture.id, providerOrderRef: orderId,
+          amountMinor: Math.round(Number(amountValue) * 100),
+          currency: currencyCode,
+          interval, planId, raw: event,
+        });
       }
       if (type === 'BILLING.SUBSCRIPTION.PAYMENT.FAILED') {
-        const custom = String(event.resource?.custom_id || '');
-        const tenantId = custom.split('|')[0];
-        if (tenantId) {
-          await Library.updateOne({ libraryId: tenantId }, { $set: { 'subscription.status': 'past_due' } });
-          return { ok: true, status: 'past_due', tenantId };
+        const subId = event.resource?.id || event.resource?.billing_agreement_id;
+        const lib = subId ? await Library.findOne({ 'subscription.providerSubId': subId }) : null;
+        if (lib) {
+          await Library.updateOne({ libraryId: lib.libraryId }, { $set: { 'subscription.status': 'past_due' } });
+          return { ok: true, status: 'past_due', tenantId: lib.libraryId };
         }
       }
       return { ok: true, ignored: type };
-    },
+    }
   };
 }
 
-async function activatePaypal({ tenantId, invoiceId, providerRef, amount, interval, planId, raw }) {
-  if (!tenantId) return { ok: false, error: 'missing_tenant' };
-  const lib = await Library.findOne({ libraryId: tenantId });
-  if (!lib) return { ok: false, error: 'library_not_found' };
-  const now = new Date();
-  const iv = interval || lib.subscription?.interval || 'month';
-  const periodEnd = addInterval(now, iv);
-  const next = {
-    ...(lib.subscription?.toObject?.() || lib.subscription || {}),
-    status: 'active',
-    interval: iv,
-    price: amount != null ? Number(amount) : lib.subscription?.price,
-    currentPeriodEnd: periodEnd,
-    trialEndsAt: null,
-    cancelAtPeriodEnd: false,
-    pendingPlanId: null,
-    provider: 'paypal',
-    lastPaymentAt: now,
-    lastPaymentRef: providerRef || null,
-  };
-  const set = { subscription: next };
-  if (planId) set.planId = planId;
-  await Library.updateOne({ libraryId: tenantId }, { $set: set });
-  if (invoiceId) await markInvoicePaid(invoiceId, { providerRef, paidAt: now, raw });
-  return { ok: true, tenantId, status: 'active', periodEnd };
+async function activatePaypal({ tenantId, invoiceId, providerRef, providerOrderRef, amountMinor, currency, interval, planId, raw }) {
+  // Never create an invoice from callback fields. Require the server-created invoice.
+  if (!invoiceId) return { ok: false, error: 'invoice_required' };
+  const invoice = await SoftwareInvoice.findOne({ invoiceId }).lean();
+  if (!invoice) return { ok: false, error: 'invoice_not_found' };
+  if (tenantId && invoice.tenantId !== tenantId) return { ok: false, error: 'tenant_invoice_mismatch' };
+  const settled = await settleInvoice(invoiceId, {
+    providerRef, providerOrderRef, raw, source: 'paypal', provider: 'paypal',
+    gatewayMinor: amountMinor, currency,
+  });
+  if (!settled.ok) {
+    return { ok: false, error: settled.error || 'settlement_failed', tenantId: invoice.tenantId, invoiceId };
+  }
+  return { ok: true, tenantId: invoice.tenantId, invoiceId, status: invoice.kind === 'topup' ? 'paid' : 'active', periodEnd: settled.invoice?.periodEnd, already: settled.already, requiresRecovery: settled.requiresRecovery };
 }

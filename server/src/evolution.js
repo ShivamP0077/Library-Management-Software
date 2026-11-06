@@ -70,6 +70,8 @@ export function createEvolutionClient({ baseUrl = process.env.EVOLUTION_API_URL,
         : `WhatsApp service request failed (${reason})`, res.status === 404 ? 404 : busy ? 503 : 502);
       err.upstreamStatus = res.status;
       err.upstreamBody = data;
+      const retryAfter = Number(res.headers?.get?.('retry-after') || 0);
+      if (Number.isFinite(retryAfter) && retryAfter > 0) err.retryAfterMs = Math.min(retryAfter * 1000, 60000);
       throw err;
     }
     return data;

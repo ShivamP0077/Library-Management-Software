@@ -5,17 +5,26 @@ import { api, getToken } from './api';
 let state = { state: 'unknown', checked: false, allowed: true };
 const subs = new Set();
 let inflight = null;
+let checkedAt = 0;
+const CACHE_MS = 10000; // Issue #18: coalesce polls across banners/windows
 const emit = () => subs.forEach(fn => fn(state));
 
-export async function refreshWhatsappStatus() {
+export async function refreshWhatsappStatus({ force = false } = {}) {
   if (!getToken()) { state = { state: 'unknown', checked: true, allowed: false }; emit(); return state; }
   if (inflight) return inflight;
+  if (!force && state.checked && Date.now() - checkedAt < CACHE_MS) return state;
+  // Hidden tabs must not keep hitting the provider; refresh on return via visibilitychange.
+  if (typeof document !== 'undefined' && document.hidden) return state;
   inflight = api.whatsappStatus()
-    .then(r => { state = { state: r?.state || 'unknown', number: r?.number || null, checked: true, allowed: true }; })
-    .catch(e => { state = { state: 'unknown', checked: true, allowed: !(e?.status === 403 || e?.status === 503), error: e?.message }; })
+    .then(r => { state = { state: r?.state || 'unknown', number: r?.number || null, checked: true, allowed: true }; checkedAt = Date.now(); })
+    .catch(e => { state = { state: 'unknown', checked: true, allowed: !(e?.status === 403 || e?.status === 503), error: e?.message }; checkedAt = Date.now(); })
     .finally(() => { inflight = null; emit(); });
   await inflight;
   return state;
+}
+
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshWhatsappStatus({ force: true }); });
 }
 
 /** Disconnected = we reached the server and it says the library's WhatsApp is not logged in. */

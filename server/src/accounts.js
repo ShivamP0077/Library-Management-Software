@@ -10,6 +10,9 @@ import bcrypt from 'bcryptjs';
 import { User, Library, isPlatformRole } from './models.js';
 import { hashPassword, validatePassword } from './services.js';
 import { sendMail } from './mailer.js';
+import { sendMobileMessage, smsConfigured } from './messaging.js';
+import { normalizeMobile, isMobile } from './identity.js';
+import { throttleHit } from './throttle.js';
 import { audit, AuditLog, pubAudit } from './audit.js';
 import { requireRole } from './auth.js';
 import { checkStaffLimit } from './plans.js';
@@ -41,6 +44,8 @@ const otpSchema = new mongoose.Schema({
   attempts: { type: Number, default: 0 },
   usedAt: Date,
   ip: String,
+  channel: { type: String, enum: ['email', 'mobile'], default: 'email' },
+  mobile: String,
 }, { timestamps: true });
 otpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 86400 });
 export const PasswordResetOtp = mongoose.models.PasswordResetOtp || mongoose.model('PasswordResetOtp', otpSchema);
@@ -122,6 +127,7 @@ export function createPublicAccountRouter({ issueSession }) {
     if (!email) return res.status(400).json({ error: 'email is required' });
     if (rateLimited(`ip:${req.ip}`, 10, 15 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
     if (rateLimited(`fp:${email}`, 1, 60e3)) return res.status(429).json({ error: 'Please wait a minute before requesting another code.' });
+    if (await throttleHit(`forgot-email:${email}`, 5, 15 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
     const user = await User.findOne({ email }).lean();
     if (!user || user.status !== 'Active') return res.json(generic); // disabled accounts cannot recover
     if (!isPlatformRole(user.role)) {
@@ -135,6 +141,52 @@ export function createPublicAccountRouter({ issueSession }) {
       text: `Your password reset code is ${code}. It expires in ${OTP_MINUTES()} minutes. If you did not ask for this, ignore this email.` });
     await audit({ user: { id: String(user._id), email: user.email, role: user.role }, ip: req.ip }, 'password.reset_requested', { tenantId: user.tenantId || null, target: mask(user.email) });
     res.json(generic);
+  }));
+
+  // Issue #15: password recovery by verified mobile (no silent email fallback).
+  r.post('/auth/forgot-password-mobile', wrap(async (req, res) => {
+    const mobile = normalizeMobile(req.body?.mobile);
+    const generic = { ok: true, message: 'If this mobile number is registered, a reset code has been sent.' };
+    if (!isMobile(mobile)) return res.status(400).json({ error: 'A valid mobile number is required' });
+    if (!smsConfigured()) return res.status(503).json({ error: 'Mobile verification is not configured. Contact support.', code: 'mobile_otp_not_configured' });
+    if (rateLimited(`fmp:${req.ip}`, 10, 15 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
+    if (await throttleHit(`forgot-mobile:${mobile}`, 3, 60e3)) return res.status(429).json({ error: 'Please wait a minute before requesting another code.' });
+    const user = await User.findOne({ mobile }).lean();
+    if (!user || user.status !== 'Active') return res.json(generic);
+    if (!isPlatformRole(user.role)) {
+      const lib = await Library.findOne({ libraryId: user.tenantId || user.libraryId }).lean();
+      if (!lib || lib.status !== 'Active') return res.json(generic);
+    }
+    const code = String(crypto.randomInt(0, 1e6)).padStart(6, '0');
+    await PasswordResetOtp.updateMany({ userId: String(user._id), usedAt: null }, { $set: { usedAt: new Date() } });
+    await PasswordResetOtp.create({ userId: String(user._id), mobile, channel: 'mobile', codeHash: sha(`${user._id}:${code}`), expiresAt: new Date(Date.now() + OTP_MINUTES() * 60e3), ip: req.ip });
+    await sendMobileMessage({ to: mobile, text: `Your Library OS password reset code is ${code}. It expires in ${OTP_MINUTES()} minutes. If you did not ask for this, ignore this message.` });
+    await audit({ user: { id: String(user._id), email: user.email, role: user.role }, ip: req.ip }, 'password.reset_requested', { tenantId: user.tenantId || null, target: `••••${mobile.slice(-4)}` });
+    res.json(generic);
+  }));
+
+  r.post('/auth/reset-password-mobile', wrap(async (req, res) => {
+    const mobile = normalizeMobile(req.body?.mobile);
+    const { otp, newPassword } = req.body || {};
+    if (!isMobile(mobile) || !otp) return res.status(400).json({ error: 'mobile and code are required' });
+    if (!validatePassword(newPassword)) return res.status(400).json({ error: 'New password must be at least 8 characters' });
+    if (rateLimited(`rpm:${req.ip}`, 20, 15 * 60e3)) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
+    const bad = () => res.status(400).json({ error: 'Invalid or expired code' });
+    const user = await User.findOne({ mobile }).select('+passwordHash');
+    if (!user || user.status !== 'Active') return bad();
+    const rec = await PasswordResetOtp.findOne({ userId: String(user._id), channel: 'mobile', usedAt: null, expiresAt: { $gt: new Date() } }).sort({ createdAt: -1 });
+    if (!rec) return bad();
+    if (rec.attempts >= 5) { rec.usedAt = new Date(); await rec.save(); return res.status(429).json({ error: 'Too many wrong codes. Request a new one.' }); }
+    const ok = rec.codeHash === sha(`${user._id}:${String(otp).trim()}`);
+    if (!ok) { rec.attempts += 1; await rec.save(); return bad(); }
+    const claimed = await PasswordResetOtp.findOneAndUpdate({ _id: rec._id, usedAt: null }, { $set: { usedAt: new Date() } });
+    if (!claimed) return bad();
+    user.passwordHash = await hashPassword(newPassword);
+    user.authProviders = [...new Set([...(user.authProviders || []), 'password'])];
+    user.passwordChangedAt = new Date();
+    await user.save();
+    await audit({ user: { id: String(user._id), email: user.email, role: user.role }, ip: req.ip }, 'password.reset_completed', { tenantId: user.tenantId || null, via: 'mobile' });
+    res.json({ ok: true });
   }));
 
   r.post('/auth/reset-password', wrap(async (req, res) => {

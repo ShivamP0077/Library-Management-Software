@@ -185,7 +185,7 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
               <label className="form-label" htmlFor="delete-lib-name">Type <strong>{deleteFor.name}</strong> to confirm</label>
               <input id="delete-lib-name" className="form-input" autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false} enterKeyHint="done" value={deleteName} onChange={e => { setDeleteName(e.target.value); setDeleteError(''); }} aria-describedby="delete-lib-hint" />
               <div id="delete-lib-hint" role={deleteError ? 'alert' : undefined} style={{ fontSize: 12, marginTop: 6, minHeight: 16, color: deleteError ? '#b91c1c' : nameOk ? '#15803d' : 'var(--text-tertiary)' }}>
-                {deleteError || (nameOk ? 'Name matches.' : deleteName ? 'Name does not match yet (capital letters do not matter).' : '')}
+                {deleteError || (nameOk ? 'Name matches.' : deleteName ? 'Name does not match yet (spelling, capitals and spacing must match exactly).' : '')}
               </div>
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16, flexWrap: 'wrap' }}>
                 <button type="button" className="btn btn-secondary" disabled={deleting} onClick={() => setDeleteFor(null)}>Cancel</button>

@@ -149,11 +149,12 @@ const WhatsAppSettingsInner = () => {
     return () => { active = false; clearTimeout(retryTimer.current); };
   }, [reloadKey]);
 
-  // Poll the connection state while the user is scanning a QR code.
+  // Poll the connection state while the user is scanning a QR code (paused in hidden tabs).
   useEffect(() => {
     if (status?.state !== 'connecting' || qrExpired) return;
     let cancelled = false;
     const poll = async () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       try {
         const data = await api.whatsappStatus();
         if (cancelled) return;
@@ -200,8 +201,11 @@ const WhatsAppSettingsInner = () => {
       setQr(data?.qr || null);
       setPairingCode(data?.pairingCode || null);
       // Automatic refreshes keep the original 3-minute connection window; a
-      // manual refresh or a new connection starts a fresh window.
-      if (extend) setQrDeadline(Date.now() + QR_TTL_MS);
+      // manual refresh or a new connection starts a fresh window. The server's
+      // explicit expiry wins when it sends one.
+      const serverExpiry = data?.qrExpiresAt ? Date.parse(data.qrExpiresAt) : NaN;
+      if (Number.isFinite(serverExpiry)) setQrDeadline(serverExpiry);
+      else if (extend) setQrDeadline(Date.now() + QR_TTL_MS);
       else setQrDeadline(prev => prev || Date.now() + QR_TTL_MS);
       if (extend) setQrExpired(false);
     } catch (err) {
@@ -211,10 +215,13 @@ const WhatsAppSettingsInner = () => {
     }
   }, []);
 
-  // Refresh the QR code automatically every 40 seconds while connecting.
+  // Refresh the QR code automatically every 40 seconds while connecting (paused in hidden tabs).
   useEffect(() => {
     if (status?.state !== 'connecting' || qrExpired) return;
-    const interval = setInterval(() => { requestQr({ refresh: true, extend: false }); }, QR_REFRESH_MS);
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      requestQr({ refresh: true, extend: false });
+    }, QR_REFRESH_MS);
     return () => clearInterval(interval);
   }, [status?.state, qrExpired, requestQr]);
 

@@ -5,14 +5,19 @@ import { api } from '../utils/api';
 const limit = (n) => (n ? n.toLocaleString() : 'Unlimited');
 
 export function SignupPanel({ plans = [], googleSignup = false, paymentsConfigured = false, googlePendingToken = '', onDone, onBack }) {
-  const [step, setStep] = useState(googlePendingToken ? 2 : 1); // 1 email, 2 details, 3 payment
+  const [step, setStep] = useState(googlePendingToken ? 2 : 1); // 1 verify, 2 details, 3 payment
+  const [channel, setChannel] = useState('email'); // email | mobile
   const [email, setEmail] = useState('');
+  const [mobile, setMobile] = useState('');
   const [code, setCode] = useState('');
   const [pendingToken, setPendingToken] = useState(googlePendingToken || '');
   const [planId, setPlanId] = useState(plans[0]?.planId || '');
   const [interval, setInterval] = useState('month');
+  const [touchedInterval, setTouchedInterval] = useState(false);
   const [name, setName] = useState('');
   const [libraryName, setLibraryName] = useState('');
+  const [city, setCity] = useState('');
+  const [referralCode, setReferralCode] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [busy, setBusy] = useState(false);
@@ -23,6 +28,10 @@ export function SignupPanel({ plans = [], googleSignup = false, paymentsConfigur
   const viaGoogle = Boolean(pendingToken);
 
   useEffect(() => {
+    if (!touchedInterval) setInterval(plan?.priceMonthly != null ? 'month' : 'year');
+  }, [planId, touchedInterval]);
+
+  useEffect(() => {
     if (googlePendingToken) {
       setPendingToken(googlePendingToken);
       setStep(2);
@@ -31,7 +40,16 @@ export function SignupPanel({ plans = [], googleSignup = false, paymentsConfigur
   }, [googlePendingToken]);
 
   const run = async (fn) => { setError(''); setBusy(true); try { await fn(); } catch (e) { setError(e.message); } finally { setBusy(false); } };
-  const sendCode = (e) => { e.preventDefault(); run(async () => { const r = await api.signupStart(email.trim()); setInfo(r.message || 'Code sent.'); setStep(2); }); };
+  const sendCode = (e) => {
+    e.preventDefault();
+    run(async () => {
+      const r = channel === 'mobile'
+        ? await api.signupStartMobile(mobile.trim())
+        : await api.signupStart(email.trim());
+      setInfo(r.message || 'Code sent.');
+      setStep(2);
+    });
+  };
 
   const startGoogle = () => {
     window.location.href = '/api/auth/google/start?signup=1';
@@ -55,15 +73,26 @@ export function SignupPanel({ plans = [], googleSignup = false, paymentsConfigur
           pendingToken,
           name: name.trim() || undefined,
           libraryName: libraryName.trim(),
+          city: city.trim() || undefined,
+          referralCode: referralCode.trim() || undefined,
           password: password || undefined,
           planId: planId || undefined,
           interval,
         });
       } else {
-        result = await api.signupComplete({
-          email: email.trim(), code: code.trim(), name: name.trim(),
-          libraryName: libraryName.trim(), password, planId: planId || undefined, interval,
-        });
+        if (channel === 'mobile') {
+          result = await api.signupCompleteMobile({
+            mobile: mobile.trim(), email: email.trim() || undefined, code: code.trim(), name: name.trim(),
+            city: city.trim() || undefined, referralCode: referralCode.trim() || undefined,
+            libraryName: libraryName.trim(), password, planId: planId || undefined, interval,
+          });
+        } else {
+          result = await api.signupComplete({
+            email: email.trim(), mobile: mobile.trim() || undefined, code: code.trim(), name: name.trim(),
+            city: city.trim() || undefined, referralCode: referralCode.trim() || undefined,
+            libraryName: libraryName.trim(), password, planId: planId || undefined, interval,
+          });
+        }
       }
       if (result.needsPayment) {
         setSessionResult(result);
@@ -94,10 +123,18 @@ export function SignupPanel({ plans = [], googleSignup = false, paymentsConfigur
       <h2 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 6px' }}>Create your library account</h2>
       {step === 1 && (
         <form onSubmit={sendCode}>
-          <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 12px' }}>We'll email you a 6-digit code to confirm it's you.</p>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 12px' }}>Verify your email or mobile to create your owner account.</p>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+            <button type="button" className={`btn ${channel === 'email' ? 'btn-primary' : 'btn-secondary'} btn-sm`} onClick={() => setChannel('email')}>Email</button>
+            <button type="button" className={`btn ${channel === 'mobile' ? 'btn-primary' : 'btn-secondary'} btn-sm`} onClick={() => setChannel('mobile')}>Mobile</button>
+          </div>
           <div className="form-group">
-            <label className="form-label" htmlFor="signup-email">Email</label>
-            <input id="signup-email" className="form-input" type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} required />
+            <label className="form-label" htmlFor="signup-email">{channel === 'mobile' ? 'Mobile number' : 'Email'}</label>
+            {channel === 'mobile' ? (
+              <input id="signup-mobile" className="form-input" type="tel" inputMode="tel" autoComplete="tel" value={mobile} onChange={e => setMobile(e.target.value)} required />
+            ) : (
+              <input id="signup-email" className="form-input" type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} required />
+            )}
           </div>
           {error && <div role="alert" style={{ color: '#dc2626', fontSize: 13, marginBottom: 12 }}>{error}</div>}
           <button className="btn btn-primary" type="submit" disabled={busy} style={{ width: '100%', justifyContent: 'center' }}>{busy ? 'Sending…' : 'Send code'}</button>
@@ -113,12 +150,20 @@ export function SignupPanel({ plans = [], googleSignup = false, paymentsConfigur
       )}
       {step === 2 && (
         <form onSubmit={finish}>
-          {info && <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 12px' }}>{info}{!viaGoogle && email ? ` (${email})` : ''}</p>}
+          {info && <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 12px' }}>{info}{!viaGoogle && (channel === 'mobile' ? mobile : email) ? ` (${channel === 'mobile' ? mobile : email})` : ''}</p>}
           {!viaGoogle && (
-            <div className="form-group">
-              <label className="form-label" htmlFor="signup-code">Code from email</label>
-              <input id="signup-code" className="form-input" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={e => setCode(e.target.value.replace(/\D/g, ''))} required />
-            </div>
+            <>
+              <div className="form-group">
+                <label className="form-label" htmlFor="signup-code">6-digit code</label>
+                <input id="signup-code" className="form-input" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={e => setCode(e.target.value.replace(/\D/g, ''))} required />
+              </div>
+              {channel === 'mobile' && (
+                <div className="form-group">
+                  <label className="form-label" htmlFor="signup-email-optional">Email (optional)</label>
+                  <input id="signup-email-optional" className="form-input" type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} />
+                </div>
+              )}
+            </>
           )}
           {plans.length > 0 && (
             <fieldset style={{ border: 0, padding: 0, margin: '0 0 12px' }}>
@@ -136,13 +181,15 @@ export function SignupPanel({ plans = [], googleSignup = false, paymentsConfigur
               </div>
               {plan?.priceYearly ? (
                 <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, marginTop: 8 }}>
-                  <input type="checkbox" checked={interval === 'year'} onChange={e => setInterval(e.target.checked ? 'year' : 'month')} /> Pay yearly
+                  <input type="checkbox" checked={interval === 'year'} onChange={e => { setTouchedInterval(true); setInterval(e.target.checked ? 'year' : 'month'); }} /> Pay yearly
                 </label>
               ) : null}
             </fieldset>
           )}
           <div className="form-group"><label className="form-label" htmlFor="signup-name">Your name</label><input id="signup-name" className="form-input" autoComplete="name" value={name} onChange={e => setName(e.target.value)} required={!viaGoogle} /></div>
           <div className="form-group"><label className="form-label" htmlFor="signup-library">Library name</label><input id="signup-library" className="form-input" value={libraryName} onChange={e => setLibraryName(e.target.value)} required /></div>
+          <div className="form-group"><label className="form-label" htmlFor="signup-city">City</label><input id="signup-city" className="form-input" value={city} onChange={e => setCity(e.target.value)} /></div>
+          <div className="form-group"><label className="form-label" htmlFor="signup-referral">Referral code (optional)</label><input id="signup-referral" className="form-input" value={referralCode} onChange={e => setReferralCode(e.target.value.toUpperCase())} /></div>
           {!viaGoogle ? (
             <>
               <div className="form-group"><label className="form-label" htmlFor="signup-password">Password</label><input id="signup-password" className="form-input" type="password" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} required /></div>
@@ -164,7 +211,7 @@ export function SignupPanel({ plans = [], googleSignup = false, paymentsConfigur
           )}
           {error && <div role="alert" style={{ color: '#dc2626', fontSize: 13, marginBottom: 12 }}>{error}</div>}
           <button className="btn btn-primary" type="submit" disabled={busy} style={{ width: '100%', justifyContent: 'center' }}>{busy ? 'Creating…' : 'Create library'}</button>
-          {!viaGoogle && <button type="button" className="btn btn-ghost" onClick={() => { setStep(1); setCode(''); }} style={{ width: '100%', justifyContent: 'center', fontSize: 13, marginTop: 6 }}>Use a different email</button>}
+          {!viaGoogle && <button type="button" className="btn btn-ghost" onClick={() => { setStep(1); setCode(''); }} style={{ width: '100%', justifyContent: 'center', fontSize: 13, marginTop: 6 }}>Use a different {channel === 'mobile' ? 'mobile' : 'email'}</button>}
         </form>
       )}
       {step === 3 && (

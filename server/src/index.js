@@ -8,8 +8,10 @@ import { registerJob, startScheduler } from './jobs.js';
 import { runDailyFinanceJob } from './finance.js';
 import { Library } from './models.js';
 import { runDailyNotificationJob } from './notifications.js';
+import { ensureSupportGlobalNumberIndex } from './support.js';
 import { runReminderJob, runReceiptRetryJob } from './reminders.js';
 import { refreshPaymentProvider } from './paymentConfig.js';
+import { purgeExpiredDocuments } from './documentRetention.js';
 
 const PORT = Number(process.env.PORT || 4000);
 const RETRY_MS = Number(process.env.DB_RETRY_MS || 30000);
@@ -23,10 +25,13 @@ async function connectWithRetry() {
     await connectDB();
     await ensureSuperAdmin().catch(e => console.error('[seed] super admin seed failed:', redact(e.message)));
     await refreshPaymentProvider().catch(e => console.error('[payments] provider load failed:', redact(e.message)));
+    // Creates the global ticket-number unique index only when existing data has no duplicates.
+    await ensureSupportGlobalNumberIndex().catch(e => console.error('[support] number index check failed:', redact(e.message)));
     registerJob('recurring-expenses', () => runDailyFinanceJob(Library));
     registerJob('notifications', () => runDailyNotificationJob(Library)); // after bills are generated
     registerJob('whatsapp-reminders', () => runReminderJob()); // no-op unless Evolution API is configured
     registerJob('whatsapp-receipt-retry', () => runReceiptRetryJob(), { intervalMs: 3 * 60 * 1000 });
+    registerJob('document-retention', () => purgeExpiredDocuments(), { intervalMs: 6 * 60 * 60 * 1000 });
     startScheduler();
   } catch (err) {
     console.error(`[db] Connection failed (retrying in ${RETRY_MS / 1000}s):`, redact(err.message));

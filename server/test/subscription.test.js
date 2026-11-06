@@ -38,10 +38,16 @@ test('free plan switch works; paid upgrade says payments not set up; nothing cha
   assert.equal((await call('POST', '/api/subscription/change', { token: A(), body: { planId: 'free' } })).status, 400);
 });
 
-test('a provider seam is used for paid upgrades once registered', async () => {
-  setPaymentProvider({ name: 'fake', createCheckout: async () => ({}), cancel: async () => {} });
-  try { assert.equal((await call('POST', '/api/subscription/change', { token: A(), body: { planId: 'pro' } })).status, 501); }
-  finally { setPaymentProvider(null); }
+test('a configured provider creates a tenant-bound invoice for a paid upgrade', async () => {
+  await call('PUT', '/api/admin/billing/config', { token: ctx.tokens.sa, body: { currency: 'INR', taxMode: 'none', taxRatePct: null } });
+  setPaymentProvider({ name: 'fake', createCheckout: async ({ library, invoiceId }) => ({ url: 'https://checkout.test/' + invoiceId, reference: 'test:' + library.libraryId + ':' + invoiceId, invoiceId }), cancel: async () => {} });
+  try {
+    const r = await call('POST', '/api/subscription/change', { token: A(), body: { planId: 'pro' } });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(r.body.checkout.amountMinor, 99900);
+    assert.ok(r.body.checkout.reference.startsWith('test:lib-a:'));
+    assert.ok((await Library.findOne({ libraryId: 'lib-a' }).lean()).subscription.planId !== 'pro');
+  } finally { setPaymentProvider(null); }
 });
 
 test('downgrade blocked when usage exceeds the target plan', async () => {

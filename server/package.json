@@ -14,7 +14,8 @@
     "restore": "node src/backup.js restore",
     "backup:verify": "node src/backup.js verify",
     "export:schema": "node scripts/export-schema.js",
-    "report:copied-dry-run": "node scripts/copied-data-dry-run.mjs"
+    "report:copied-dry-run": "node scripts/copied-data-dry-run.mjs",
+    "support:numbering": "node scripts/support-global-numbering.mjs"
   },
   "keywords": [],
   "author": "",

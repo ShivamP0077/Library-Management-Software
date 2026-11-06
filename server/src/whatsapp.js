@@ -113,6 +113,13 @@ export const MAX_ATTEMPTS = 3;
 // ~90s of backoff: covers a Render free-plan Evolution cold start once the wake call has kicked it.
 const SEND_RETRY_MS = [5000, 10000, 20000, 25000, 30000];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+/** Bounded exponential backoff with jitter; provider Retry-After is honoured but capped. */
+export function whatsappBackoff(attempt, { baseMs = 1000, maxMs = 10000, retryAfterMs, random = Math.random } = {}) {
+  const retry = Number(retryAfterMs);
+  if (Number.isFinite(retry) && retry > 0) return Math.min(retry, maxMs);
+  const exp = Math.min(baseMs * (2 ** Math.max(0, attempt)), maxMs);
+  return Math.min(maxMs, exp + Math.floor(exp * 0.25 * random()));
+}
 
 /** Provider asleep / unreachable / timed out / 502-503-504: worth retrying later. */
 export function isTransientError(e) {
@@ -133,7 +140,7 @@ export async function deliver(log, { libraryId, number, body }, { client, Messag
         if (!state || state === 'open') break;
         console.log(`[whatsapp] ${instance} state ${state}, waiting before send`);
       } catch (e) { console.error(`[whatsapp] wake failed for ${instance} (status ${e?.upstreamStatus || e?.status}): ${e?.message}`); }
-      if (delaysMs.length) await sleep(Math.min(10000, delaysMs[0] * 2));
+      if (delaysMs.length) await sleep(whatsappBackoff(w, { retryAfterMs: e?.retryAfterMs }));
     }
   }
   let lastErr;
@@ -146,7 +153,7 @@ export async function deliver(log, { libraryId, number, body }, { client, Messag
       lastErr = e;
       console.error(`[whatsapp] send attempt ${i + 1} failed for ${instance} msg ${log._id} (status ${e?.upstreamStatus || e?.status}): ${e?.message}`);
       if (!isTransientError(e) || i === delaysMs.length) break;
-      await sleep(delaysMs[i]);
+      await sleep(e?.retryAfterMs != null ? Math.min(e.retryAfterMs, 60000) : delaysMs[i]);
     }
   }
   const transient = isTransientError(lastErr);
@@ -208,8 +215,11 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 const mapState = (s) => (s === 'open' ? 'connected' : s === 'connecting' ? 'connecting' : 'disconnected');
 const jidToNumber = (jid) => (jid ? `+${String(jid).split('@')[0].split(':')[0]}` : null);
 
-export function createWhatsappRouter({ client = createEvolutionClient(), isConfigured = () => evolutionConfigured(), wakeDelaysMs = [3000, 6000, 10000] } = {}) {
+export function createWhatsappRouter({ client = createEvolutionClient(), isConfigured = () => evolutionConfigured(), wakeDelaysMs = [3000, 6000, 10000], statusTtlMs = 10000 } = {}) {
   const r = express.Router();
+  // Issue #18: coalesce concurrent status calls per library and serve a short cached answer.
+  const statusCache = new Map();
+  const statusInflight = new Map();
   const guard = wrap(async (req, res, next) => {
     if (!(await canManageWhatsapp(req.user, req.libraryId))) return res.status(403).json({ error: 'You do not have permission to manage WhatsApp' });
     if (!isConfigured()) return res.status(503).json({ error: 'WhatsApp integration is not configured on the server' });
@@ -226,13 +236,14 @@ export function createWhatsappRouter({ client = createEvolutionClient(), isConfi
         lastErr = e;
         if (!isTransientError(e) || i === wakeDelaysMs.length) break;
         if (i === 0 && client.wake) { try { await client.wake(name); } catch { /* still waking */ } }
-        await sleep(wakeDelaysMs[i]);
+        const base = wakeDelaysMs[i] || 1000;
+        await sleep(e?.retryAfterMs != null ? Math.min(e.retryAfterMs, 60000) : whatsappBackoff(i, { baseMs: base, maxMs: Math.max(base * 2, 10000) }));
       }
     }
     throw lastErr;
   }
 
-  async function status(name) {
+  async function readStatus(name) {
     const inst = await withWake(name, () => client.findInstance(name));
     if (!inst) return { state: 'not_created', number: null, profileName: null };
     let raw = inst.connectionStatus;
@@ -240,9 +251,19 @@ export function createWhatsappRouter({ client = createEvolutionClient(), isConfi
     const state = mapState(raw);
     return { state, number: state === 'connected' ? jidToNumber(inst.ownerJid || inst.owner) : null, profileName: state === 'connected' ? (inst.profileName || null) : null };
   }
+  async function status(name, { fresh = false } = {}) {
+    const hit = statusCache.get(name);
+    if (!fresh && hit && Date.now() - hit.at < statusTtlMs) return hit.value;
+    if (statusInflight.has(name)) return statusInflight.get(name);
+    const p = readStatus(name)
+      .then((value) => { if (value.state !== 'connecting') statusCache.set(name, { at: Date.now(), value }); return value; })
+      .finally(() => statusInflight.delete(name));
+    statusInflight.set(name, p);
+    return p;
+  }
 
   r.get('/status', wrap(async (req, res) => {
-    const s = await status(req.instance);
+    const s = await status(req.instance, { fresh: req.query.fresh === 'true' });
     const cfg = (await WhatsappConfig.findOne({ libraryId: req.libraryId }).lean()) || {};
     if (s.number && cfg.connectedNumber !== s.number) await WhatsappConfig.updateOne({ libraryId: req.libraryId }, { $set: { connectedNumber: s.number } }, { upsert: true });
     res.json({ ...s, instance: req.instance, settings: { ...DEFAULT_TOGGLES, ...pickToggles(cfg) } });
@@ -250,17 +271,21 @@ export function createWhatsappRouter({ client = createEvolutionClient(), isConfi
 
   // Creates the library's instance if needed and returns a fresh QR code.
   r.post('/connect', wrap(async (req, res) => {
+    statusCache.delete(req.instance);
     let created = null;
     if (!(await withWake(req.instance, () => client.findInstance(req.instance)))) created = await client.createInstance(req.instance);
     await registerWebhook(client, req.instance, webhookBaseUrl(req));
-    const s = await status(req.instance);
+    const s = await status(req.instance, { fresh: true });
     if (s.state === 'connected') return res.json(s);
     const c = await withWake(req.instance, () => client.connect(req.instance));
+    statusCache.delete(req.instance);
     const qr = c?.base64 || created?.qrcode?.base64 || null;
-    res.json({ state: 'connecting', qr, pairingCode: c?.pairingCode || null });
+    const qrTtlMs = 3 * 60 * 1000;
+    res.json({ state: 'connecting', qr, pairingCode: c?.pairingCode || null, qrExpiresAt: qr ? new Date(Date.now() + qrTtlMs).toISOString() : null, retryAfterMs: 40000 });
   }));
 
   r.post('/logout', wrap(async (req, res) => {
+    statusCache.delete(req.instance);
     try { await client.logout(req.instance); } catch (e) { if (e.status !== 404) throw e; }
     await WhatsappConfig.updateOne({ libraryId: req.libraryId }, { $unset: { connectedNumber: 1 } });
     res.json({ state: 'disconnected' });

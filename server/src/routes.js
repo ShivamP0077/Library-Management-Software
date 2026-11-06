@@ -9,7 +9,7 @@ import { verifyGoogleIdToken, googleEnabled, googleConfig, buildAuthUrl, exchang
 import { createWhatsappRouter, createWhatsappWebhookRouter } from './whatsapp.js';
 import { createFinanceRouter, validatePaymentBatch } from './finance.js';
 import { createStudentRouter, recordStudentDiff, recordArchiveDiff, checkCapacity } from './students.js';
-import { audit } from './audit.js';
+import { audit, AuditLog } from './audit.js';
 import { enforceAmountEdits, amountSettingsChanged, isOwnerRole } from './amountPermission.js';
 import { createNotificationRouter } from './notifications.js';
 import { createInsightsRouter } from './insights.js';
@@ -23,14 +23,21 @@ const sendReceiptsAfterSave = async (tenantId, payments, newStudentKeys) => {
   const p = (newStudentKeys ? receiptsForNewStudents(tenantId, newStudentKeys) : autoSendReceipts(tenantId, payments)).catch(e => console.error('[receipts]', e.message));
   if (process.env.NODE_ENV === 'test') await p;
 };
-import { deleteLibraryData } from './deleteLibrary.js';
+import { deleteLibraryData, ensureDeletionJob, startDeletionAttempt, completeDeletionJob, failDeletionJob, recordDeletionProof } from './deleteLibrary.js';
+import { retentionDeadline } from './documentRetention.js';
 import { confirmNameMatches } from './confirmName.js';
 import { createSignupRouter, createGoogleSignupPending, signupEnabled } from './signup.js';
+import { createProfileRouter } from './profile.js';
+import { createSoftwarePlanRouter, createSoftwarePlanAdminRouter } from './softwarePlan.js';
+import { throttleHit, clearThrottle } from './throttle.js';
+import { normalizeEmail, normalizeMobile, EMAIL_RE } from './identity.js';
 import { createSubscriptionRouter } from './subscription.js';
 import { requireActiveSubscription, requireFeature, refreshSubscriptionStatus, accessFor } from './subscriptionAccess.js';
 import { createPlanAdminRouter, SoftwarePlan, checkBranchLimit, checkStaffLimit } from './plans.js';
 import { createPaymentsAdminRouter } from './paymentsAdmin.js';
+import { createBillingAdminRouter } from './billingConfig.js';
 import { refreshPaymentProvider } from './paymentConfig.js';
+import { DeletionJob } from './deletionJob.js';
 import { createPublicAccountRouter, createTenantAccountRouter, auditSuperadminAccess, acceptInvite } from './accounts.js';
 import { createSeatRouter, reconcileStudents, releaseForStudents, validateSeatSync, SeatAllocation, seatMatchesAllocation, SeatConflictError } from './seats.js';
 
@@ -210,10 +217,21 @@ router.get('/auth/config', (_req, res) => res.json({ googleEnabled: googleEnable
 
 // Optional fallback for seeded / password-enabled accounts
 router.post('/auth/login', wrap(async (req, res) => {
-  const { email, password } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error: 'email and password are required' });
-  const user = await User.findOne({ email: String(email).toLowerCase().trim() }).select('+passwordHash');
+  const { password } = req.body || {};
+  const identifier = String(req.body?.identifier || req.body?.email || req.body?.mobile || '').trim();
+  if (!identifier || !password) return res.status(400).json({ error: 'Enter your email or mobile number and password' });
+  if (await throttleHit(`login:${identifier.toLowerCase()}`, 8, 15 * 60e3)) {
+    return res.status(429).json({ error: 'Too many login attempts. Try again in 15 minutes.' });
+  }
+  let user;
+  if (identifier.includes('@')) {
+    const email = normalizeEmail(identifier);
+    user = EMAIL_RE.test(email) ? await User.findOne({ email }).select('+passwordHash') : null;
+  } else {
+    user = await User.findOne({ mobile: normalizeMobile(identifier) }).select('+passwordHash');
+  }
   if (!user || !user.passwordHash || !(await bcrypt.compare(String(password), user.passwordHash))) return res.status(401).json({ error: 'Invalid credentials' });
+  await clearThrottle(`login:${identifier.toLowerCase()}`);
   return issueSession(user, res);
 }));
 
@@ -282,6 +300,8 @@ admin.use(createPartnerAdminRouter());
 admin.use(createSupportAdminRouter());
 admin.use(createPlanAdminRouter());
 admin.use(createPaymentsAdminRouter()); // Issue #19
+admin.use(createBillingAdminRouter()); // Issue #19 explicit tax/currency policy
+admin.use(createSoftwarePlanAdminRouter()); // Issue #19 offers + referral campaigns
 
 admin.get('/libraries', wrap(async (_req, res) => {
   const libs = await Library.find().sort({ createdAt: 1 }).lean();
@@ -325,12 +345,61 @@ admin.patch('/libraries/:libraryId', wrap(async (req, res) => {
 
 // Issue #16: permanent delete. The exact library name must be typed back; only that tenant's data is removed.
 admin.delete('/libraries/:libraryId', wrap(async (req, res) => {
-  const lib = await Library.findOne({ libraryId: req.params.libraryId }).lean();
-  if (!lib) return res.status(404).json({ error: 'Library not found' });
-  if (!confirmNameMatches(req.body?.confirmName, lib.name)) return res.status(400).json({ error: `The name you typed does not match "${lib.name}". Nothing was deleted.`, code: 'confirm_mismatch' });
-  const r = await deleteLibraryData(lib.libraryId, { evolution: req.app.locals.evolutionClient });
-  await audit(req, 'library.deleted', { tenantId: lib.libraryId, target: lib.libraryId, detail: { name: lib.name, ...r } });
-  res.json({ ok: true, libraryId: lib.libraryId, ...r });
+  const libraryId = req.params.libraryId;
+  const lib = await Library.findOne({ libraryId }).lean();
+  let job = await DeletionJob.findOne({ libraryId });
+
+  if (!lib) {
+    // Idempotent retry after success, or resume a job that was interrupted after
+    // the Library row was removed. The immutable job name is the confirmation.
+    if (!job) {
+      const prior = await AuditLog.findOne({ action: 'library.deleted', target: libraryId }).sort({ at: -1 }).lean();
+      if (!prior) return res.status(404).json({ error: 'Library not found' });
+      const priorName = prior.detail?.name || null;
+      if (priorName && !confirmNameMatches(req.body?.confirmName, priorName)) {
+        return res.status(400).json({ error: `The name you typed does not match "${priorName}". Nothing was deleted.`, code: 'confirm_mismatch' });
+      }
+      return res.json({ ok: true, libraryId, alreadyDeleted: true, counts: prior.detail?.counts || {}, whatsapp: prior.detail?.whatsapp || 'skipped', retention: prior.detail?.retention || null });
+    }
+    if (!confirmNameMatches(req.body?.confirmName, job.targetName)) {
+      return res.status(400).json({ error: `The name you typed does not match "${job.targetName}". Nothing was deleted.`, code: 'confirm_mismatch' });
+    }
+    if (job.status === 'completed') {
+      return res.json({ ok: true, libraryId, alreadyDeleted: true, counts: job.counts || {}, whatsapp: job.whatsapp || 'skipped', retention: job.retention || null, deletedAt: job.completedAt });
+    }
+    job = await startDeletionAttempt(libraryId);
+    try {
+      const r = await deleteLibraryData(libraryId, { evolution: req.app.locals.evolutionClient });
+      await recordDeletionProof(libraryId, job.targetName, r, req);
+      const done = await completeDeletionJob(libraryId, r);
+      return res.json({ ok: true, libraryId, resumed: true, counts: done?.counts || r.counts, whatsapp: r.whatsapp, retention: r.retention, deletedAt: r.deletedAt });
+    } catch (e) {
+      await failDeletionJob(libraryId, e);
+      throw e;
+    }
+  }
+
+  // A failed attempt may be retried after the owner renames the library. Once the
+  // Library row is gone the job name is immutable and is the only confirmation.
+  if (job && job.status === 'failed' && job.targetName !== lib.name) {
+    await DeletionJob.deleteOne({ _id: job._id });
+    job = null;
+  }
+  const expectedName = job?.targetName || lib.name;
+  if (!confirmNameMatches(req.body?.confirmName, expectedName)) {
+    return res.status(400).json({ error: `The name you typed does not match "${expectedName}". Nothing was deleted.`, code: 'confirm_mismatch' });
+  }
+  job = job || await ensureDeletionJob(libraryId, lib.name);
+  job = await startDeletionAttempt(libraryId);
+  try {
+    const r = await deleteLibraryData(libraryId, { evolution: req.app.locals.evolutionClient });
+    await recordDeletionProof(libraryId, job.targetName, r, req);
+    const done = await completeDeletionJob(libraryId, r);
+    res.json({ ok: true, libraryId, counts: done?.counts || r.counts, whatsapp: r.whatsapp, retention: r.retention, deletedAt: r.deletedAt });
+  } catch (e) {
+    await failDeletionJob(libraryId, e);
+    throw e;
+  }
 }));
 
 admin.get('/metrics', wrap(async (_req, res) => {
@@ -382,6 +451,8 @@ tenant.use(tenantScope);
 tenant.use(auditSuperadminAccess);
 tenant.use(requireActiveSubscription); // Issue #14: lock writes when unpaid / trial ended / cancelled
 tenant.use(createTenantAccountRouter());
+tenant.use('/account', createProfileRouter()); // Issue #15 My Profile
+tenant.use('/software-plan', createSoftwarePlanRouter()); // Issue #19 My Software Plan
 
 // Client admins manage login accounts for their own library (staff / co-admins)
 tenant.get('/users', requireRole('client_admin', 'superadmin'), wrap(async (req, res) => {
@@ -432,18 +503,64 @@ tenant.put('/settings', requireRole('client_admin', 'superadmin', 'staff'), wrap
   res.json(clean(s));
 }));
 
+const RETENTION_DAYS = 30;
+const DOC_META_FIELDS = ['studentId', 'docTypeId', 'fileName', 'fileType', 'fileSize', 'status'];
+const docMeta = (body) => {
+  const out = {};
+  for (const f of DOC_META_FIELDS) if (body?.[f] !== undefined) out[f] = body[f];
+  if (out.fileName) out.fileName = String(out.fileName).slice(0, 160);
+  if (out.fileType) out.fileType = String(out.fileType).slice(0, 80);
+  if (out.fileSize !== undefined) out.fileSize = Number(out.fileSize) || null;
+  if (out.uploadedAt) out.uploadedAt = new Date(out.uploadedAt);
+  return out;
+};
+
 tenant.get('/documents/:key', wrap(async (req, res) => {
-  const d = await StudentDocument.findOne({ tenantId: req.tenantId, storageKey: req.params.key }).lean();
-  d ? res.json({ storageKey: d.storageKey, data: d.data }) : res.status(404).json({ error: 'Not found' });
+  const d = await StudentDocument.findOne({ tenantId: req.tenantId, storageKey: req.params.key, retiredAt: null }).lean();
+  d ? res.json({ storageKey: d.storageKey, data: d.data, studentId: d.studentId || null, fileName: d.fileName || null, fileType: d.fileType || null }) : res.status(404).json({ error: 'Not found' });
+}));
+// Attach/claim an existing upload to a student after admission (metadata only, never replaces data).
+tenant.patch('/documents/:key', wrap(async (req, res) => {
+  const meta = docMeta(req.body);
+  if (!Object.keys(meta).length) return res.status(400).json({ error: 'No document metadata supplied' });
+  if (meta.studentId && !(await models.students.exists({ tenantId: req.tenantId, _key: String(meta.studentId) }))) return res.status(400).json({ error: 'Unknown student for this library' });
+  const d = await StudentDocument.findOneAndUpdate(
+    { tenantId: req.tenantId, storageKey: req.params.key, retiredAt: null },
+    { $set: { ...meta, updatedBy: req.user?.email || null } },
+    { new: true, lean: true },
+  );
+  d ? res.json({ ok: true }) : res.status(404).json({ error: 'Document not found' });
+}));
+// Student-scoped fetch: a caller may only read a file attached to that same student.
+tenant.get('/students/:studentId/documents/:key', wrap(async (req, res) => {
+  const student = await models.students.findOne({ tenantId: req.tenantId, _key: String(req.params.studentId) }).lean();
+  if (!student) return res.status(404).json({ error: 'Student not found' });
+  const d = await StudentDocument.findOne({ tenantId: req.tenantId, storageKey: req.params.key, retiredAt: null }).lean();
+  if (!d || (d.studentId && String(d.studentId) !== String(req.params.studentId))) return res.status(404).json({ error: 'Not found' });
+  res.json({ storageKey: d.storageKey, data: d.data, fileName: d.fileName || null, fileType: d.fileType || null });
 }));
 tenant.put('/documents/:key', wrap(async (req, res) => {
   if (!req.body?.data) return res.status(400).json({ error: 'data is required' });
-  await StudentDocument.updateOne({ tenantId: req.tenantId, storageKey: req.params.key }, { $set: { data: req.body.data, libraryId: req.tenantId } }, { upsert: true });
+  if (String(req.body.data).length > 12 * 1024 * 1024) return res.status(413).json({ error: 'File is too large' });
+  const meta = docMeta(req.body);
+  if (meta.studentId && !(await models.students.exists({ tenantId: req.tenantId, _key: String(meta.studentId) }))) return res.status(400).json({ error: 'Unknown student for this library' });
+  await StudentDocument.updateOne(
+    { tenantId: req.tenantId, storageKey: req.params.key },
+    { $set: { data: req.body.data, libraryId: req.tenantId, ...meta, uploadedAt: new Date(), createdBy: req.user?.email || null, retiredAt: null, purgeAfter: null } },
+    { upsert: true },
+  );
   res.json({ ok: true });
 }));
+// Issue #3: retire for 30 days instead of destroying on the first click; the purge job removes it later.
 tenant.delete('/documents/:key', wrap(async (req, res) => {
-  await StudentDocument.deleteOne({ tenantId: req.tenantId, storageKey: req.params.key });
-  res.json({ ok: true });
+  const now = new Date();
+  const purgeAfter = retentionDeadline(now, RETENTION_DAYS);
+  const r = await StudentDocument.updateOne(
+    { tenantId: req.tenantId, storageKey: req.params.key, retiredAt: null },
+    { $set: { retiredAt: now, purgeAfter } },
+  );
+  await audit(req, 'document.retired', { target: req.params.key, detail: { retentionDays: RETENTION_DAYS, matched: r.matchedCount } });
+  res.json({ ok: true, retainedUntil: purgeAfter.toISOString(), retentionDays: RETENTION_DAYS });
 }));
 
 tenant.use(createSubscriptionRouter());

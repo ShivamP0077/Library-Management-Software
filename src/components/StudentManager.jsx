@@ -18,7 +18,9 @@ import { BulkStudentModal } from './Modals/BulkStudentModal';
 import { EditStudentModal } from './Modals/EditStudentModal';
 import { handleSplitAmountChange, handleAddSplitComponent, handleRemoveSplitComponent, validateSplitPayment } from '../utils/splitPaymentUtils';
 import { calculateSubscriptionExpiry, calculateRenewalStartDate, getSubscriptionStatus, formatDate } from '../utils/dateUtils';
-import { getDocumentBlob, saveDocumentBlob } from '../utils/idbStorage';
+import { getDocumentBlob, deleteDocumentBlob, saveDocumentBlobNow } from '../utils/idbStorage';
+import { uploadAttachmentFile, makeAttachmentKey, isPdfAttachment } from '../utils/attachmentUpload';
+import { addFilesToDocuments, removeDocumentFile, groupStudentDocuments } from '../utils/studentDocuments';
 import { useBackClose } from '../utils/useBackClose';
 import { useStudentPhoto } from '../utils/useStudentPhoto';
 import { getCanonicalShifts, matchesShiftFilter, isShiftInPlan, resolveCanonicalShift, normalizeShiftName } from '../utils/shiftUtils';
@@ -219,7 +221,7 @@ const ActionMenu = ({ items = [], label = 'More actions', triggerClassName = 'bt
 export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedStudent, setActiveTab, renewActionStudent, setRenewActionStudent, relocateActionStudent, setRelocateActionStudent }) => {
   const { 
     settings, students, branches, sections, activeBranchId, setActiveBranchId, plans, shifts, seatTypes, 
-    renewSubscription, changeSeat, addStudentDocument, extendStudentDueDate, archiveStudent, 
+    renewSubscription, changeSeat, extendStudentDueDate, archiveStudent,
     cancelAdmission, cancelRenewalTransaction, getValidDesksList, getAvailableEligibleSeats, 
     currentStaff, waitingList, removeFromWaitingList, updateWaitingListStatus, hasPermission, updateStudentDetails,
     lockedStaffId, getMatchingPlans, todayStr, readOnly: isReadOnly
@@ -425,11 +427,12 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     }
     setIsLoadingDoc(true);
     try {
-      const blobData = await getDocumentBlob(docObj.storageKey);
+      const blobData = await getDocumentBlob(docObj.storageKey, { studentId: selectedStudent?.id });
       if (blobData) {
         setPreviewDoc({
           name: docObj.name || 'Student Document',
-          fileName: docObj.fileName || 'document.png',
+          fileName: docObj.fileName || 'document',
+          fileType: docObj.fileType || '',
           dataUrl: blobData
         });
       } else {
@@ -443,55 +446,54 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     }
   };
 
-  const handleAttachDocumentToStudent = (e, customDocName = null) => {
-    const file = e.target.files?.[0];
-    if (!file || !selectedStudent) return;
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
+  const handleAttachDocumentToStudent = async (e, customDoc = null) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (!files.length || !selectedStudent) return;
+    let updatedDocs = selectedStudent.documents || [];
+    const updatedDocStatuses = { ...(selectedStudent.documentStatuses || {}) };
+    let attached = 0;
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const docName = (typeof customDoc === 'string' ? customDoc : customDoc?.name) || file.name.split('.')[0] || 'Student ID';
+      const docTypeId = (typeof customDoc === 'object' && customDoc?.id) || docName;
+      const storageKey = makeAttachmentKey('doc', `${selectedStudent.id}_${docTypeId}_${Date.now()}_${i}_${Math.random()}`);
       try {
-        const base64Data = ev.target.result;
-        const storageKey = `doc_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-        await saveDocumentBlob(storageKey, base64Data);
-        const docName = customDocName || file.name.split('.')[0] || "Student ID";
-        const docObj = {
-          id: storageKey,
+        const meta = await uploadAttachmentFile({
+          file,
+          key: storageKey,
+          save: (key, data) => saveDocumentBlobNow(key, data, {
+            studentId: selectedStudent.id,
+            docTypeId,
+            fileName: file.name,
+            fileType: file.type,
+            fileSize: file.size,
+            status: 'Submitted',
+          }),
+        });
+        updatedDocs = addFilesToDocuments(updatedDocs, {
           name: docName,
-          fileName: file.name,
-          fileType: file.type,
-          storageKey,
-          uploadedAt: new Date().toISOString(),
-          status: 'Submitted'
-        };
-        addStudentDocument(selectedStudent.id, docObj);
-
-        const existingDocs = selectedStudent.documents || [];
-        const filteredDocs = existingDocs.filter(d => (d.name || d.fileName) !== docName);
-        const updatedDocs = [...filteredDocs, docObj];
-
-        const updatedDocStatuses = {
-          ...(selectedStudent.documentStatuses || {}),
-          [docName]: 'Submitted'
-        };
-
-        if (updateStudentDetails) {
-          updateStudentDetails(selectedStudent.id, {
-            documents: updatedDocs,
-            documentStatuses: updatedDocStatuses
-          });
-        }
-
-        setSelectedStudent(prev => ({
-          ...prev,
-          documents: updatedDocs,
-          documentStatuses: updatedDocStatuses
-        }));
-        toast.success(`Attached ${file.name} for ${docName}`);
+          docTypeId,
+          files: [{ ...meta, name: docName, docTypeId, status: 'Submitted' }],
+        });
+        updatedDocStatuses[docName] = updatedDocStatuses[docName] === 'Verified' ? 'Verified' : 'Submitted';
+        attached++;
       } catch (err) {
-        console.error('Attach doc failed:', err);
-        toast.error('Failed to attach document.');
+        toast.error(err?.message || `Could not attach ${file.name}.`);
       }
-    };
-    reader.readAsDataURL(file);
+    }
+    if (!attached) return;
+    if (updateStudentDetails) updateStudentDetails(selectedStudent.id, { documents: updatedDocs, documentStatuses: updatedDocStatuses });
+    setSelectedStudent(prev => ({ ...prev, documents: updatedDocs, documentStatuses: updatedDocStatuses }));
+    toast.success(attached === 1 ? `Attached ${files[0].name}` : `Attached ${attached} files`);
+  };
+
+  const handleRemoveDocumentFile = (docTypeId, fileId) => {
+    if (!selectedStudent) return;
+    const docs = removeDocumentFile(selectedStudent.documents || [], docTypeId, fileId);
+    if (updateStudentDetails) updateStudentDetails(selectedStudent.id, { documents: docs });
+    setSelectedStudent(prev => ({ ...prev, documents: docs }));
+    deleteDocumentBlob(fileId).catch(() => {});
   };
 
   const handleUpdateDocStatus = (docTypeName, newStatus) => {
@@ -1469,7 +1471,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                       <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                         <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
                           + Add Custom Document
-                          <input type="file" style={{ display: 'none' }} accept="image/*,.pdf" onChange={(e) => handleAttachDocumentToStudent(e)} />
+                          <input type="file" multiple style={{ display: 'none' }} accept="image/*,.pdf" onChange={(e) => handleAttachDocumentToStudent(e)} />
                         </label>
                         <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0 }} aria-label="Add document with camera">
                           Camera
@@ -1486,12 +1488,15 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                           : (settings?.allowedDocuments || ['Aadhaar Card', 'Student ID', 'Address Proof', 'Photograph']).map(name => ({ id: name, name, requirement: 'Required' }));
 
                         const uploadedDocs = selectedStudent.documents || [];
+                        const groups = groupStudentDocuments(uploadedDocs);
 
                         return configuredTypes.map((docType) => {
-                          const matchingDoc = uploadedDocs.find(d => 
-                            (d.name && d.name.toLowerCase() === docType.name.toLowerCase()) ||
-                            (d.docTypeId && d.docTypeId === docType.id)
-                          );
+                          const matchingGroup = groups.find(g =>
+                            (g.name && g.name.toLowerCase() === docType.name.toLowerCase()) ||
+                            (g.docTypeId && (g.docTypeId === docType.id || String(g.docTypeId).toLowerCase() === String(docType.name).toLowerCase()))
+                          ) || null;
+                          const matchingDocs = matchingGroup?.files || [];
+                          const matchingDoc = matchingDocs[0] || null;
 
                           let currentStatus = selectedStudent.documentStatuses?.[docType.name] || selectedStudent.documentStatuses?.[docType.id];
                           if (!currentStatus) {
@@ -1519,8 +1524,8 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                                     </span>
                                   </div>
                                   <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                                    {matchingDoc ? (
-                                      <span>File attached: {matchingDoc.fileName || matchingDoc.name} ({matchingDoc.uploadedAt ? new Date(matchingDoc.uploadedAt).toLocaleDateString() : 'Uploaded'})</span>
+                                    {matchingDocs.length ? (
+                                      <span>{matchingDocs.length} file{matchingDocs.length === 1 ? '' : 's'} attached</span>
                                     ) : (
                                       <span>No physical file uploaded yet</span>
                                     )}
@@ -1550,15 +1555,26 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                                   )}
 
                                   <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer', margin: 0, padding: '4px 8px' }}>
-                                    {matchingDoc ? 'Replace' : 'Upload'}
-                                    <input type="file" style={{ display: 'none' }} accept="image/*,.pdf" onChange={(e) => handleAttachDocumentToStudent(e, docType.name)} />
+                                    Add file
+                                    <input type="file" multiple style={{ display: 'none' }} accept="image/*,.pdf" onChange={(e) => handleAttachDocumentToStudent(e, docType)} />
                                   </label>
                                   <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer', margin: 0, padding: '4px 8px' }} aria-label={`${docType.name} from camera`}>
                                     Camera
-                                    <input type="file" style={{ display: 'none' }} accept="image/*" capture="environment" onChange={(e) => handleAttachDocumentToStudent(e, docType.name)} />
+                                    <input type="file" style={{ display: 'none' }} accept="image/*" capture="environment" onChange={(e) => handleAttachDocumentToStudent(e, docType)} />
                                   </label>
                                 </div>
                               </div>
+                              {matchingDocs.length > 0 && (
+                                <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                  {matchingDocs.map((file) => (
+                                    <div key={file.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', borderTop: '1px dashed var(--border-light)', paddingTop: '4px' }}>
+                                      <span style={{ flex: 1, minWidth: 0, fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.fileName}</span>
+                                      <button className="btn btn-secondary btn-sm" onClick={() => handleViewDocument(file)}>View</button>
+                                      <button className="btn btn-ghost btn-sm" style={{ color: 'var(--status-error)' }} onClick={() => handleRemoveDocumentFile(matchingGroup.docTypeId, file.id)}>Remove</button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           );
                         });
@@ -1571,32 +1587,28 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                         ? settings.documentTypes
                         : (settings?.allowedDocuments || []).map(name => ({ name }))).map(d => d.name?.toLowerCase());
 
-                      const extraDocs = (selectedStudent.documents || []).filter(d => 
-                        !configuredNames.includes((d.name || '').toLowerCase())
+                      const extraGroups = groupStudentDocuments(selectedStudent.documents || []).filter(g =>
+                        !configuredNames.includes(String(g.name || '').toLowerCase())
                       );
 
-                      if (extraDocs.length === 0) return null;
+                      if (extraGroups.length === 0) return null;
 
                       return (
                         <div style={{ marginTop: '12px' }}>
                           <h5 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>Other Attachments</h5>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            {extraDocs.map((doc, idx) => {
-                              const docObj = typeof doc === 'object' && doc !== null ? doc : { name: String(doc) };
-                              return (
-                                <div key={idx} style={{ padding: '10px 14px', border: '1px solid var(--border-light)', borderRadius: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                  <div style={{ fontSize: '13px' }}>
-                                    <strong>{docObj.name || docObj.fileName || 'Attachment'}</strong>
-                                    {docObj.fileName && <span style={{ color: 'var(--text-secondary)', marginLeft: '8px', fontSize: '12px' }}>{docObj.fileName}</span>}
+                            {extraGroups.map((group) => (
+                              <div key={group.docTypeId || group.name} style={{ padding: '10px 14px', border: '1px solid var(--border-light)', borderRadius: '6px' }}>
+                                <div style={{ fontSize: '13px', fontWeight: 700, marginBottom: '4px' }}>{group.name}</div>
+                                {(group.files || []).map((file) => (
+                                  <div key={file.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', paddingTop: '4px', borderTop: '1px dashed var(--border-light)' }}>
+                                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.fileName}</span>
+                                    <button className="btn btn-secondary btn-sm" onClick={() => handleViewDocument(file)}>View File</button>
+                                    <button className="btn btn-ghost btn-sm" style={{ color: 'var(--status-error)' }} onClick={() => handleRemoveDocumentFile(group.docTypeId, file.id)}>Remove</button>
                                   </div>
-                                  {docObj.storageKey && (
-                                    <button className="btn btn-secondary btn-sm" onClick={() => handleViewDocument(docObj)}>
-                                      View File
-                                    </button>
-                                  )}
-                                </div>
-                              );
-                            })}
+                                ))}
+                              </div>
+                            ))}
                           </div>
                         </div>
                       );
@@ -2051,8 +2063,10 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                 <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }} onClick={() => setPreviewDoc(null)} title="Close"><X size={20} /></button>
               </div>
               <div style={{ textAlign: 'center', maxHeight: '65vh', overflowY: 'auto', background: '#f8fafc', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
-                {previewDoc.dataUrl?.startsWith('data:application/pdf') ? (
-                  <embed src={previewDoc.dataUrl} type="application/pdf" width="100%" height="450px" />
+                {isPdfAttachment({ name: previewDoc.fileName, type: previewDoc.fileType }) || previewDoc.dataUrl?.startsWith('data:application/pdf') ? (
+                  <object data={previewDoc.dataUrl} type="application/pdf" width="100%" height="450px" style={{ background: '#fff', borderRadius: 4 }}>
+                    <a href={previewDoc.dataUrl} target="_blank" rel="noreferrer">Open PDF</a>
+                  </object>
                 ) : (
                   <img src={previewDoc.dataUrl} alt={previewDoc.name} style={{ maxWidth: '100%', maxHeight: '450px', objectFit: 'contain', borderRadius: '4px' }} />
                 )}

@@ -66,8 +66,8 @@ test('Razorpay webhook rejects bad signatures and activates on valid payment_lin
   const event = {
     event: 'payment_link.paid',
     payload: {
-      payment_link: { entity: { id: 'plink_1', notes: { tenantId: 'lib-a', invoiceId: 'inv_test_1', interval: 'month', planId: 'pro' } } },
-      payment: { entity: { id: 'pay_1', amount: 99900, notes: { tenantId: 'lib-a', invoiceId: 'inv_test_1' } } },
+      payment_link: { entity: { id: 'plink_1', currency: 'INR', notes: { tenantId: 'lib-a', invoiceId: 'inv_test_1', interval: 'month', planId: 'pro' } } },
+      payment: { entity: { id: 'pay_1', amount: 99900, currency: 'INR', notes: { tenantId: 'lib-a', invoiceId: 'inv_test_1' } } },
     },
   };
   const raw = JSON.stringify(event);

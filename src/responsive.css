@@ -262,3 +262,26 @@ select.input-field { text-overflow: ellipsis; white-space: nowrap; overflow: hid
 .sp-grid .sp-full, .sp-grid > [style*="grid-column"] { grid-column: 1 / -1; }
 .sp-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 @media (max-width: 300px) { .sp-grid { grid-template-columns: 1fr; } }
+
+/* Issue #21 (iOS scroll lock): on phones the page scrolls as one normal document.
+   html/body/#root used overflow-x:hidden, which turns each of them into a scroll box, and the
+   content scrolled inside a nested 100dvh overflow:hidden shell. iOS Safari sends the swipe to
+   the outer boxes, which have nothing to scroll, so the screen felt locked. overflow-x:clip
+   still blocks sideways scrolling but is not a scroll box. The bottom bar stays position:fixed. */
+@media (max-width: 767px) {
+  html, body, #root { overflow-x: hidden; overflow-y: visible; }
+  @supports (overflow: clip) { html, body, #root { overflow-x: clip; } }
+  html, body { height: auto; overscroll-behavior-y: none; }
+  .lib-workspace, .app-container { height: auto !important; min-height: 100dvh; overflow: visible !important; }
+  .lib-workspace > div { min-height: 0; }
+  .page-body-wrapper, .page-scroller { overflow: visible !important; flex: 1 0 auto !important; }
+  .page-scroller { touch-action: pan-y pinch-zoom; }
+  header.glass-panel { position: sticky; top: 0; z-index: 100; }
+  /* "More" drawer: never taller than the space above the bottom bar, and scrolls inside. */
+  header.glass-panel:has(.header-nav.drawer-open) {
+    position: sticky; top: 0; z-index: 120;
+    max-height: calc(100dvh - 120px - env(safe-area-inset-bottom)); /* minus bottom bar (64px) and session bar (~48px) */
+    overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  }
+  .header-nav.drawer-open { max-height: none !important; overflow: visible !important; }
+}

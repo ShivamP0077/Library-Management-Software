@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-06 (IST)
+
+- **#21 iPhone scroll lock fix** — 11:40 IST. Cause: on phones `html`, `body` and `#root` had `overflow-x: hidden`, which makes each of them a scroll box, and the page content scrolled inside a second 100dvh `overflow: hidden` shell. iOS Safari hands the swipe to the outer boxes, which have nothing to scroll, so screens felt locked. The More drawer also grew under the fixed bottom bar inside that clipped shell, so its lower options could not be scrolled to or tapped. Fix (mobile ≤767px only, `src/responsive.css`): the page now scrolls as one normal document (`overflow-x: clip`, shells `height: auto`), header is sticky, the five bottom buttons stay `position: fixed` unchanged, and the open More drawer is capped above the bottom bar and scrolls inside. Tapping a More item now always closes the drawer (`Header.jsx`). Desktop layout unchanged.
+
 ## 2026-11-05 (IST)
 
 - **Release: merge `release/21-issues` → main** — 22:05 IST. Ships all 21 PDF issues plus #9 server price lock, #11 voided history kept, #14 subscription enforcement, #15 Google signup hooks, #19 Razorpay/PayPal provider config, #2 dry-run report script, and log redaction (PRs #30–#58). Public signup and live payments stay off until configured. No customer data deleted; no DB migration. Rollback: previous main `8bfcbaf`, Render `dep-dblj6og473hc73b9jur0`, Vercel `dpl_CBn2yBVCCdQRsoHJY1Pq83PLggtp`.

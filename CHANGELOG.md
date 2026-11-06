@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-06 (IST)
+
+- **Students: one selection flow (WhatsApp merged into Select Students)** — 12:30 IST. Cause: the WhatsApp work added an always-visible tick-box column on every student row, next to the original **Select Students** mode, so there were two ways to select. Now the boxes appear only after **Select Students** (as in the original design); in that mode tapping a row ticks it, and the one Bulk Actions bar holds Renew Selected, Send WhatsApp and Remove Selected. Outside the mode a row tap opens the profile. The single-student WhatsApp icon on each row stays. File: `src/components/StudentManager.jsx`.
+
 ## 2026-11-05 (IST)
 
 - **Release: merge `release/21-issues` → main** — 22:05 IST. Ships all 21 PDF issues plus #9 server price lock, #11 voided history kept, #14 subscription enforcement, #15 Google signup hooks, #19 Razorpay/PayPal provider config, #2 dry-run report script, and log redaction (PRs #30–#58). Public signup and live payments stay off until configured. No customer data deleted; no DB migration. Rollback: previous main `8bfcbaf`, Render `dep-dblj6og473hc73b9jur0`, Vercel `dpl_CBn2yBVCCdQRsoHJY1Pq83PLggtp`.

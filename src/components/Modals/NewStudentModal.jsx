@@ -1,3 +1,4 @@
+import { DocPreview } from '../DocPreview';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useLibrary } from '../../context/LibraryContext';
 import { X, UserPlus, ShieldAlert, AlertCircle, Clock, Check, RefreshCw } from 'lucide-react';
@@ -6,7 +7,10 @@ import toast from 'react-hot-toast';
 import { calculatePricing } from '../../utils/pricingCalculator';
 import { handleSplitAmountChange, handleAddSplitComponent, handleRemoveSplitComponent, validateSplitPayment } from '../../utils/splitPaymentUtils';
 import { calculateSubscriptionExpiry, formatDate } from '../../utils/dateUtils';
-import { saveDocumentBlob, deleteDocumentBlob } from '../../utils/idbStorage';
+import { saveDocumentBlobNow, deleteDocumentBlob, getDocumentBlob } from '../../utils/idbStorage';
+import { api } from '../../utils/api';
+import { uploadAttachmentFile, makeAttachmentKey } from '../../utils/attachmentUpload';
+import { allDocumentFiles, addFilesToDocuments, removeDocumentFile } from '../../utils/studentDocuments';
 
 const formatFileSize = (bytes) => {
   const size = Number(bytes);
@@ -17,13 +21,17 @@ const formatFileSize = (bytes) => {
 };
 
 import { getCanonicalShifts, isShiftInPlan } from '../../utils/shiftUtils';
+import { clientCanEditAmount } from '../../utils/amountPermission';
+import { cycleConfig, firstAdmissionCharge } from '../../utils/billingCycle';
 import { getCanonicalSeatTypes, areSeatTypesEquivalent } from '../../utils/seatTypeUtils';
 
 export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPayload }) => {
   const { 
     settings, branches, sections, plans, shifts, seatTypes, addStudent, students, archivedStudents, 
-    todayStr, getAvailableEligibleSeats, canAdmitStudent, addToWaitingList, getMatchingPlans, getUnsyncedShifts, getUnsyncedPlans
+    todayStr, getAvailableEligibleSeats, canAdmitStudent, addToWaitingList, getMatchingPlans, getUnsyncedShifts, getUnsyncedPlans,
+    currentStaff, lockedStaffId
   } = useLibrary();
+  const canEditAmount = clientCanEditAmount({ lockedStaffId, currentStaff, settings });
 
   const libId = settings.libraryId;
 
@@ -39,12 +47,19 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
 
   // Document Requirement State
   const [selectedDocType, setSelectedDocType] = useState(settings.allowedDocuments?.[0] || 'Aadhaar Card');
-  const [docFileAttached, setDocFileAttached] = useState(false);
-  const [docFileMeta, setDocFileMeta] = useState(null);
-  const [docFile, setDocFile] = useState(null);
+  // Issue #3: one group per document type, each with an additive files[] list.
+  const [docGroups, setDocGroups] = useState([]);
   const [isUploadingDoc, setIsUploadingDoc] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [submitDocLater, setSubmitDocLater] = useState(false);
   const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+  const lastSourceRef = useRef('upload'); // which picker was used, for Retake
+  const [previewUrls, setPreviewUrls] = useState({});
+  const [previewDoc, setPreviewDoc] = useState(null);
+  const [isDocPreviewOpen, setIsDocPreviewOpen] = useState(false);
+  const docFiles = useMemo(() => allDocumentFiles(docGroups), [docGroups]);
+  const docFileAttached = docFiles.length > 0;
 
   const selectedDocTypeObj = settings.documentTypes?.find(d => d.name === selectedDocType);
   const effectiveDocRequirement = selectedDocTypeObj?.requirement || settings.idProofRequirement || 'Required';
@@ -52,62 +67,72 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
 
   const resetFileInput = () => {
     if (fileInputRef.current) fileInputRef.current.value = '';
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
   };
 
-  const handleFileChange = (e) => {
-    const file = e.target.files?.[0];
+  const handleFileChange = async (e) => {
+    const files = Array.from(e.target.files || []);
+    lastSourceRef.current = e.target === cameraInputRef.current ? 'camera' : 'upload';
+    resetFileInput();
 
     // Cancelling the picker (or selecting nothing) must never mark a document as attached.
-    if (!file) {
-      resetFileInput();
-      return;
-    }
+    if (!files.length) return;
 
     setIsUploadingDoc(true);
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
+    setUploadProgress(0);
+    const added = [];
+    const urls = {};
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const storageKey = makeAttachmentKey('doc', `${libId}_${selectedDocType}_${Date.now()}_${i}_${Math.random()}`);
       try {
-        const base64Data = ev.target.result;
-        const storageKey = `doc_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-        await saveDocumentBlob(storageKey, base64Data);
-        setDocFileMeta({
-          id: storageKey,
-          name: selectedDocType,
-          fileName: file.name,
-          fileSize: file.size,
-          fileType: file.type,
-          storageKey,
-          uploadedAt: new Date().toISOString()
+        const meta = await uploadAttachmentFile({
+          file,
+          key: storageKey,
+          returnDataUrl: true,
+          onProgress: (p) => setUploadProgress(Math.round(((i + p / 100) / files.length) * 100)),
+          save: (key, data) => saveDocumentBlobNow(key, data, {
+            docTypeId: selectedDocType,
+            fileName: file.name,
+            fileType: file.type,
+            fileSize: file.size,
+            status: 'Submitted',
+          }),
         });
-        setDocFile(file);
-        setDocFileAttached(true);
-        setSubmitDocLater(false);
-        toast.success(`Attached ${file.name}`);
+        added.push({ ...meta, name: selectedDocType, docTypeId: selectedDocType, status: 'Submitted' });
+        if (meta.dataUrl) urls[meta.id] = meta.dataUrl;
+        delete meta.dataUrl;
       } catch (err) {
-        console.error('IDB document save failed:', err);
-        toast.error('Failed to attach document.');
-      } finally {
-        setIsUploadingDoc(false);
-        resetFileInput();
+        toast.error(err?.message || `Could not attach ${file.name}.`);
       }
-    };
-    reader.onerror = () => {
-      setIsUploadingDoc(false);
-      resetFileInput();
-      toast.error('Could not read file.');
-    };
-    reader.readAsDataURL(file);
+    }
+    if (added.length) {
+      setDocGroups(prev => addFilesToDocuments(prev, { name: selectedDocType, docTypeId: selectedDocType, files: added }));
+      setPreviewUrls(prev => ({ ...prev, ...urls }));
+      setSubmitDocLater(false);
+      toast.success(added.length === 1 ? `Attached ${added[0].fileName}` : `Attached ${added.length} files`);
+    }
+    setIsUploadingDoc(false);
+    setUploadProgress(0);
   };
 
-  const handleRemoveDoc = () => {
-    const storageKey = docFileMeta?.storageKey;
-    setDocFile(null);
-    setDocFileMeta(null);
-    setDocFileAttached(false);
-    resetFileInput();
-    if (storageKey) {
-      deleteDocumentBlob(storageKey).catch(() => {});
+  const handleRemoveDoc = (docKey, fileId) => {
+    setDocGroups(prev => removeDocumentFile(prev, docKey, fileId));
+    setPreviewUrls(prev => { const next = { ...prev }; delete next[fileId]; return next; });
+    if (previewDoc?.id === fileId) { setIsDocPreviewOpen(false); setPreviewDoc(null); }
+    if (fileId) deleteDocumentBlob(fileId).catch(() => {});
+  };
+
+  const openDocPreview = async (file, docTypeId) => {
+    let url = previewUrls[file.id];
+    if (!url) {
+      const stored = await getDocumentBlob(file.storageKey);
+      url = typeof stored === 'string' ? stored : (stored ? URL.createObjectURL(stored) : null);
+      if (url) setPreviewUrls(prev => ({ ...prev, [file.id]: url }));
     }
+    if (!url) { toast.error('Could not load this preview. Re-attach the file if needed.'); return; }
+    setPreviewDoc({ ...file, docTypeId: docTypeId || file.docTypeId, url });
+    setIsDocPreviewOpen(true);
   };
 
   // Hierarchy Selection
@@ -121,7 +146,11 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
   const [isManualDuration, setIsManualDuration] = useState(false);
 
   // Transaction-Level Pricing & Discount Overrides
-  const [baseAmount, setBaseAmount] = useState(0);
+  const [baseAmount, setBaseAmountRaw] = useState(0);
+  // Issue #9: remember the system amount so a manual change can be flagged (server checks permission + audits).
+  const [suggestedBase, setSuggestedBase] = useState(0);
+  const [proRateApplied, setProRateApplied] = useState(null);
+  const setBaseAmount = (v) => { setBaseAmountRaw(v); setSuggestedBase(v); setProRateApplied(null); };
   const [discountType, setDiscountType] = useState('None'); // 'None' | 'Percentage' | 'Fixed'
   const [discountValue, setDiscountValue] = useState(0);
   const [fine, setFine] = useState(0);
@@ -188,8 +217,8 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
     if (isOpen) {
       setName(''); setPhone(''); setEmergencyPhone(''); setGender('Male');
       setInternalNotes(''); setSubmitError(''); setIsCapacityFull(false);
-      setDocFileAttached(false); setDocFileMeta(null); setDocFile(null);
-      setIsUploadingDoc(false); setSubmitDocLater(false);
+      setDocGroups([]); setPreviewUrls({}); setPreviewDoc(null); setIsDocPreviewOpen(false);
+      setIsUploadingDoc(false); setUploadProgress(0); setSubmitDocLater(false);
       resetFileInput();
       
       const defaultB = branches[0]?.id || '';
@@ -407,7 +436,7 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
     onClose();
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!validate()) return;
 
@@ -419,10 +448,21 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
     const todayFormatted = formatDate(new Date());
     const calculatedExpiry = calculateSubscriptionExpiry(todayFormatted, durationMonths || 1);
 
-    const docRecord = docFileMeta || (docFileAttached ? {
-      name: selectedDocType,
-      uploadedAt: new Date().toISOString()
-    } : null);
+    const docRecords = docGroups.map((group) => {
+      const files = (group.files || []).map(({ dataUrl: _u, ...f }) => ({ ...f, name: group.name, docTypeId: group.docTypeId }));
+      const first = files[0] || {};
+      return {
+        name: group.name,
+        docTypeId: group.docTypeId,
+        files,
+        storageKey: first.storageKey || null,
+        fileName: first.fileName || null,
+        fileType: first.fileType || '',
+        fileSize: first.fileSize ?? null,
+        uploadedAt: first.uploadedAt || new Date().toISOString(),
+        status: first.status || 'Submitted',
+      };
+    });
 
     const studentData = {
       name: name.trim(),
@@ -438,19 +478,24 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
       seatNo: isFixed ? seatNo : 'Non-Fixed Seat',
       durationMonths: Number(durationMonths),
       amountPaid: Number(baseAmount),
+      suggestedAmount: Number(proRateApplied ? proRateApplied.amount : suggestedBase),
+      ...(Number(baseAmount) !== Number(proRateApplied ? proRateApplied.amount : suggestedBase) ? { amountEdited: true } : {}),
+      ...(proRateApplied ? { proRated: proRateApplied } : {}),
       discount: calculatedDiscount,
       fine: Number(fine),
       paymentMethod,
       breakdown: paymentMethod === 'Split' ? splitBreakdown : undefined,
       internalNotes,
-      documents: docRecord ? [docRecord] : [],
-      idProofStatus: submitDocLater ? 'Pending' : (docRecord ? 'Verified' : 'Not Required'),
+      documents: docRecords,
+      idProofStatus: submitDocLater ? 'Pending' : (docRecords.length ? 'Verified' : 'Not Required'),
       startDate: todayFormatted,
-      expiryDate: calculatedExpiry
+      expiryDate: proRateApplied ? proRateApplied.to : calculatedExpiry
     };
 
     const res = addStudent(studentData);
     if (res && res.student) {
+      // Claim the already-uploaded files for this student so a student-scoped fetch can verify ownership.
+      await Promise.all(docFiles.map((f) => api.updateDocumentMeta(f.storageKey, { studentId: res.student.id }).catch(() => {})));
       toast.success('Student admission completed successfully!');
       if (onPrintReceipt && res.receipt) {
         onPrintReceipt(res.receipt);
@@ -458,9 +503,6 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
       onClose();
     }
   };
-
-  const docFileName = docFile?.name || docFileMeta?.fileName || '';
-  const docFileSize = formatFileSize(docFile?.size ?? docFileMeta?.fileSize);
 
   if (!isOpen) return null;
 
@@ -572,38 +614,64 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                   >
                     {isUploadingDoc ? 'Attaching...' : (docFileAttached ? 'Replace' : 'Attach')}
                   </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ fontSize: '12px', border: '1px solid var(--border-light)', cursor: isUploadingDoc ? 'not-allowed' : 'pointer', opacity: isUploadingDoc ? 0.6 : 1, flexShrink: 0 }}
+                    onClick={() => cameraInputRef.current?.click()}
+                    disabled={isUploadingDoc}
+                    aria-label="Take photo with camera"
+                  >
+                    Camera
+                  </button>
                   <input
                     ref={fileInputRef}
                     type="file"
+                    multiple
                     style={{ display: 'none' }}
                     accept="image/*,.pdf"
                     onChange={handleFileChange}
                     disabled={isUploadingDoc}
                   />
+                  <input
+                    ref={cameraInputRef}
+                    type="file"
+                    style={{ display: 'none' }}
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handleFileChange}
+                    disabled={isUploadingDoc}
+                    data-testid="doc-camera-input"
+                  />
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginTop: '8px', minHeight: '18px' }}>
-                  <span
-                    style={{ fontSize: '11px', color: docFileAttached ? 'var(--text-primary)' : 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                    title={docFileAttached ? `${docFileName}${docFileSize ? ` (${docFileSize})` : ''}` : 'No file selected'}
-                  >
-                    {isUploadingDoc
-                      ? 'Reading file…'
-                      : docFileAttached
-                        ? `${docFileName}${docFileSize ? ` (${docFileSize})` : ''}`
-                        : 'No file selected'}
-                  </span>
-                  {docFileAttached && !isUploadingDoc && (
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      style={{ fontSize: '11px', padding: '2px 8px', color: 'var(--status-error)', flexShrink: 0 }}
-                      onClick={handleRemoveDoc}
-                    >
-                      Remove
-                    </button>
-                  )}
-                </div>
+                {isUploadingDoc && (
+                  <div style={{ marginTop: '8px' }}>
+                    <div style={{ height: 4, background: '#e2e8f0', borderRadius: 999, overflow: 'hidden' }}>
+                      <div style={{ width: `${uploadProgress}%`, height: '100%', background: '#2563eb', transition: 'width .2s ease' }} />
+                    </div>
+                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Uploading… {uploadProgress}%</span>
+                  </div>
+                )}
+
+                {!docFileAttached && !isUploadingDoc && (
+                  <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '8px' }}>No file selected</span>
+                )}
+
+                {docGroups.map((group) => (
+                  <div key={group.docTypeId || group.name} style={{ marginTop: '10px' }}>
+                    <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>{group.name} <span style={{ fontWeight: 400 }}>({group.files.length})</span></div>
+                    {group.files.map((file) => (
+                      <div key={file.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 0', borderTop: '1px dashed var(--border-light)' }}>
+                        <span style={{ flex: 1, minWidth: 0, fontSize: '11px', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={file.fileName}>
+                          {file.fileName}{file.fileSize ? ` (${formatFileSize(file.fileSize)})` : ''}
+                        </span>
+                        <button type="button" className="btn btn-ghost" style={{ fontSize: '11px', padding: '2px 8px' }} onClick={() => openDocPreview(file, group.docTypeId || group.name)}>Preview</button>
+                        <button type="button" className="btn btn-ghost" style={{ fontSize: '11px', padding: '2px 8px', color: 'var(--status-error)' }} onClick={() => handleRemoveDoc(group.docTypeId || group.name, file.id)}>Remove</button>
+                      </div>
+                    ))}
+                  </div>
+                ))}
 
                 {canSkipDocument && !docFileAttached && (
                   <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', marginTop: '8px', cursor: 'pointer', color: 'var(--text-secondary)' }}>
@@ -612,6 +680,16 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                   </label>
                 )}
                 {errors.document && <span style={{ color: '#ef4444', fontSize: '11px', display: 'block', marginTop: '4px' }}>{errors.document}</span>}
+                {isDocPreviewOpen && previewDoc && (
+                  <DocPreview
+                    src={previewDoc.url}
+                    name={`${previewDoc.docTypeId || selectedDocType}: ${previewDoc.fileName}`}
+                    fileType={previewDoc.fileType}
+                    onClose={() => setIsDocPreviewOpen(false)}
+                    onRemove={() => handleRemoveDoc(previewDoc.docTypeId, previewDoc.id)}
+                    onRetake={() => { setIsDocPreviewOpen(false); (lastSourceRef.current === 'camera' ? cameraInputRef : fileInputRef).current?.click(); }}
+                  />
+                )}
               </div>
 
               <div className="form-group" style={{ marginBottom: 0 }}>
@@ -820,11 +898,28 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                     <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>FEE & DISCOUNT</span>
                     <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>Overrides apply to this admission only</span>
                   </div>
+                  {(() => {
+                    const cfg = cycleConfig(settings);
+                    if (cfg.mode === 'ANNIVERSARY' || !plans.find(p => p.id === planId) || Number(durationMonths) !== 1) return null;
+                    const unit = Number(suggestedBase) / Math.max(1, Number(durationMonths) || 1);
+                    const pr = firstAdmissionCharge(unit, todayStr, cfg);
+                    if (!pr.prorated) return null;
+                    return (
+                      <div data-testid="prorate-box" style={{ fontSize: '12px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '8px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <span>Library cycle: first payment ₹{pr.amount.toLocaleString()} for {pr.days} of {pr.totalDays} days (to {pr.to}). Then full fee.</span>
+                        {proRateApplied ? (
+                          <button type="button" className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => setBaseAmount(Number(suggestedBase))}>Use full fee</button>
+                        ) : (
+                          <button type="button" className="btn btn-primary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => { setBaseAmountRaw(pr.amount); setProRateApplied({ ...pr, fullFee: Number(suggestedBase) }); }}>Use pro-rated</button>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                     <div>
                       <label className="form-label" style={{ fontSize: '11px' }}>Base Price (₹)</label>
-                      <NumericInput className="form-input" value={baseAmount} onChange={e => setBaseAmount(Number(e.target.value))} />
+                      <NumericInput className="form-input" value={baseAmount} readOnly={!canEditAmount} title={canEditAmount ? undefined : 'You do not have permission to change amounts'} onChange={e => canEditAmount && setBaseAmountRaw(Number(e.target.value))} />
                     </div>
 
                     <div>

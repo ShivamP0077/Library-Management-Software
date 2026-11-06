@@ -82,3 +82,57 @@ test('critical alerts go straight to Action Required; staff notices with attachm
   assert.ok((await call('GET', '/api/audit-logs', { token: A() })).body.some(l => l.action === 'notification.resolved'));
   assert.equal(await Notification.countDocuments({ tenantId: 'lib-b' }), 0);
 });
+
+const TINY_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+
+test('Issue #22: notices support multiple attachments, legacy shape, idempotent retry and limits', async () => {
+  const body = {
+    title: 'Multi attachment notice',
+    summary: 'Issue 22',
+    attachments: [
+      { name: 'one.png', data: TINY_PNG },
+      { name: 'two.png', data: TINY_PNG },
+    ],
+    clientRequestId: 'notice-multi-1',
+  };
+  const first = await call('POST', '/api/notices', { token: staffTok, body });
+  assert.equal(first.status, 201);
+  assert.equal(first.body.attachments.length, 2);
+  assert.equal(first.body.attachment.name, 'one.png', 'legacy single attachment mirrors the first file');
+
+  const retry = await call('POST', '/api/notices', { token: staffTok, body });
+  assert.ok([200, 201].includes(retry.status), String(retry.status));
+  assert.equal(retry.body.id, first.body.id, 'same clientRequestId returns the same notice');
+  const notices = (await call('GET', '/api/notifications?category=notices', { token: A() })).body.filter(n => n.title === 'Multi attachment notice');
+  assert.equal(notices.length, 1, 'retry does not duplicate the notice');
+
+  const own = (await call('GET', '/api/notifications?category=notices', { token: staffTok })).body.find(n => n.id === first.body.id);
+  assert.equal(own.attachments.length, 2);
+  const one = await call('GET', `/api/notifications/${first.body.id}/attachments/${first.body.attachments[0].id}`, { token: staffTok });
+  assert.equal(one.body.data, TINY_PNG);
+  const legacyRoute = await call('GET', `/api/notifications/${first.body.id}/attachment`, { token: staffTok });
+  assert.equal(legacyRoute.body.name, 'one.png');
+
+  const oldShape = await call('POST', '/api/notices', { token: staffTok, body: { title: 'Old shape notice', attachment: { name: 'old.png', data: TINY_PNG } } });
+  assert.equal(oldShape.status, 201);
+  assert.equal(oldShape.body.attachments.length, 1);
+  assert.equal(oldShape.body.attachment.name, 'old.png');
+
+  const tooMany = await call('POST', '/api/notices', { token: staffTok, body: { title: 'Too many files', attachments: Array.from({ length: 9 }, () => ({ name: 'x.png', data: TINY_PNG })) } });
+  assert.equal(tooMany.status, 400);
+  const tooBig = await call('POST', '/api/notices', { token: staffTok, body: { title: 'Too big file', attachments: [{ name: 'big.png', data: 'data:image/png;base64,' + 'A'.repeat(7 * 1024 * 1024) }] } });
+  assert.ok([400, 413].includes(tooBig.status), String(tooBig.status));
+});
+
+test('Issue #22: concurrent notice retries never create a duplicate; in-flight may ask for a retry', async () => {
+  const body = { title: 'Concurrent notice retry', attachments: [{ name: 'a.png', data: TINY_PNG }], clientRequestId: 'notice-race-1' };
+  const [one, two] = await Promise.all([
+    call('POST', '/api/notices', { token: staffTok, body }),
+    call('POST', '/api/notices', { token: staffTok, body }),
+  ]);
+  assert.ok([200, 201].includes(one.status), String(one.status));
+  assert.ok([200, 201, 409].includes(two.status), String(two.status));
+  if (two.status === 409) assert.equal(two.body.code, 'NOTICE_IN_FLIGHT');
+  const matches = (await call('GET', '/api/notifications?category=notices', { token: A() })).body.filter(n => n.title === 'Concurrent notice retry');
+  assert.equal(matches.length, 1);
+});

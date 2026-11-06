@@ -3,6 +3,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { setup, teardown, call, ctx, login } from './helpers.js';
 import { AuditLog } from '../src/audit.js';
+import { parseAttachments } from '../src/support.js';
 
 const A = () => ctx.tokens.a, B = () => ctx.tokens.b, SA = () => ctx.tokens.sa;
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
@@ -38,7 +39,8 @@ test('tenant isolation and staff see only their own tickets', async () => {
   assert.equal((await call('GET', '/api/support/tickets', { token: B() })).body.length, 0);
   assert.equal((await call('GET', `/api/support/tickets/${s.body.id}`, { token: B() })).status, 404);
   const b = await call('POST', '/api/support/tickets', { token: B(), body: { subject: 'Library B issue', message: 'x' } });
-  assert.equal(b.body.number, 1, 'numbering is per library');
+  // Issue #20: numbers are global (not per library), so B gets the next global number.
+  assert.equal(b.body.number, 3, 'numbering is global and chronological');
 });
 
 test('Super Admin desk: list all, reply, assign, status; customer sees reply and notification; audited', async () => {
@@ -85,4 +87,65 @@ test('exports: tenant-scoped, permissioned, formula-escaped, audited', async () 
   assert.equal((await call('GET', '/api/export/expenses.csv', { token: staffTok })).status, 403);
   assert.equal((await call('GET', '/api/export/secrets.csv', { token: A() })).status, 404);
   assert.ok(await AuditLog.findOne({ action: 'data.export', tenantId: 'lib-a', target: 'students' }));
+});
+
+test('Issue #20: replies are idempotent by clientMessageId and retry returns the whole ticket', async () => {
+  const created = await call('POST', '/api/support/tickets', { token: A(), body: { subject: 'Idempotent reply fixture', message: 'first' } });
+  assert.equal(created.status, 201);
+  const body = { message: 'please save exactly once', clientMessageId: 'cm-support-1' };
+  const [one, two] = await Promise.all([
+    call('POST', `/api/support/tickets/${created.body.id}/messages`, { token: A(), body }),
+    call('POST', `/api/support/tickets/${created.body.id}/messages`, { token: A(), body }),
+  ]);
+  assert.ok([200].includes(one.status), String(one.status));
+  assert.ok([200].includes(two.status), String(two.status));
+  const retry = await call('POST', `/api/support/tickets/${created.body.id}/messages`, { token: A(), body });
+  assert.equal(retry.status, 200);
+  assert.equal(retry.body.messages.filter(m => m.clientMessageId === 'cm-support-1').length, 1, 'no duplicate message subdocument');
+  assert.equal(retry.body.messages.length, 2, 'retry returns the existing entire ticket');
+});
+
+test('Issue #20: owner search works by subject and exact global number', async () => {
+  const created = await call('POST', '/api/support/tickets', { token: A(), body: { subject: 'Nebula unique search', message: 'find me' } });
+  assert.equal(created.status, 201);
+  const bySubject = (await call('GET', '/api/support/tickets?search=nebula', { token: A() })).body;
+  assert.deepEqual(bySubject.map(t => t.id), [created.body.id]);
+  const byNumber = (await call('GET', `/api/support/tickets?search=%23${created.body.number}`, { token: A() })).body;
+  assert.ok(byNumber.some(t => t.id === created.body.id), 'exact #number search');
+  assert.equal(byNumber.some(t => t.subject === 'Nebula unique search' && t.id !== created.body.id), false);
+});
+
+test('Issue #20: private internal notes are admin-only and never leak to the library', async () => {
+  const created = await call('POST', '/api/support/tickets', { token: A(), body: { subject: 'Internal note fixture', message: 'owner text' } });
+  const secret = 'INTERNAL-ONLY-private-note';
+  const added = await call('POST', `/api/admin/support/tickets/${created.body.id}/internal-notes`, { token: SA(), body: { body: secret } });
+  assert.equal(added.status, 201);
+  assert.equal(added.body.internalNotes[0].body, secret);
+  const adminView = await call('GET', `/api/admin/support/tickets/${created.body.id}`, { token: SA() });
+  assert.equal(adminView.body.internalNotes[0].body, secret);
+  const ownerView = await call('GET', `/api/support/tickets/${created.body.id}`, { token: A() });
+  assert.equal(ownerView.body.internalNotes, undefined);
+  assert.doesNotMatch(JSON.stringify(ownerView.body), /INTERNAL-ONLY-private-note/);
+  const ownerList = await call('GET', '/api/support/tickets', { token: A() });
+  assert.doesNotMatch(JSON.stringify(ownerList.body), /INTERNAL-ONLY-private-note/);
+  // Another library still cannot see the ticket at all.
+  assert.equal((await call('GET', `/api/support/tickets/${created.body.id}`, { token: B() })).status, 404);
+});
+
+test('Issue #20: 100 concurrent creates allocate safe, unique, consecutive global numbers', async () => {
+  const attempts = 100;
+  const results = await Promise.all(Array.from({ length: attempts }, (_, i) =>
+    call('POST', '/api/support/tickets', { token: i % 2 ? A() : B(), body: { subject: `Concurrent ticket ${i}`, message: 'x' } })
+  ));
+  assert.ok(results.every(r => r.status === 201), JSON.stringify(results.filter(r => r.status !== 201).slice(0, 3)));
+  const numbers = results.map(r => r.body.number).sort((a, b) => a - b);
+  assert.equal(new Set(numbers).size, attempts, 'all ticket numbers are unique');
+  assert.equal(numbers[numbers.length - 1], numbers[0] + attempts - 1, 'allocated numbers are consecutive');
+  const dup = numbers.filter((n, i) => i && n === numbers[i - 1]);
+  assert.equal(dup.length, 0);
+});
+
+// Boundary checks for the full uploaded transfer, not decoded content alone.
+test('parseAttachments rejects a multi-file transfer above the 8 MB decoded limit', () => {
+  assert.throws(() => parseAttachments([{ name: 'a.pdf', type: 'application/pdf', data: 'data:application/pdf;base64,' + Buffer.alloc(4.5 * 1024 * 1024).toString('base64') }, { name: 'b.pdf', type: 'application/pdf', data: 'data:application/pdf;base64,' + Buffer.alloc(4 * 1024 * 1024).toString('base64') }]), (e) => e.status === 413 && e.code === 'SUPPORT_TOTAL_TOO_LARGE');
 });

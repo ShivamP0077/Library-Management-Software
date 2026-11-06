@@ -18,6 +18,7 @@ import {
   X,
   RefreshCw,
   LifeBuoy,
+  MessageCircle,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
@@ -50,6 +51,9 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
     }
   };
 
+  // Same rule as the server's canManageWhatsapp (owner, Admin/Manager, or settings manage/edit).
+  const canManageWhatsapp = !currentStaff || currentStaff.role === 'Admin' || currentStaff.role === 'Manager' || hasPermission('settings', 'manage') || hasPermission('settings', 'edit');
+
   const tabs = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'students', label: 'Students', icon: Users },
@@ -57,12 +61,14 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
     { id: 'payments', label: 'Payments & Fees', icon: CreditCard },
     { id: 'expenses', label: 'Expenses', icon: Receipt },
     { id: 'reports', label: 'Reports & P&L', icon: BarChart3 },
+    { id: 'whatsapp', label: 'WhatsApp', icon: MessageCircle },
     { id: 'settings', label: 'Library Settings', icon: Settings },
     { id: 'support', label: 'Help & Support', icon: LifeBuoy }
   ];
 
   const visibleTabs = tabs.filter(t => {
     if (t.id === 'dashboard' || t.id === 'support') return true;
+    if (t.id === 'whatsapp') return canManageWhatsapp;
     return hasPermission(t.id, 'view');
   });
 
@@ -191,7 +197,7 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
             <button
               key={t.id}
               id={`nav-tab-${t.id}`}
-              onClick={() => setActiveTab(t.id)}
+              onClick={() => { setDrawerOpen(false); setActiveTab(t.id); }}
               style={{
                 position: 'relative',
                 display: 'flex',

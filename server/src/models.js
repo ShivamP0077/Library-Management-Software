@@ -14,10 +14,18 @@ export const Library = mongoose.model('Library', new mongoose.Schema({
   name: { type: String, required: true, trim: true },
   status: { type: String, enum: ['Active', 'Disabled'], default: 'Active' },
   contactEmail: { type: String, trim: true, lowercase: true },
+  phone: { type: String, trim: true, default: null },
+  address: { type: String, trim: true, default: null },
+  referralCode: { type: String, trim: true, unique: true, sparse: true, index: true },
+  referredByCode: { type: String, trim: true, default: null },
   createdBy: String,
   isDefault: { type: Boolean, default: false },
   city: { type: String, trim: true, default: null }, // used for Library Insights location filters
   studentLimit: { type: Number, default: null }, // active + expired cap (null = unlimited)
+  planId: { type: String, default: null }, // Issue #14: software plan (limits come from it unless overridden)
+  subscription: { type: mongoose.Schema.Types.Mixed, default: null }, // Issues #15/#19: { planId, interval, status, price, trialEndsAt, currentPeriodEnd, cancelAtPeriodEnd, pendingPlanId }
+  signupAt: { type: Date, default: null },
+  deletionRequest: { type: mongoose.Schema.Types.Mixed, default: null }, // Issue #19: owner asked for deletion; Super Admin decides
 }, { timestamps: true }));
 
 export const ROLES = ['superadmin', 'client_admin', 'staff', 'partner', 'agent'];
@@ -31,7 +39,13 @@ export const isPlatformRole = (role) => PLATFORM_ROLES.includes(role);
  * mirror so older documents keep working during migration.
  */
 const userSchema = new mongoose.Schema({
-  email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+  // Email is optional for mobile-only owners; at least one verified identifier is required.
+  email: { type: String, lowercase: true, trim: true, required: function () { return !this.mobile; } }, // unique+sparse index below
+  mobile: { type: String, trim: true },
+  emailVerified: { type: Boolean, default: true }, // admin/legacy accounts keep working
+  mobileVerified: { type: Boolean, default: false },
+  pendingEmail: { type: String, lowercase: true, trim: true, default: null },
+  pendingMobile: { type: String, trim: true, default: null },
   name: { type: String, trim: true, default: '' },
   passwordHash: { type: String, select: false }, // optional: Google-only accounts have none
   role: { type: String, enum: ROLES, required: true },
@@ -50,16 +64,18 @@ const userSchema = new mongoose.Schema({
   googleSub: { type: String, index: true, sparse: true },
   authProviders: { type: [String], default: [] }, // e.g. ['password', 'google']
 }, { timestamps: true });
+userSchema.index({ email: 1 }, { unique: true, sparse: true });
+userSchema.index({ mobile: 1 }, { unique: true, sparse: true });
 // Keep the legacy libraryId mirror in sync when only one of the two is supplied.
 userSchema.pre('validate', function syncTenantFields() {
   if (!this.tenantId && this.libraryId) this.tenantId = this.libraryId;
   if (!this.libraryId && this.tenantId) this.libraryId = this.tenantId;
 });
 userSchema.methods.toSafeJSON = function () {
-  const { _id, email, name, role, staffId, status, lastLoginAt, createdAt, authProviders } = this;
+  const { _id, email, mobile, emailVerified, mobileVerified, name, role, staffId, status, lastLoginAt, createdAt, authProviders } = this;
   const tenantId = this.tenantId || this.libraryId || null;
   // Both fields are exposed for compatibility; the frontend still reads libraryId.
-  return { id: String(_id), email, name, role, libraryId: tenantId, tenantId, staffId: staffId || null, status, lastLoginAt, createdAt, authProviders };
+  return { id: String(_id), email: email || null, mobile: mobile || null, emailVerified: emailVerified !== false, mobileVerified: mobileVerified === true, name, role, libraryId: tenantId, tenantId, staffId: staffId || null, status, lastLoginAt, createdAt, authProviders };
 };
 export const User = mongoose.model('User', userSchema);
 
@@ -120,8 +136,21 @@ const docSchema = new mongoose.Schema({
   libraryId: String, // legacy mirror of tenantId (rollback only, never queried)
   storageKey: { type: String, required: true },
   data: { type: String, required: true },
+  // Issue #3 metadata. Optional so pre-existing uploads keep working.
+  studentId: { type: String, index: true },
+  docTypeId: String,
+  fileName: String,
+  fileType: String,
+  fileSize: Number,
+  status: String,
+  uploadedAt: Date,
+  createdBy: String,
+  // Issue #3/#16 retention: retired files stay recoverable for 30 days, then the job purges them.
+  retiredAt: { type: Date, default: null, index: true },
+  purgeAfter: { type: Date, default: null, index: true },
 }, { timestamps: true });
 docSchema.index({ tenantId: 1, storageKey: 1 }, { unique: true, partialFilterExpression: { tenantId: { $type: 'string' } } });
+docSchema.index({ tenantId: 1, studentId: 1, retiredAt: 1 });
 docSchema.plugin(tenantGuard);
 export const StudentDocument = applyBulkWriteGuard(mongoose.model('StudentDocument', docSchema));
 

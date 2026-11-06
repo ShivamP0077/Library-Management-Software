@@ -1,9 +1,14 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   MessageCircle, QrCode, LogOut, RefreshCw, CheckCircle2, Smartphone
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { api } from '../utils/api';
+import { api, getToken } from '../utils/api';
+import { refreshWhatsappStatus } from '../utils/whatsappStatus';
+import { friendlyWhatsappError, isWakingError } from '../utils/whatsappErrors';
+
+const AUTO_RETRY_MAX = 3;
+const AUTO_RETRY_MS = 15000;
 
 const DEFAULT_TOGGLES = {
   enabled: true,
@@ -102,6 +107,9 @@ const WhatsAppSettingsInner = () => {
   const [busy, setBusy] = useState(null); // 'connect' | 'refresh' | 'logout'
   const [savingSettings, setSavingSettings] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const [waking, setWaking] = useState(false);
+  const autoRetries = useRef(0);
+  const retryTimer = useRef(null);
 
   // Initial status load (also used by the Retry button).
   useEffect(() => {
@@ -124,19 +132,29 @@ const WhatsAppSettingsInner = () => {
           setQrExpired(false);
         }
       } catch (err) {
-        if (active) setError(err);
+        if (!active) return;
+        // Issue #18: while the WhatsApp service is waking up (429/503), retry by itself a few times.
+        if (isWakingError(err) && autoRetries.current < AUTO_RETRY_MAX) {
+          autoRetries.current += 1;
+          setWaking(true);
+          retryTimer.current = setTimeout(() => setReloadKey(k => k + 1), AUTO_RETRY_MS);
+          return;
+        }
+        setWaking(false);
+        setError(err);
       } finally {
         if (active) setLoading(false);
       }
     })();
-    return () => { active = false; };
+    return () => { active = false; clearTimeout(retryTimer.current); };
   }, [reloadKey]);
 
-  // Poll the connection state while the user is scanning a QR code.
+  // Poll the connection state while the user is scanning a QR code (paused in hidden tabs).
   useEffect(() => {
     if (status?.state !== 'connecting' || qrExpired) return;
     let cancelled = false;
     const poll = async () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       try {
         const data = await api.whatsappStatus();
         if (cancelled) return;
@@ -147,7 +165,7 @@ const WhatsAppSettingsInner = () => {
           setPairingCode(null);
           setQrDeadline(null);
           setQrExpired(false);
-          toast.success('WhatsApp connected.');
+          toast.success('WhatsApp connected.'); refreshWhatsappStatus();
         }
       } catch {
         // Transient polling errors are ignored; the next tick retries.
@@ -176,28 +194,34 @@ const WhatsAppSettingsInner = () => {
         setPairingCode(null);
         setQrDeadline(null);
         setQrExpired(false);
-        toast.success('WhatsApp connected.');
+        toast.success('WhatsApp connected.'); refreshWhatsappStatus();
         return;
       }
       setStatus(prev => ({ ...(prev || {}), ...data, state: 'connecting' }));
       setQr(data?.qr || null);
       setPairingCode(data?.pairingCode || null);
       // Automatic refreshes keep the original 3-minute connection window; a
-      // manual refresh or a new connection starts a fresh window.
-      if (extend) setQrDeadline(Date.now() + QR_TTL_MS);
+      // manual refresh or a new connection starts a fresh window. The server's
+      // explicit expiry wins when it sends one.
+      const serverExpiry = data?.qrExpiresAt ? Date.parse(data.qrExpiresAt) : NaN;
+      if (Number.isFinite(serverExpiry)) setQrDeadline(serverExpiry);
+      else if (extend) setQrDeadline(Date.now() + QR_TTL_MS);
       else setQrDeadline(prev => prev || Date.now() + QR_TTL_MS);
       if (extend) setQrExpired(false);
     } catch (err) {
-      toast.error(err?.message || 'Could not connect to WhatsApp.');
+      toast.error(friendlyWhatsappError(err, 'Could not connect to WhatsApp.'));
     } finally {
       setBusy(null);
     }
   }, []);
 
-  // Refresh the QR code automatically every 40 seconds while connecting.
+  // Refresh the QR code automatically every 40 seconds while connecting (paused in hidden tabs).
   useEffect(() => {
     if (status?.state !== 'connecting' || qrExpired) return;
-    const interval = setInterval(() => { requestQr({ refresh: true, extend: false }); }, QR_REFRESH_MS);
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      requestQr({ refresh: true, extend: false });
+    }, QR_REFRESH_MS);
     return () => clearInterval(interval);
   }, [status?.state, qrExpired, requestQr]);
 
@@ -211,7 +235,7 @@ const WhatsAppSettingsInner = () => {
       setPairingCode(null);
       setQrDeadline(null);
       setQrExpired(false);
-      toast.success('WhatsApp disconnected.');
+      toast.success('WhatsApp disconnected.'); refreshWhatsappStatus();
     } catch (err) {
       toast.error(err?.message || 'Could not log out of WhatsApp.');
     } finally {
@@ -241,7 +265,12 @@ const WhatsAppSettingsInner = () => {
   const meta = status || {};
 
   const renderBody = () => {
-    if (loading) {
+    if (loading || waking) {
+      if (waking && !loading) return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '20px 0', color: 'var(--text-secondary)', fontSize: '14px' }}>
+          <Smartphone size={18} /> WhatsApp service is waking up. Trying again…
+        </div>
+      );
       return (
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '20px 0', color: 'var(--text-secondary)', fontSize: '14px' }}>
           <Smartphone size={18} /> Loading WhatsApp status…
@@ -253,7 +282,7 @@ const WhatsAppSettingsInner = () => {
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '8px 0' }}>
           <p style={{ fontSize: '14px', color: '#b91c1c', margin: 0 }}>
-            {error.message || 'Could not load WhatsApp status.'}
+            {friendlyWhatsappError(error, 'Could not load WhatsApp status.')}
           </p>
           {error.status === 503 && (
             <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0 }}>
@@ -261,7 +290,7 @@ const WhatsAppSettingsInner = () => {
             </p>
           )}
           <div>
-            <button type="button" className="btn btn-primary" onClick={() => setReloadKey(k => k + 1)}>
+            <button type="button" className="btn btn-primary" onClick={() => { autoRetries.current = 0; setReloadKey(k => k + 1); }}>
               <RefreshCw size={15} /> Retry
             </button>
           </div>
@@ -462,7 +491,7 @@ const WhatsAppSettingsInner = () => {
             onChange={(value) => handleToggle('otp', value)}
           />
 
-          {(toggles.feeReminders || toggles.expiryReminders) && <ReminderTiming />}
+          {(toggles.feeReminders || toggles.expiryReminders) && <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '8px 0 0' }}>Reminder timing is under <strong>Auto reminders</strong>.</p>}
 
           <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '12px 0 0 0' }}>
             Messages are sent only to students who have not opted out, and are prefixed with your library name.
@@ -475,7 +504,7 @@ const WhatsAppSettingsInner = () => {
 
 
 /** Reminder timing (spec §6): when expiry & fee reminders go out, plus recent reminder log. */
-const ReminderTiming = () => {
+export const ReminderTiming = () => {
   const [cfg, setCfg] = React.useState(null);
   const [log, setLog] = React.useState([]);
   const [saving, setSaving] = React.useState(false);
@@ -487,13 +516,14 @@ const ReminderTiming = () => {
   const set = (k) => (e) => setCfg(c => ({ ...c, [k]: e.target.value === '' ? null : Number(e.target.value) }));
   const save = async () => {
     setSaving(true);
-    try { setCfg(await api.saveReminderSettings(cfg)); toast.success('Reminder timing saved'); }
+    try { const { rules: _r, ...timing } = cfg; setCfg(await api.saveReminderSettings(timing)); toast.success('Reminder timing saved'); }
     catch (e) { toast.error(e.message || 'Could not save'); } finally { setSaving(false); }
   };
   const field = { display: 'grid', gap: 4, fontSize: 13, color: 'var(--text-secondary)', minWidth: 0 };
   return (
-    <div id="reminder-timing" style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-light)', display: 'grid', gap: 10 }}>
-      <strong style={{ fontSize: 14 }}>Reminder timing</strong>
+    <div id="reminder-timing" style={{ display: 'grid', gap: 10 }}>
+      <strong style={{ fontSize: 14 }}>{cfg.rules?.length ? 'Fee repeat timing' : 'Reminder timing'}</strong>
+      {cfg.rules?.length > 0 && <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>Your reminder rules above replace the expiry timing here. Fee repeats still use these settings.</p>}
       <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
         <label style={field}>Expiry: days before end<input className="form-input" type="number" min={0} max={30} value={cfg.expiryDaysBefore ?? ''} onChange={set('expiryDaysBefore')} /></label>
         <label style={field}>Or fixed day of month (1–28)<input className="form-input" type="number" min={1} max={28} placeholder="Off" value={cfg.expiryFixedDay ?? ''} onChange={set('expiryFixedDay')} /></label>
@@ -507,7 +537,7 @@ const ReminderTiming = () => {
           <strong style={{ fontSize: 13 }}>Recent reminders</strong>
           {log.map(r => (
             <div key={r.id} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', color: 'var(--text-secondary)' }}>
-              <span>{r.sendOn}</span><span>{r.type === 'fee_reminder' ? 'Fee' : 'Expiry'}</span><span>student {r.studentId}</span>
+              <span>{r.sendOn}</span><span>{r.type === 'fee_reminder' ? 'Fee' : 'Expiry'}{r.ruleId ? ' (rule)' : ''}</span><span>student {r.studentId}</span>
               <span style={{ fontWeight: 600 }}>{r.status}{r.reason ? ` (${r.reason})` : ''}</span>
             </div>
           ))}
@@ -526,6 +556,21 @@ export const WhatsAppSettings = ({ canManage }) => {
           <h3 style={{ fontSize: '16px', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>WhatsApp</h3>
           <p style={{ fontSize: '14px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
             You don't have permission to manage WhatsApp.
+          </p>
+        </div>
+      </div>
+    );
+  }
+  // WhatsApp runs through the cloud backend, so it needs a signed-in session.
+  // In Local Offline Mode there is no token and every call would fail with 401.
+  if (!getToken()) {
+    return (
+      <div className="premium-card" style={{ padding: '20px', display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+        <MessageCircle size={20} color="var(--text-secondary)" style={{ flexShrink: 0, marginTop: '2px' }} />
+        <div>
+          <h3 style={{ fontSize: '16px', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>WhatsApp</h3>
+          <p style={{ fontSize: '14px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
+            WhatsApp needs a cloud account. Tap "Connect / Sign In" at the top and sign in to connect your WhatsApp number.
           </p>
         </div>
       </div>

@@ -1,9 +1,153 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { getDocumentBlob } from '../../utils/idbStorage';
+import { findPhotoDoc } from '../../utils/studentPhoto';
+import { receiptView, money } from '../../utils/receipt';
 import { useLibrary } from '../../context/LibraryContext';
 import { Printer, X } from 'lucide-react';
 
+
+// One receipt. Used on screen and twice on the printed A4 sheet (issue #12).
+const ReceiptBody = ({ receipt, settings, branch, photo, copyLabel, view }) => {
+  const v = view || receiptView(receipt, { branch, settings });
+  const stateColor = { paid: '#15803d', partial: '#b45309', unpaid: '#b91c1c', void: '#475569', failed: '#b91c1c' }[v.state.tone] || '#334155';
+  return (
+    <div className="printable-receipt" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+      
+      {/* Header / Library Details */}
+      <div style={{ textAlign: 'center', borderBottom: '2px dashed #333', paddingBottom: '0.75rem', position: 'relative' }}>
+        {copyLabel && <div className="receipt-copy-label" style={{ position: 'absolute', right: 0, top: 0, fontSize: '0.625rem', fontWeight: 700, border: '1px solid #000', padding: '1px 6px', borderRadius: 3 }}>{copyLabel}</div>}
+        <div style={{ fontSize: '1.75rem', marginBottom: '0.15rem' }}>{settings.logo}</div>
+        <h2 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0, color: '#000000' }}>{settings.name}</h2>
+        <div style={{ fontSize: '0.6875rem', color: '#444444', marginTop: '0.15rem' }}>{branch?.address || settings.address}</div>
+        <div style={{ fontSize: '0.6875rem', color: '#444444' }}>Phone: {settings.phone} | GST: {settings.taxId}</div>
+        <div style={{ marginTop: '0.4rem' }}>
+          <span style={{ display: 'inline-block', border: `1px solid ${stateColor}`, color: stateColor, borderRadius: 999, padding: '1px 9px', fontSize: '0.625rem', fontWeight: 800, letterSpacing: '0.04em' }}>{v.state.label}</span>
+        </div>
+      </div>
+
+      {/* Receipt Meta */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '0.75rem', borderBottom: '1px solid #ddd', paddingBottom: '0.45rem' }}>
+        <div>
+          <div><strong>RECEIPT NO:</strong> {receipt.receiptNo || '—'}</div>
+          <div><strong>DATE:</strong> {receipt.date || '—'}</div>
+          <div><strong>PERIOD:</strong> {v.period.start || '—'} to {v.period.end || '—'}</div>
+          <div><strong>NEXT DUE:</strong> {v.period.nextDue || '—'}</div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div><strong>BRANCH:</strong> {receipt.branchName || v.branchName || (branch ? branch.name : (settings.name || 'Main Branch'))}</div>
+          <div><strong>Operator (staff):</strong> {v.operator}</div>
+        </div>
+      </div>
+
+      {/* Student Info */}
+      <div style={{ background: '#f8fafc', padding: '0.75rem', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '0.8125rem', display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+        {photo && <img src={photo} alt="Student photo" className="receipt-photo" style={{ width: 64, height: 76, objectFit: 'cover', borderRadius: 4, border: '1px solid #cbd5e1', flexShrink: 0 }} />}
+        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 800, fontSize: '0.9375rem', color: '#000' }}>STUDENT: {receipt.studentName || '—'}</div>
+        <div>STUDENT ID: <strong>{receipt.studentId || '—'}</strong></div>
+        <div>SEAT NO: <strong>{receipt.seatNo || receipt.seatName || "Non-Fixed / Not Assigned"}</strong></div>
+        <div>PLAN: {receipt.planName || '—'}</div>
+        {v.period.nextDue && <div>NEXT DUE: <strong>{v.period.nextDue}</strong></div>}
+        {receipt.method === 'Split' && receipt.breakdown ? (
+          <div>
+            PAYMENT MODE: <strong style={{color: '#15803d'}}>SPLIT</strong>
+            {receipt.breakdown.map((b, i) => (
+              <div key={i} style={{ fontSize: '0.625rem', color: '#666', marginTop: '2px', paddingLeft: '8px' }}>
+                ↳ {b.method}: ₹{b.amount}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div>PAYMENT MODE: <strong>{receipt.method || '—'}</strong></div>
+        )}
+        </div>
+      </div>
+
+      {/* Itemized Table */}
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem', marginTop: '0.5rem' }}>
+        <thead>
+          <tr style={{ borderBottom: '2px solid #000', textAlign: 'left' }}>
+            <th style={{ padding: '0.5rem 0' }}>DESCRIPTION</th>
+            <th style={{ padding: '0.5rem 0', textAlign: 'right' }}>AMOUNT</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style={{ padding: '0.5rem 0' }}>Subscription Base Fee</td>
+            <td style={{ padding: '0.5rem 0', textAlign: 'right' }}>₹{receipt.amount || receipt.netTotal}</td>
+          </tr>
+          {receipt.discount > 0 && (
+            <tr>
+              <td style={{ padding: '0.25rem 0', color: '#16a34a' }}>Concession / Discount</td>
+              <td style={{ padding: '0.25rem 0', textAlign: 'right', color: '#16a34a' }}>- ₹{receipt.discount}</td>
+            </tr>
+          )}
+          {receipt.fine > 0 && (
+            <tr>
+              <td style={{ padding: '0.25rem 0', color: '#dc2626' }}>Late Fine / Reg Charge</td>
+              <td style={{ padding: '0.25rem 0', textAlign: 'right', color: '#dc2626' }}>+ ₹{receipt.fine}</td>
+            </tr>
+          )}
+          <tr style={{ borderTop: '2px solid #000', fontWeight: 800, fontSize: '0.9rem' }}>
+            <td style={{ padding: '0.55rem 0' }}>{v.state.settled ? 'NET TOTAL PAID' : 'NET TOTAL'}</td>
+            <td style={{ padding: '0.55rem 0', textAlign: 'right' }}>{money(v.amounts.netTotal)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* UPI QR & Footer */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px dashed #333', paddingTop: '1rem', marginTop: '0.5rem' }}>
+        <div style={{ fontSize: '0.6875rem', color: '#555', maxWidth: '300px' }}>
+          <p style={{ fontWeight: 700, margin: '0 0 0.25rem 0' }}>Terms & Conditions:</p>
+          <p style={{ margin: 0 }}>{settings.receiptFooter}</p>
+        </div>
+
+        {settings.upiQrUrl && (
+          <div style={{ textAlign: 'center' }}>
+            <img src={settings.upiQrUrl} alt="UPI QR Code" style={{ width: '65px', height: '65px', borderRadius: '4px' }} />
+            <div style={{ fontSize: '0.625rem', color: '#666', marginTop: '0.125rem' }}>Pay via UPI</div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ textAlign: 'center', fontSize: '0.625rem', color: '#888', marginTop: '0.25rem' }}>
+        *** Computer Generated Official Tax Invoice & Receipt ***
+      </div>
+      <div style={{ textAlign: 'center', fontSize: '0.625rem', color: '#64748b', fontWeight: 600 }}>
+        Powered by Library OS
+      </div>
+
+    </div>
+  );
+};
+
 export const PrintReceiptModal = ({ receipt, onClose }) => {
-  const { settings, branches } = useLibrary();
+  const { settings, branches, students } = useLibrary();
+  const [photo, setPhoto] = useState(null);
+  const [scale, setScale] = useState(1);
+  const sheetRef = useRef(null);
+
+  // Photo, if the student has one (issue #12).
+  useEffect(() => {
+    let alive = true; setPhoto(null);
+    const st = receipt && (students || []).find(s => s.id === receipt.studentId || s.studentId === receipt.studentId);
+    const doc = findPhotoDoc(st);
+    if (doc) getDocumentBlob(doc.storageKey, { studentId: st?.id }).then(d => {
+      if (!alive || !d) return;
+      setPhoto(typeof d === 'string' ? d : URL.createObjectURL(d));
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [receipt, students]);
+
+  // Fit each copy inside its half of the A4 sheet (A5 area): shrink only, never enlarge.
+  useLayoutEffect(() => {
+    const el = sheetRef.current?.querySelector('.rc-measure');
+    if (!el) return;
+    const mm = el.offsetWidth / 194; // px per mm (measure box is 194mm wide, unscaled)
+    const avail = 132 * mm;           // 148.5mm half page minus padding
+    setScale(Math.min(1, avail / el.scrollHeight));
+  }, [receipt, photo, settings]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -18,6 +162,8 @@ export const PrintReceiptModal = ({ receipt, onClose }) => {
   if (!receipt) return null;
 
   const branch = branches.find(b => b.id === receipt.branchId) || (receipt.branchName ? { name: receipt.branchName, code: receipt.branchCode || 'BR' } : branches[0]);
+  const receiptStudent = (students || []).find(s => s.id === receipt.studentId || s.studentId === receipt.studentId);
+  const view = receiptView(receipt, { student: receiptStudent, branch, settings });
 
   const handlePrint = () => {
     window.print();
@@ -47,102 +193,23 @@ export const PrintReceiptModal = ({ receipt, onClose }) => {
         {/* Printable Receipt Paper Container */}
         <div className="modal-body" style={{ background: '#ffffff', color: '#000000', borderRadius: 'var(--radius-md)', padding: '2rem' }}>
           
-          <div className="printable-receipt" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            
-            {/* Header / Library Details */}
-            <div style={{ textAlign: 'center', borderBottom: '2px dashed #333', paddingBottom: '1rem' }}>
-              <div style={{ fontSize: '2rem', marginBottom: '0.25rem' }}>{settings.logo}</div>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0, color: '#000000' }}>{settings.name}</h2>
-              <div style={{ fontSize: '0.75rem', color: '#444444', marginTop: '0.25rem' }}>{branch?.address || settings.address}</div>
-              <div style={{ fontSize: '0.75rem', color: '#444444' }}>Phone: {settings.phone} | GST: {settings.taxId}</div>
-            </div>
-
-            {/* Receipt Meta */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8125rem', borderBottom: '1px solid #ddd', paddingBottom: '0.5rem' }}>
-              <div>
-                <div><strong>RECEIPT NO:</strong> {receipt.receiptNo}</div>
-                <div><strong>DATE:</strong> {receipt.date}</div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <div><strong>BRANCH:</strong> {receipt.branchName || (branch ? branch.name : (settings.name || 'Main Branch'))}</div>
-                <div><strong>STAFF:</strong> {receipt.staffName || 'Admin'}</div>
-              </div>
-            </div>
-
-            {/* Student Info */}
-            <div style={{ background: '#f8fafc', padding: '0.75rem', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '0.8125rem' }}>
-              <div style={{ fontWeight: 800, fontSize: '0.9375rem', color: '#000' }}>STUDENT: {receipt.studentName}</div>
-              <div>STUDENT ID: <strong>{receipt.studentId}</strong></div>
-              <div>SEAT NO: <strong>{receipt.seatNo || receipt.seatName || "Non-Fixed / Not Assigned"}</strong></div>
-              <div>PLAN: {receipt.planName}</div>
-              {receipt.method === 'Split' && receipt.breakdown ? (
-                <div>
-                  PAYMENT MODE: <strong style={{color: '#15803d'}}>SPLIT</strong>
-                  {receipt.breakdown.map((b, i) => (
-                    <div key={i} style={{ fontSize: '0.625rem', color: '#666', marginTop: '2px', paddingLeft: '8px' }}>
-                      ↳ {b.method}: ₹{b.amount}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div>PAYMENT MODE: <strong>{receipt.method}</strong></div>
-              )}
-            </div>
-
-            {/* Itemized Table */}
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem', marginTop: '0.5rem' }}>
-              <thead>
-                <tr style={{ borderBottom: '2px solid #000', textAlign: 'left' }}>
-                  <th style={{ padding: '0.5rem 0' }}>DESCRIPTION</th>
-                  <th style={{ padding: '0.5rem 0', textAlign: 'right' }}>AMOUNT</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td style={{ padding: '0.5rem 0' }}>Subscription Base Fee</td>
-                  <td style={{ padding: '0.5rem 0', textAlign: 'right' }}>₹{receipt.amount || receipt.netTotal}</td>
-                </tr>
-                {receipt.discount > 0 && (
-                  <tr>
-                    <td style={{ padding: '0.25rem 0', color: '#16a34a' }}>Concession / Discount</td>
-                    <td style={{ padding: '0.25rem 0', textAlign: 'right', color: '#16a34a' }}>- ₹{receipt.discount}</td>
-                  </tr>
-                )}
-                {receipt.fine > 0 && (
-                  <tr>
-                    <td style={{ padding: '0.25rem 0', color: '#dc2626' }}>Late Fine / Reg Charge</td>
-                    <td style={{ padding: '0.25rem 0', textAlign: 'right', color: '#dc2626' }}>+ ₹{receipt.fine}</td>
-                  </tr>
-                )}
-                <tr style={{ borderTop: '2px solid #000', fontWeight: 800, fontSize: '0.9375rem' }}>
-                  <td style={{ padding: '0.75rem 0' }}>NET TOTAL PAID</td>
-                  <td style={{ padding: '0.75rem 0', textAlign: 'right' }}>₹{receipt.netTotal.toLocaleString()}</td>
-                </tr>
-              </tbody>
-            </table>
-
-            {/* UPI QR & Footer */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px dashed #333', paddingTop: '1rem', marginTop: '0.5rem' }}>
-              <div style={{ fontSize: '0.6875rem', color: '#555', maxWidth: '300px' }}>
-                <p style={{ fontWeight: 700, margin: '0 0 0.25rem 0' }}>Terms & Conditions:</p>
-                <p style={{ margin: 0 }}>{settings.receiptFooter}</p>
-              </div>
-
-              {settings.upiQrUrl && (
-                <div style={{ textAlign: 'center' }}>
-                  <img src={settings.upiQrUrl} alt="UPI QR Code" style={{ width: '65px', height: '65px', borderRadius: '4px' }} />
-                  <div style={{ fontSize: '0.625rem', color: '#666', marginTop: '0.125rem' }}>Pay via UPI</div>
-                </div>
-              )}
-            </div>
-
-            <div style={{ textAlign: 'center', fontSize: '0.6875rem', color: '#888', marginTop: '0.5rem' }}>
-              *** Computer Generated Official Tax Invoice & Receipt ***
-            </div>
-
-          </div>
+          <ReceiptBody receipt={receipt} settings={settings} branch={branch} photo={photo} view={view} />
 
         </div>
+
+        {createPortal(
+          <div className="receipt-print-sheet receipt-outer" ref={sheetRef} aria-hidden="true">
+            <div className="rc-measure" style={{ width: '194mm' }}>
+              <ReceiptBody receipt={receipt} settings={settings} branch={branch} photo={photo} view={view} copyLabel="Student copy" />
+            </div>
+            {['Student copy', 'Library copy'].map(label => (
+              <div className="rc-copy" key={label}>
+                <div className="rc-inner" style={{ width: `${194 / scale}mm`, transform: `scale(${scale})` }}>
+                  <ReceiptBody receipt={receipt} settings={settings} branch={branch} photo={photo} view={view} copyLabel={label} />
+                </div>
+              </div>
+            ))}
+          </div>, document.body)}
 
         <div className="modal-footer no-print">
           <button className="btn btn-secondary" onClick={onClose}>Close Preview</button>

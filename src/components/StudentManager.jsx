@@ -5,9 +5,12 @@ import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Search, UserPlus, Phone, MapPin, History, Edit, RefreshCw, Users, Bell, XCircle,
-  ArrowRightLeft, CreditCard, FileText, X, CheckCircle, AlertCircle, Trash2, Archive, Download, Clock, Building2
+  ArrowRightLeft, CreditCard, FileText, X, CheckCircle, AlertCircle, Trash2, Archive, Download, Clock, Building2,
+  MessageCircle,
 } from 'lucide-react';
 import { ErrorBoundary } from './ErrorBoundary';
+import { WhatsAppMessages } from './WhatsAppMessages';
+import { WhatsAppSendModal, WhatsAppPersonalSend } from './WhatsAppSendModal';
 import { NumericInput } from './NumericInput';
 import { ShiftManagerModal } from './Modals/ShiftManagerModal';
 import { StudentExcelViewModal } from './Modals/StudentExcelViewModal';
@@ -15,9 +18,17 @@ import { BulkStudentModal } from './Modals/BulkStudentModal';
 import { EditStudentModal } from './Modals/EditStudentModal';
 import { handleSplitAmountChange, handleAddSplitComponent, handleRemoveSplitComponent, validateSplitPayment } from '../utils/splitPaymentUtils';
 import { calculateSubscriptionExpiry, calculateRenewalStartDate, getSubscriptionStatus, formatDate } from '../utils/dateUtils';
-import { getDocumentBlob, saveDocumentBlob } from '../utils/idbStorage';
+import { getDocumentBlob, deleteDocumentBlob, saveDocumentBlobNow } from '../utils/idbStorage';
+import { uploadAttachmentFile, makeAttachmentKey, isPdfAttachment } from '../utils/attachmentUpload';
+import { addFilesToDocuments, removeDocumentFile, groupStudentDocuments } from '../utils/studentDocuments';
+import { useBackClose } from '../utils/useBackClose';
+import { useStudentPhoto } from '../utils/useStudentPhoto';
 import { getCanonicalShifts, matchesShiftFilter, isShiftInPlan, resolveCanonicalShift, normalizeShiftName } from '../utils/shiftUtils';
 import { getPlanBasePrice, getPlanDefaultDuration } from '../utils/pricingCalculator';
+import { isVoidedPayment } from '../utils/paymentVoid';
+import { clientCanEditAmount } from '../utils/amountPermission';
+import { cycleConfig, cycleFor, addDays, bridgeCharge, upgradeCharge } from '../utils/billingCycle';
+import { isAdmissionVoid } from '../utils/admissionVoid.js';
 import { areSeatTypesEquivalent } from '../utils/seatTypeUtils';
 
 /**
@@ -210,21 +221,27 @@ const ActionMenu = ({ items = [], label = 'More actions', triggerClassName = 'bt
 export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedStudent, setActiveTab, renewActionStudent, setRenewActionStudent, relocateActionStudent, setRelocateActionStudent }) => {
   const { 
     settings, students, branches, sections, activeBranchId, setActiveBranchId, plans, shifts, seatTypes, 
-    renewSubscription, changeSeat, addStudentDocument, extendStudentDueDate, archiveStudent, 
+    renewSubscription, changeSeat, extendStudentDueDate, archiveStudent,
     cancelAdmission, cancelRenewalTransaction, getValidDesksList, getAvailableEligibleSeats, 
-    currentStaff, waitingList, removeFromWaitingList, updateWaitingListStatus, hasPermission, updateStudentDetails
+    currentStaff, waitingList, removeFromWaitingList, updateWaitingListStatus, hasPermission, updateStudentDetails,
+    lockedStaffId, getMatchingPlans, todayStr, readOnly: isReadOnly
   } = useLibrary();
+  const canEditAmount = clientCanEditAmount({ lockedStaffId, currentStaff, settings });
+  const cycleCfg = cycleConfig(settings);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [shiftFilter, setShiftFilter] = useState('All');
   const [activeDrawerTab, setActiveDrawerTab] = useState('history');
+  const profilePhoto = useStudentPhoto(selectedStudent);
   const [viewMode, setViewMode] = useState('active'); // active | waiting 
   const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
   const [isExcelViewOpen, setIsExcelViewOpen] = useState(false);
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
 
   const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [waHistoryKey, setWaHistoryKey] = useState(0); // refresh the profile WhatsApp list after a personal send
+  const [waTargets, setWaTargets] = useState(null); // students for the WhatsApp send window
   const [selectedIds, setSelectedIds] = useState([]);
   const [isBulkRenewModalOpen, setIsBulkRenewModalOpen] = useState(false);
   const [bulkRenewTarget, setBulkRenewTarget] = useState([]);
@@ -314,7 +331,14 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   const [renewShiftId, setRenewShiftId] = useState('');
   const [renewPaymentMethod, setRenewPaymentMethod] = useState('');
   const [renewSplitBreakdown, setRenewSplitBreakdown] = useState([{ method: '', amount: '' }]);
-  const [renewAmount, setRenewAmount] = useState(0);
+  const [renewAmount, setRenewAmountRaw] = useState(0);
+  // Issue #9: system-computed price, so a manual change is flagged for the server permission check + audit.
+  const [renewSuggested, setRenewSuggested] = useState(0);
+  const [renewAlign, setRenewAlign] = useState(null);
+  const setRenewAmount = (v) => { setRenewAmountRaw(v); setRenewSuggested(v); setRenewAlign(null); };
+  const [relocCollect, setRelocCollect] = useState(true);
+  const [relocMethod, setRelocMethod] = useState('Cash');
+  const [relocOverride, setRelocOverride] = useState(null);
   const [renewDiscount, setRenewDiscount] = useState(0);
   const [renewFine, setRenewFine] = useState(0);
   
@@ -332,6 +356,14 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   const [extendDate, setExtendDate] = useState('');
   const [extendReason, setExtendReason] = useState('Payment extension granted');
   const [isEditStudentModalOpen, setIsEditStudentModalOpen] = useState(false);
+  // Issue #1: Back closes the top modal first.
+  useBackClose(isRenewModalOpen, () => setIsRenewModalOpen(false));
+  useBackClose(isSeatModalOpen, () => setIsSeatModalOpen(false));
+  useBackClose(isExtendModalOpen, () => setIsExtendModalOpen(false));
+  useBackClose(isEditStudentModalOpen, () => setIsEditStudentModalOpen(false));
+  useBackClose(isBulkRenewModalOpen, () => setIsBulkRenewModalOpen(false));
+  useBackClose(!!waTargets, () => setWaTargets(null));
+  useBackClose(!!previewDoc, () => setPreviewDoc(null));
 
   // Sync initial relocate values
   useEffect(() => {
@@ -395,11 +427,12 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     }
     setIsLoadingDoc(true);
     try {
-      const blobData = await getDocumentBlob(docObj.storageKey);
+      const blobData = await getDocumentBlob(docObj.storageKey, { studentId: selectedStudent?.id });
       if (blobData) {
         setPreviewDoc({
           name: docObj.name || 'Student Document',
-          fileName: docObj.fileName || 'document.png',
+          fileName: docObj.fileName || 'document',
+          fileType: docObj.fileType || '',
           dataUrl: blobData
         });
       } else {
@@ -413,55 +446,54 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     }
   };
 
-  const handleAttachDocumentToStudent = (e, customDocName = null) => {
-    const file = e.target.files?.[0];
-    if (!file || !selectedStudent) return;
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
+  const handleAttachDocumentToStudent = async (e, customDoc = null) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (!files.length || !selectedStudent) return;
+    let updatedDocs = selectedStudent.documents || [];
+    const updatedDocStatuses = { ...(selectedStudent.documentStatuses || {}) };
+    let attached = 0;
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const docName = (typeof customDoc === 'string' ? customDoc : customDoc?.name) || file.name.split('.')[0] || 'Student ID';
+      const docTypeId = (typeof customDoc === 'object' && customDoc?.id) || docName;
+      const storageKey = makeAttachmentKey('doc', `${selectedStudent.id}_${docTypeId}_${Date.now()}_${i}_${Math.random()}`);
       try {
-        const base64Data = ev.target.result;
-        const storageKey = `doc_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-        await saveDocumentBlob(storageKey, base64Data);
-        const docName = customDocName || file.name.split('.')[0] || "Student ID";
-        const docObj = {
-          id: storageKey,
+        const meta = await uploadAttachmentFile({
+          file,
+          key: storageKey,
+          save: (key, data) => saveDocumentBlobNow(key, data, {
+            studentId: selectedStudent.id,
+            docTypeId,
+            fileName: file.name,
+            fileType: file.type,
+            fileSize: file.size,
+            status: 'Submitted',
+          }),
+        });
+        updatedDocs = addFilesToDocuments(updatedDocs, {
           name: docName,
-          fileName: file.name,
-          fileType: file.type,
-          storageKey,
-          uploadedAt: new Date().toISOString(),
-          status: 'Submitted'
-        };
-        addStudentDocument(selectedStudent.id, docObj);
-
-        const existingDocs = selectedStudent.documents || [];
-        const filteredDocs = existingDocs.filter(d => (d.name || d.fileName) !== docName);
-        const updatedDocs = [...filteredDocs, docObj];
-
-        const updatedDocStatuses = {
-          ...(selectedStudent.documentStatuses || {}),
-          [docName]: 'Submitted'
-        };
-
-        if (updateStudentDetails) {
-          updateStudentDetails(selectedStudent.id, {
-            documents: updatedDocs,
-            documentStatuses: updatedDocStatuses
-          });
-        }
-
-        setSelectedStudent(prev => ({
-          ...prev,
-          documents: updatedDocs,
-          documentStatuses: updatedDocStatuses
-        }));
-        toast.success(`Attached ${file.name} for ${docName}`);
+          docTypeId,
+          files: [{ ...meta, name: docName, docTypeId, status: 'Submitted' }],
+        });
+        updatedDocStatuses[docName] = updatedDocStatuses[docName] === 'Verified' ? 'Verified' : 'Submitted';
+        attached++;
       } catch (err) {
-        console.error('Attach doc failed:', err);
-        toast.error('Failed to attach document.');
+        toast.error(err?.message || `Could not attach ${file.name}.`);
       }
-    };
-    reader.readAsDataURL(file);
+    }
+    if (!attached) return;
+    if (updateStudentDetails) updateStudentDetails(selectedStudent.id, { documents: updatedDocs, documentStatuses: updatedDocStatuses });
+    setSelectedStudent(prev => ({ ...prev, documents: updatedDocs, documentStatuses: updatedDocStatuses }));
+    toast.success(attached === 1 ? `Attached ${files[0].name}` : `Attached ${attached} files`);
+  };
+
+  const handleRemoveDocumentFile = (docTypeId, fileId) => {
+    if (!selectedStudent) return;
+    const docs = removeDocumentFile(selectedStudent.documents || [], docTypeId, fileId);
+    if (updateStudentDetails) updateStudentDetails(selectedStudent.id, { documents: docs });
+    setSelectedStudent(prev => ({ ...prev, documents: docs }));
+    deleteDocumentBlob(fileId).catch(() => {});
   };
 
   const handleUpdateDocStatus = (docTypeName, newStatus) => {
@@ -589,7 +621,12 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
 
     const plan = plans.find(p => p.id === renewPlanId) || plans[0];
     const startStr = calculateRenewalStartDate(selectedStudent.expiryDate);
-    const expiryStr = calculateSubscriptionExpiry(startStr, renewDuration);
+    let expiryStr = calculateSubscriptionExpiry(startStr, renewDuration);
+    if (renewAlign) {
+      // Issue #9 (owner-chosen): bridge days up to the library cycle end, then whole library cycles.
+      let next = addDays(renewAlign.to, 1);
+      for (let i = 0; i < parsedDur; i++) { const c = cycleFor(next, cycleCfg); expiryStr = c.end; next = addDays(c.end, 1); }
+    }
     
     const result = renewSubscription(selectedStudent.id, {
       planId: plan.id,
@@ -600,6 +637,9 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       startDate: startStr,
       expiryDate: expiryStr,
       amountPaid: renewAmount,
+      suggestedAmount: Number(renewSuggested),
+      ...(Number(renewAmount) !== Number(renewSuggested) ? { amountEdited: true } : {}),
+      ...(renewAlign ? { bridge: renewAlign } : {}),
       discount: renewDiscount,
       fine: renewFine,
       paymentMethod: renewPaymentMethod,
@@ -614,22 +654,48 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     }
   };
 
+  // Issue #9: fee difference for the rest of the paid period when the new seat/shift has a different plan price.
+  const relocPriceChange = (() => {
+    if (!isSeatModalOpen || !selectedStudent || !newBlockId || !newShiftId || !selectedStudent.expiryDate) return null;
+    const oldPlan = plans.find(p => p.id === selectedStudent.planId);
+    const branchId = relocateBranchId || selectedStudent.branchId;
+    const newPlan = (getMatchingPlans?.(settings.libraryId, branchId, newBlockId, newSeatTypeId, newShiftId) || [])[0];
+    if (!oldPlan || !newPlan || oldPlan.id === newPlan.id) return null;
+    const oldFee = getPlanBasePrice(oldPlan, 1), newFee = getPlanBasePrice(newPlan, 1);
+    if (!oldFee || !newFee || oldFee === newFee) return null;
+    const totalDays = cycleFor(todayStr, cycleCfg).totalDays;
+    const r = upgradeCharge(oldFee, newFee, todayStr, selectedStudent.expiryDate, totalDays);
+    return { amount: r.amount, days: r.remainingDays, oldFee, newFee, totalDays, newPlanId: newPlan.id, moveDate: todayStr, paidUntil: selectedStudent.expiryDate, suggestedAmount: r.amount };
+  })();
+
   const handleExecuteSeatChange = (e) => {
     e.preventDefault();
     if (!selectedStudent || !newSeatNo || !newShiftId || !newBlockId || !newSeatTypeId) return;
     const effectiveBranchId = relocateBranchId || selectedStudent.branchId;
-    const success = changeSeat(selectedStudent.id, newBlockId, newSeatTypeId, newSeatNo, seatChangeReason, newShiftId, effectiveBranchId);
+    const pc = relocPriceChange;
+    const priceChange = pc && pc.amount !== 0 ? {
+      ...pc,
+      amount: relocOverride != null ? Number(relocOverride) : pc.amount,
+      suggestedAmount: pc.suggestedAmount ?? pc.amount,
+      ...(relocOverride != null && Number(relocOverride) !== pc.amount ? { amountEdited: true } : {}),
+      collect: relocCollect, method: relocMethod
+    } : null;
+    const success = changeSeat(selectedStudent.id, newBlockId, newSeatTypeId, newSeatNo, seatChangeReason, newShiftId, effectiveBranchId, priceChange);
     if (success !== false) {
       toast.success(`Desk for ${selectedStudent.name} updated to ${newSeatNo}`);
       setIsSeatModalOpen(false);
       setNewSeatNo('');
       setNewShiftId('');
       setSeatChangeReason('');
+      setRelocOverride(null);
     }
   };
 
+  // One selection flow: "Select Students" shows the boxes and the Bulk Actions bar (Renew, Send WhatsApp, Remove).
+  // In that mode tapping a row ticks it; outside it a tap opens the profile.
   const handleToggleSelectAll = (e) => {
     if (e.target.checked) {
+      setIsSelectionMode(true);
       setSelectedIds(filteredStudents.map(s => s.id));
     } else {
       setSelectedIds([]);
@@ -637,6 +703,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   };
 
   const handleToggleSelect = (id) => {
+    setIsSelectionMode(true);
     setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
   };
 
@@ -869,214 +936,41 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
               style={{ paddingLeft: '36px' }}
             />
           </div>
-          <div style={{ width: '160px' }}>
-            <select className="form-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+        </div>
+
+        {/* Status, Branch & Shift dropdowns */}
+        <div className="st-filters">
+          <label className="st-dd">
+            <span>Status</span>
+            <select className="form-select" aria-label="Status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
               <option value="All">All Statuses</option>
               <option value="Active">Active</option>
               <option value="Expiring Soon">Expiring Soon</option>
               <option value="Expired">Expired</option>
               <option value="Pending ID Proof">Pending ID Proof</option>
             </select>
-          </div>
-        </div>
-
-        {/* Scrollable Branch Selector */}
-        {branches && branches.length > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-secondary)', fontSize: '12px', fontWeight: 600, flexShrink: 0 }}>
-              <Building2 size={15} />
-              <span>Branch:</span>
-            </div>
-            <div 
-              style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: '8px', 
-                overflowX: 'auto', 
-                padding: '2px 0 4px 0', 
-                scrollbarWidth: 'none', 
-                msOverflowStyle: 'none',
-                WebkitOverflowScrolling: 'touch',
-                flex: 1
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => setActiveBranchId && setActiveBranchId('all')}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '5px 12px',
-                  borderRadius: '20px',
-                  fontSize: '12px',
-                  fontWeight: activeBranchId === 'all' ? 700 : 500,
-                  cursor: 'pointer',
-                  border: activeBranchId === 'all' ? '1px solid var(--brand-primary, #000)' : '1px solid var(--border-light, #e2e8f0)',
-                  background: activeBranchId === 'all' ? 'var(--brand-primary, #000)' : '#f8fafc',
-                  color: activeBranchId === 'all' ? '#fff' : 'var(--text-secondary, #475569)',
-                  whiteSpace: 'nowrap',
-                  flexShrink: 0,
-                  transition: 'all 0.15s ease'
-                }}
-              >
-                <span>🏢 All Branches</span>
-                <span style={{ 
-                  fontSize: '10px', 
-                  padding: '1px 6px', 
-                  borderRadius: '10px', 
-                  background: activeBranchId === 'all' ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.06)',
-                  color: activeBranchId === 'all' ? '#fff' : 'var(--text-secondary)'
-                }}>
-                  {students.length}
-                </span>
-              </button>
-
-              {branches.map(b => {
-                const isSelected = activeBranchId === b.id;
-                const branchStudentCount = students.filter(s => s.branchId === b.id).length;
-                return (
-                  <button
-                    key={b.id}
-                    type="button"
-                    onClick={() => setActiveBranchId && setActiveBranchId(b.id)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      padding: '5px 12px',
-                      borderRadius: '20px',
-                      fontSize: '12px',
-                      fontWeight: isSelected ? 700 : 500,
-                      cursor: 'pointer',
-                      border: isSelected ? '1px solid var(--brand-primary, #000)' : '1px solid var(--border-light, #e2e8f0)',
-                      background: isSelected ? 'var(--brand-primary, #000)' : '#f8fafc',
-                      color: isSelected ? '#fff' : 'var(--text-secondary, #475569)',
-                      whiteSpace: 'nowrap',
-                      flexShrink: 0,
-                      transition: 'all 0.15s ease'
-                    }}
-                  >
-                    <span>📍 {b.name}</span>
-                    <span style={{ 
-                      fontSize: '10px', 
-                      padding: '1px 6px', 
-                      borderRadius: '10px', 
-                      background: isSelected ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.06)',
-                      color: isSelected ? '#fff' : 'var(--text-secondary)'
-                    }}>
-                      {branchStudentCount}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Scrollable Shift Selector */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%', borderTop: '1px solid var(--border-light, #f1f5f9)', paddingTop: '10px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-secondary)', fontSize: '12px', fontWeight: 600, flexShrink: 0 }}>
-            <Clock size={15} />
-            <span>Shift:</span>
-          </div>
-          <div 
-            style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
-              gap: '8px', 
-              overflowX: 'auto', 
-              padding: '2px 0 4px 0', 
-              scrollbarWidth: 'none', 
-              msOverflowStyle: 'none',
-              WebkitOverflowScrolling: 'touch',
-              flex: 1
-            }}
-          >
-            <button
-              type="button"
-              onClick={() => setShiftFilter('All')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '5px',
-                padding: '5px 12px',
-                borderRadius: '20px',
-                fontSize: '12px',
-                fontWeight: shiftFilter === 'All' ? 700 : 500,
-                cursor: 'pointer',
-                border: shiftFilter === 'All' ? '1px solid #2563eb' : '1px solid var(--border-light, #e2e8f0)',
-                background: shiftFilter === 'All' ? '#2563eb' : '#fff',
-                color: shiftFilter === 'All' ? '#fff' : 'var(--text-secondary, #475569)',
-                whiteSpace: 'nowrap',
-                flexShrink: 0,
-                transition: 'all 0.15s ease'
-              }}
-            >
-              All Shifts
-            </button>
-
-            {availableShifts.map(sh => {
-              const isSelected = shiftFilter === sh.name;
-              return (
-                <button
-                  key={sh.id}
-                  type="button"
-                  onClick={() => setShiftFilter(sh.name)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    padding: '5px 12px',
-                    borderRadius: '20px',
-                    fontSize: '12px',
-                    fontWeight: isSelected ? 700 : 500,
-                    cursor: 'pointer',
-                    border: isSelected ? '1px solid #2563eb' : '1px solid var(--border-light, #e2e8f0)',
-                    background: isSelected ? '#2563eb' : '#fff',
-                    color: isSelected ? '#fff' : 'var(--text-secondary, #475569)',
-                    whiteSpace: 'nowrap',
-                    flexShrink: 0,
-                    transition: 'all 0.15s ease'
-                  }}
-                >
-                  <span>{sh.name}</span>
-                  {sh.startTime && sh.endTime && (
-                    <span style={{ 
-                      fontSize: '10px', 
-                      opacity: isSelected ? 0.9 : 0.65,
-                      fontWeight: 400
-                    }}>
-                      {sh.startTime}–{sh.endTime}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-
-            <button
-              type="button"
-              onClick={() => setIsShiftModalOpen(true)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                padding: '5px 10px',
-                borderRadius: '20px',
-                fontSize: '11px',
-                fontWeight: 500,
-                cursor: 'pointer',
-                border: '1px dashed var(--border-strong, #cbd5e1)',
-                background: 'transparent',
-                color: 'var(--text-tertiary, #64748b)',
-                whiteSpace: 'nowrap',
-                flexShrink: 0,
-                marginLeft: 'auto'
-              }}
-            >
-              ⚙ Manage
-            </button>
-          </div>
+          </label>
+          {branches && branches.length > 0 && (
+            <label className="st-dd">
+              <span><Building2 size={13} /> Branch</span>
+              <select className="form-select" aria-label="Branch" value={activeBranchId || 'all'} onChange={(e) => setActiveBranchId && setActiveBranchId(e.target.value)}>
+                <option value="all">All Branches ({students.length})</option>
+                {branches.map(b => (
+                  <option key={b.id} value={b.id}>{b.name} ({students.filter(s => s.branchId === b.id).length})</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label className="st-dd">
+            <span><Clock size={13} /> Shift</span>
+            <select className="form-select" aria-label="Shift" value={shiftFilter} onChange={(e) => setShiftFilter(e.target.value)}>
+              <option value="All">All Shifts</option>
+              {availableShifts.map(sh => (
+                <option key={sh.id} value={sh.name}>{sh.name}{sh.startTime && sh.endTime ? ` (${sh.startTime}–${sh.endTime})` : ''}</option>
+              ))}
+            </select>
+          </label>
+          <button type="button" className="st-manage" onClick={() => setIsShiftModalOpen(true)}>⚙ Manage shifts</button>
         </div>
         
         {/* Bulk Action Bar */}
@@ -1086,6 +980,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
             <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)' }}>
               Bulk Actions ({selectedIds.length} selected):
             </span>
+            {canManageStudents && (
             <button 
               className="btn btn-primary" 
               disabled={selectedIds.length === 0} 
@@ -1093,6 +988,17 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
               style={{ padding: '6px 12px', fontSize: '13px' }}
             >
               <RefreshCw size={14} /> Renew Selected
+            </button>
+            )}
+
+            <button
+              type="button"
+              className="btn btn-secondary wa-send-btn"
+              disabled={selectedIds.length === 0}
+              onClick={() => setWaTargets(students.filter(s => selectedIds.includes(s.id)))}
+              style={{ padding: '6px 12px', fontSize: '13px' }}
+            >
+              <MessageCircle size={14} /> Send WhatsApp
             </button>
             
             {currentStaff?.permissions?.canCancelAdmission && (
@@ -1117,136 +1023,54 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
         )}
       </div>
 
-      {/* Compact mobile list: Student Name | Seat | Status | View */}
-      <div className="compact-list mobile-only">
+      {/* Student rows: one student per row; extra columns appear as the screen grows */}
+      <div className={`st-list${isSelectionMode ? ' selecting' : ''}`} role="table" aria-label="Students">
+        <div className="st-row st-head" role="row">
+          {isSelectionMode && <span className="st-c st-chk"><input type="checkbox" aria-label="Select all shown" checked={filteredStudents.length > 0 && filteredStudents.every(s => selectedIds.includes(s.id))} onChange={handleToggleSelectAll} /></span>}
+          <span className="st-c st-name">Student</span>
+          <span className="st-c st-branch">Branch</span>
+          <span className="st-c st-seat">Seat</span>
+          <span className="st-c st-shift">Shift</span>
+          <span className="st-c st-exp">Expiry</span>
+          <span className="st-c st-status">Status</span>
+          <span className="st-c st-wa" aria-label="WhatsApp" />
+        </div>
         {filteredStudents.length === 0 ? (
-          <div className="compact-empty">No student records match your criteria.</div>
+          <div className="compact-empty" style={{ padding: '40px 16px', textAlign: 'center', color: 'var(--text-tertiary)' }}>No student records match your criteria.</div>
         ) : filteredStudents.map(student => {
           const subStatus = getSubscriptionStatus(student, settings?.gracePeriodDays);
           const badgeClass = subStatus.status === 'Expired' ? 'badge-expired' : (subStatus.isGrace ? 'badge-expiring' : 'badge-active');
+          const checked = selectedIds.includes(student.id);
+          const missingSeat = student.seatNo !== 'Non-Fixed Seat' && student.seatNo !== 'None' && (student.status === 'Active' || student.status === 'Expiring Soon') && !getValidDesksList(student.branchId, student.sectionId).includes(student.seatNo);
           return (
-            <div key={student.id} className="compact-row" onClick={() => isSelectionMode ? handleToggleSelect(student.id) : setSelectedStudent(student)}>
+            <div key={student.id} role="row" aria-selected={isSelectionMode ? checked : undefined} className={`st-row${checked ? ' sel' : ''}`} onClick={() => isSelectionMode ? handleToggleSelect(student.id) : setSelectedStudent(student)}>
               {isSelectionMode && (
-                <input type="checkbox" checked={selectedIds.includes(student.id)} onChange={() => handleToggleSelect(student.id)} onClick={e => e.stopPropagation()} />
+                <span className="st-c st-chk" onClick={e => e.stopPropagation()}>
+                  <input type="checkbox" aria-label={`Select ${student.name}`} checked={checked} onChange={() => handleToggleSelect(student.id)} />
+                </span>
               )}
-              <span className="c-main" title={student.name}>{student.name}</span>
-              <span className="c-meta">{student.seatNo || '—'}</span>
-              <span className={`badge ${badgeClass}`}>{subStatus.label}</span>
-              <button type="button" className="btn btn-ghost" onClick={(e) => { e.stopPropagation(); setSelectedStudent(student); }}>View</button>
+              <span className="st-c st-name">
+                <b title={student.name}>{student.name}</b>
+                <small className="st-meta">{student.id} • {student.phone}</small>
+              </span>
+              <span className="st-c st-branch">{getBranchCode(student.branchId)}</span>
+              <span className="st-c st-seat">
+                <span className="st-seatno" title={missingSeat ? 'Missing from Seat Map' : student.seatNo}>{missingSeat && <AlertCircle size={11} color="#ef4444" />}{student.seatNo || '—'}</span>
+              </span>
+              <span className="st-c st-shift" title={student.shift}>{student.shift}</span>
+              <span className="st-c st-exp">{student.extendedDueDate ? `Ext: ${student.extendedDueDate}` : student.expiryDate}</span>
+              <span className="st-c st-status"><span className={`badge ${badgeClass}`} title={subStatus.label}>{subStatus.label}</span></span>
+              <span className="st-c st-wa">
+                <button type="button" className="wa-row-btn" aria-label={`Send WhatsApp to ${student.name}`} title="Send WhatsApp" onClick={(e) => { e.stopPropagation(); setWaTargets([student]); }}>
+                  <MessageCircle size={16} />
+                </button>
+              </span>
             </div>
           );
         })}
       </div>
 
-      {/* Premium Data Grid */}
-      <div className="table-container desktop-only">
-        <table className="data-grid">
-          <thead>
-            <tr>
-              {isSelectionMode && (
-                <th style={{ width: '40px', textAlign: 'center' }}>
-                  <input 
-                    type="checkbox" 
-                    checked={filteredStudents.length > 0 && selectedIds.length === filteredStudents.length}
-                    onChange={handleToggleSelectAll}
-                    style={{ cursor: 'pointer' }}
-                  />
-                </th>
-              )}
-              <th>STUDENT</th>
-              <th>BRANCH</th>
-              <th>DESK & SHIFT</th>
-              <th>EXPIRY</th>
-              <th>STATUS</th>
-              <th style={{ textAlign: 'right' }}>ACTIONS</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredStudents.length === 0 ? (
-              <tr>
-                <td colSpan="7" style={{ textAlign: 'center', padding: '48px', color: 'var(--text-tertiary)' }}>
-                  No student records match your criteria.
-                </td>
-              </tr>
-            ) : (
-              filteredStudents.map(student => (
-                <tr key={student.id} style={{ cursor: 'pointer' }} onClick={() => setSelectedStudent(student)}>
-                  {isSelectionMode && (
-                    <td style={{ textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
-                      <input 
-                        type="checkbox" 
-                        checked={selectedIds.includes(student.id)}
-                        onChange={() => handleToggleSelect(student.id)}
-                        style={{ cursor: 'pointer' }}
-                      />
-                    </td>
-                  )}
-                  <td>
-                    <span className="cell-inline">
-                      <span className="cell-truncate" style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{student.name}</span>
-                      <span className="cell-meta">{student.id} • {student.phone}</span>
-                    </span>
-                  </td>
-                  <td>
-                    <span style={{ fontSize: '13px', fontWeight: 500 }}>{getBranchCode(student.branchId)}</span>
-                  </td>
-                  <td>
-                    <span className="cell-inline">
-                      <span style={{ background: '#f3f4f6', padding: '4px 8px', borderRadius: '4px', fontWeight: 600, fontSize: '12px' }}>
-                        {student.seatNo}
-                      </span>
-                      <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{student.shift}</span>
-                      {student.seatNo !== 'Non-Fixed Seat' && student.seatNo !== 'None' && (student.status === 'Active' || student.status === 'Expiring Soon') && !getValidDesksList(student.branchId, student.sectionId).includes(student.seatNo) && (
-                        <span className="cell-inline" style={{ background: '#fee2e2', padding: '4px 8px', borderRadius: '4px' }}>
-                          <AlertCircle size={12} color="#ef4444" />
-                          <span style={{ fontSize: '11px', color: '#ef4444', fontWeight: 600 }}>Missing from Seat Map</span>
-                          <button 
-                            style={{ background: 'none', border: 'none', color: '#b91c1c', fontSize: '11px', textDecoration: 'underline', cursor: 'pointer', padding: 0, marginLeft: '4px' }}
-                            onClick={(e) => { e.stopPropagation(); setSelectedStudent(student); setIsSeatModalOpen(true); }}
-                          >
-                            Fix Allocation
-                          </button>
-                        </span>
-                      )}
-                    </span>
-                  </td>
-                  <td>
-                    <span style={{ fontWeight: 500, fontSize: '13px' }}>{student.expiryDate}</span>
-                  </td>
-                  <td>
-                    {(() => {
-                      const subStatus = getSubscriptionStatus(student, settings?.gracePeriodDays);
-                      const badgeClass = subStatus.status === 'Expired' 
-                        ? 'badge-expired' 
-                        : (subStatus.isGrace ? 'badge-expiring' : 'badge-active');
-                      return (
-                        <span className="cell-inline">
-                          <span className={`badge ${badgeClass}`}>
-                            {subStatus.label}
-                          </span>
-                          {student.extendedDueDate && (
-                            <span style={{ fontSize: '10px', color: 'var(--brand-primary)', fontWeight: 600 }}>
-                              Ext: {student.extendedDueDate}
-                            </span>
-                          )}
-                          {!student.id && (
-                            <span className="badge badge-expiring" style={{ fontSize: '10px' }}>ID Pending</span>
-                          )}
-                        </span>
-                      );
-                    })()}
-                  </td>
-                  <td style={{ textAlign: 'right' }}>
-                    <button className="btn btn-ghost" style={{ padding: '6px 12px' }} onClick={(e) => { e.stopPropagation(); setSelectedStudent(student); }}>
-                      View Profile
-                    </button>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      {waTargets && <WhatsAppSendModal students={waTargets} onClose={() => setWaTargets(null)} />}
 
       </>
       )}
@@ -1398,54 +1222,35 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
               initial={{ scale: 0.95, opacity: 0, y: 20 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 20 }}
               transition={{ type: 'spring', damping: 25, stiffness: 300 }}>
               
-              <div className="modal-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--brand-primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '18px' }}>
-                    {((selectedStudent.name || 'S').charAt(0)).toUpperCase()}
-                  </div>
-                  <div>
-                    <h3 style={{ fontSize: '20px', fontWeight: 700, letterSpacing: '-0.02em' }}>{selectedStudent.name || 'Unnamed Student'}</h3>
-                    <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '2px', display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
-                      <span>{selectedStudent.id || 'N/A'}</span>
-                      <span>•</span>
-                      <span>Mobile: <strong style={{ color: selectedStudent.phone ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>{selectedStudent.phone || 'N/A'}</strong></span>
-                      <span>•</span>
-                      <span>{selectedStudent.gender || 'Male'}</span>
-                      <span>•</span>
-                      <span>Emergency: <strong style={{ color: selectedStudent.emergencyPhone ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>{selectedStudent.emergencyPhone || 'Not Provided'}</strong></span>
-                    </div>
-                  </div>
+              <div className="modal-header sp-header">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+                  {profilePhoto
+                    ? <img src={profilePhoto} alt={`${selectedStudent.name || 'Student'} photo`} className="sp-avatar" style={{ width: '48px', height: '48px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+                    : <div className="sp-avatar" style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--brand-primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '18px', flexShrink: 0 }}>
+                        {((selectedStudent.name || 'S').charAt(0)).toUpperCase()}
+                      </div>}
+                  <h3 style={{ fontSize: '20px', fontWeight: 700, letterSpacing: '-0.02em', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedStudent.name || 'Unnamed Student'}</h3>
                 </div>
-                <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', color: 'var(--text-secondary)' }} onClick={() => setSelectedStudent(null)}><X size={24} /></button>
+                <button aria-label="Close profile" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', minWidth: 44, minHeight: 44 }} onClick={() => setSelectedStudent(null)}><X size={20} /></button>
               </div>
 
-              <div style={{ padding: '24px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '16px', background: 'var(--bg-main)' }}>
-                <div>
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>ASSIGNED DESK</span>
-                  <div style={{ fontSize: '18px', fontWeight: 700, marginTop: '4px' }}>{selectedStudent.seatNo || 'None'}</div>
-                </div>
-                <div>
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>SHIFT</span>
-                  <div style={{ fontSize: '16px', fontWeight: 500, marginTop: '4px' }}>{selectedStudent.shift || 'N/A'}</div>
-                </div>
-                <div>
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>EXPIRY DATE</span>
-                  <div style={{ fontSize: '16px', fontWeight: 600, color: selectedStudent.status === 'Expired' ? 'var(--text-primary)' : '#10b981', marginTop: '4px' }}>
-                    {selectedStudent.expiryDate || 'N/A'}
+              {/* Issue #10: paired facts, two columns where space allows */}
+              <div className="sp-grid" style={{ padding: '16px 24px', background: 'var(--bg-main)' }}>
+                {[
+                  ['STUDENT ID', selectedStudent.id || 'N/A'],
+                  ['GENDER', selectedStudent.gender || 'Male'],
+                  ['ASSIGNED DESK', selectedStudent.seatNo || 'None', { fontSize: '18px', fontWeight: 700 }],
+                  ['SHIFT', selectedStudent.shift || 'N/A'],
+                  ['EXPIRY DATE', selectedStudent.expiryDate || 'N/A', { fontWeight: 600, color: selectedStudent.status === 'Expired' ? 'var(--text-primary)' : '#10b981' }],
+                  ['STATUS', selectedStudent.status || 'N/A', { fontWeight: 600, color: selectedStudent.status === 'Expired' ? 'var(--status-error, #dc2626)' : 'var(--text-primary)' }],
+                  ['STUDENT MOBILE NUMBER', selectedStudent.phone || 'N/A', { fontWeight: 600, color: selectedStudent.phone ? 'var(--text-primary)' : 'var(--text-tertiary)' }, true],
+                  ['EMERGENCY CONTACT NUMBER', selectedStudent.emergencyPhone || 'Not Provided', { fontWeight: 600, color: selectedStudent.emergencyPhone ? 'var(--text-primary)' : 'var(--text-tertiary)' }, true],
+                ].map(([label, value, vs, full]) => (
+                  <div key={label} className={full ? 'sp-full' : undefined} style={{ minWidth: 0 }}>
+                    <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>{label}</span>
+                    <div style={{ fontSize: '16px', fontWeight: 500, marginTop: '2px', overflowWrap: 'anywhere', ...(vs || {}) }}>{value}</div>
                   </div>
-                </div>
-                <div>
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>STUDENT MOBILE NUMBER</span>
-                  <div style={{ fontSize: '16px', fontWeight: 600, color: selectedStudent.phone ? 'var(--text-primary)' : 'var(--text-tertiary)', marginTop: '4px' }}>
-                    {selectedStudent.phone || 'N/A'}
-                  </div>
-                </div>
-                <div>
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>EMERGENCY CONTACT NUMBER</span>
-                  <div style={{ fontSize: '16px', fontWeight: 600, color: selectedStudent.emergencyPhone ? 'var(--text-primary)' : 'var(--text-tertiary)', marginTop: '4px' }}>
-                    {selectedStudent.emergencyPhone || 'Not Provided'}
-                  </div>
-                </div>
+                ))}
                 {selectedStudent.idProofStatus === 'Pending' && (
                   <div style={{ gridColumn: '1 / -1', padding: '12px', background: 'var(--bg-warning)', border: '1px solid var(--border-warning)', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <AlertCircle size={16} color="var(--warning-color)" />
@@ -1491,16 +1296,16 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                 )}
               </div>
 
-              <div style={{ display: 'flex', borderBottom: '1px solid var(--border-light)', padding: '0 24px' }}>
-                {['history', 'relocations', 'payments', 'documents'].map(tab => (
+              <div className="sp-tabs" style={{ display: 'flex', borderBottom: '1px solid var(--border-light)', padding: '0 24px', overflowX: 'auto', WebkitOverflowScrolling: 'touch', flexShrink: 0 }}>
+                {['history', 'relocations', 'payments', 'documents', 'whatsapp'].map(tab => (
                   <button key={tab} onClick={() => setActiveDrawerTab(tab)} style={{ 
                     padding: '16px 24px', background: 'transparent', border: 'none', cursor: 'pointer',
                     color: activeDrawerTab === tab ? 'var(--text-primary)' : 'var(--text-secondary)',
                     fontWeight: activeDrawerTab === tab ? 600 : 500,
                     borderBottom: activeDrawerTab === tab ? '2px solid var(--brand-primary)' : '2px solid transparent',
-                    textTransform: 'capitalize'
+                    textTransform: 'capitalize', whiteSpace: 'nowrap', flexShrink: 0
                   }}>
-                    {tab}
+                    {tab === 'whatsapp' ? 'WhatsApp' : tab}
                   </button>
                 ))}
               </div>
@@ -1528,21 +1333,29 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                           return (
                             <div key={idx} style={{ padding: '16px', border: '1px solid var(--border-light)', borderRadius: '8px' }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                                <strong style={{ fontSize: '14px' }}>{record.planName} (Renewal)</strong>
+                                <strong style={{ fontSize: '14px', textDecoration: record.voided ? 'line-through' : 'none' }}>{record.planName} (Renewal)</strong>
                                 <span style={{ fontWeight: 600, color: '#10b981' }}>₹{record.amountPaid?.toLocaleString()}</span>
                               </div>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
                                   Valid: {record.startDate} to {record.endDate} • Staff: {record.staffName}
                                 </div>
-                                {currentStaff?.permissions?.canCancelAdmission && (
+                                {record.voided && (
+                                  <span data-testid="voided-badge" style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: '#fee2e2', color: '#b91c1c' }}>Voided</span>
+                                )}
+                                {!record.voided && currentStaff?.permissions?.canCancelAdmission && (
                                   <button
                                     className="btn btn-secondary"
                                     style={{ padding: '4px 8px', fontSize: '12px', color: '#ef4444', borderColor: '#fee2e2', background: '#fef2f2' }}
                                     onClick={() => {
-                                      if (window.confirm(`Are you sure you want to void this renewal (${record.planName})?`)) {
-                                        if (cancelRenewalTransaction(selectedStudent.id, record.renewalId)) {
-                                          toast.success("Renewal voided successfully.");
+                                      const isAdm = isAdmissionVoid(selectedStudent, record.renewalId);
+                                      const msg = isAdm
+                                        ? `Void this admission (${record.planName})? The plan ends and seat ${selectedStudent.seatNo || ''} is freed. The record is kept as voided. Record any refund separately.`
+                                        : `Are you sure you want to void this renewal (${record.planName})?`;
+                                      if (window.confirm(msg)) {
+                                        const res = cancelRenewalTransaction(selectedStudent.id, record.renewalId);
+                                        if (res) {
+                                          toast.success(res === 'admission' ? "Admission voided. Seat freed." : "Renewal voided successfully.");
                                           setSelectedStudent(null);
                                         } else {
                                           toast.error("Failed to void renewal.");
@@ -1631,13 +1444,22 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                           {pay.reason && <div style={{ fontSize: '11px', color: '#ef4444', marginTop: '2px' }}>Reason: {pay.reason}</div>}
                         </div>
                         <div style={{ textAlign: 'right' }}>
-                          <div style={{ fontWeight: 700, color: (pay.type === 'Refund' || pay.amount < 0) ? '#ef4444' : '#10b981' }}>
+                          {isVoidedPayment(pay) && (
+                            <div data-testid="payment-voided-badge" style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: '#fee2e2', color: '#b91c1c', display: 'inline-block', marginBottom: 4 }}>Voided</div>
+                          )}
+                          <div style={{ fontWeight: 700, color: isVoidedPayment(pay) ? '#9ca3af' : ((pay.type === 'Refund' || pay.amount < 0) ? '#ef4444' : '#10b981'), textDecoration: isVoidedPayment(pay) ? 'line-through' : 'none' }}>
                             {pay.type === 'Refund' || pay.amount < 0 ? `-₹${Math.abs(pay.amount).toLocaleString()} (Refund)` : `₹${(pay.netTotal || pay.amount).toLocaleString()}`}
                           </div>
                         </div>
                       </div>
                     ))}
                   </div>
+                )}
+                {activeDrawerTab === 'whatsapp' && (
+                  <>
+                    <WhatsAppPersonalSend student={selectedStudent} readOnly={isReadOnly} onSent={() => setWaHistoryKey(k => k + 1)} />
+                    <WhatsAppMessages key={waHistoryKey} studentId={selectedStudent.id} compact />
+                  </>
                 )}
                 {activeDrawerTab === 'documents' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -1646,10 +1468,16 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                         <h4 style={{ fontSize: '14px', fontWeight: 600, margin: 0 }}>Required Verification Documents</h4>
                         <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0 0' }}>Verification status and compliance checklist</p>
                       </div>
-                      <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
-                        + Add Custom Document
-                        <input type="file" style={{ display: 'none' }} accept="image/*,.pdf" onChange={(e) => handleAttachDocumentToStudent(e)} />
-                      </label>
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                        <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
+                          + Add Custom Document
+                          <input type="file" multiple style={{ display: 'none' }} accept="image/*,.pdf" onChange={(e) => handleAttachDocumentToStudent(e)} />
+                        </label>
+                        <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0 }} aria-label="Add document with camera">
+                          Camera
+                          <input type="file" style={{ display: 'none' }} accept="image/*" capture="environment" onChange={(e) => handleAttachDocumentToStudent(e)} />
+                        </label>
+                      </div>
                     </div>
 
                     {/* Required Document Types Checklist */}
@@ -1660,12 +1488,15 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                           : (settings?.allowedDocuments || ['Aadhaar Card', 'Student ID', 'Address Proof', 'Photograph']).map(name => ({ id: name, name, requirement: 'Required' }));
 
                         const uploadedDocs = selectedStudent.documents || [];
+                        const groups = groupStudentDocuments(uploadedDocs);
 
                         return configuredTypes.map((docType) => {
-                          const matchingDoc = uploadedDocs.find(d => 
-                            (d.name && d.name.toLowerCase() === docType.name.toLowerCase()) ||
-                            (d.docTypeId && d.docTypeId === docType.id)
-                          );
+                          const matchingGroup = groups.find(g =>
+                            (g.name && g.name.toLowerCase() === docType.name.toLowerCase()) ||
+                            (g.docTypeId && (g.docTypeId === docType.id || String(g.docTypeId).toLowerCase() === String(docType.name).toLowerCase()))
+                          ) || null;
+                          const matchingDocs = matchingGroup?.files || [];
+                          const matchingDoc = matchingDocs[0] || null;
 
                           let currentStatus = selectedStudent.documentStatuses?.[docType.name] || selectedStudent.documentStatuses?.[docType.id];
                           if (!currentStatus) {
@@ -1693,8 +1524,8 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                                     </span>
                                   </div>
                                   <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                                    {matchingDoc ? (
-                                      <span>File attached: {matchingDoc.fileName || matchingDoc.name} ({matchingDoc.uploadedAt ? new Date(matchingDoc.uploadedAt).toLocaleDateString() : 'Uploaded'})</span>
+                                    {matchingDocs.length ? (
+                                      <span>{matchingDocs.length} file{matchingDocs.length === 1 ? '' : 's'} attached</span>
                                     ) : (
                                       <span>No physical file uploaded yet</span>
                                     )}
@@ -1724,11 +1555,26 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                                   )}
 
                                   <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer', margin: 0, padding: '4px 8px' }}>
-                                    {matchingDoc ? 'Replace' : 'Upload'}
-                                    <input type="file" style={{ display: 'none' }} accept="image/*,.pdf" onChange={(e) => handleAttachDocumentToStudent(e, docType.name)} />
+                                    Add file
+                                    <input type="file" multiple style={{ display: 'none' }} accept="image/*,.pdf" onChange={(e) => handleAttachDocumentToStudent(e, docType)} />
+                                  </label>
+                                  <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer', margin: 0, padding: '4px 8px' }} aria-label={`${docType.name} from camera`}>
+                                    Camera
+                                    <input type="file" style={{ display: 'none' }} accept="image/*" capture="environment" onChange={(e) => handleAttachDocumentToStudent(e, docType)} />
                                   </label>
                                 </div>
                               </div>
+                              {matchingDocs.length > 0 && (
+                                <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                  {matchingDocs.map((file) => (
+                                    <div key={file.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', borderTop: '1px dashed var(--border-light)', paddingTop: '4px' }}>
+                                      <span style={{ flex: 1, minWidth: 0, fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.fileName}</span>
+                                      <button className="btn btn-secondary btn-sm" onClick={() => handleViewDocument(file)}>View</button>
+                                      <button className="btn btn-ghost btn-sm" style={{ color: 'var(--status-error)' }} onClick={() => handleRemoveDocumentFile(matchingGroup.docTypeId, file.id)}>Remove</button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           );
                         });
@@ -1741,32 +1587,28 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                         ? settings.documentTypes
                         : (settings?.allowedDocuments || []).map(name => ({ name }))).map(d => d.name?.toLowerCase());
 
-                      const extraDocs = (selectedStudent.documents || []).filter(d => 
-                        !configuredNames.includes((d.name || '').toLowerCase())
+                      const extraGroups = groupStudentDocuments(selectedStudent.documents || []).filter(g =>
+                        !configuredNames.includes(String(g.name || '').toLowerCase())
                       );
 
-                      if (extraDocs.length === 0) return null;
+                      if (extraGroups.length === 0) return null;
 
                       return (
                         <div style={{ marginTop: '12px' }}>
                           <h5 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>Other Attachments</h5>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            {extraDocs.map((doc, idx) => {
-                              const docObj = typeof doc === 'object' && doc !== null ? doc : { name: String(doc) };
-                              return (
-                                <div key={idx} style={{ padding: '10px 14px', border: '1px solid var(--border-light)', borderRadius: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                  <div style={{ fontSize: '13px' }}>
-                                    <strong>{docObj.name || docObj.fileName || 'Attachment'}</strong>
-                                    {docObj.fileName && <span style={{ color: 'var(--text-secondary)', marginLeft: '8px', fontSize: '12px' }}>{docObj.fileName}</span>}
+                            {extraGroups.map((group) => (
+                              <div key={group.docTypeId || group.name} style={{ padding: '10px 14px', border: '1px solid var(--border-light)', borderRadius: '6px' }}>
+                                <div style={{ fontSize: '13px', fontWeight: 700, marginBottom: '4px' }}>{group.name}</div>
+                                {(group.files || []).map((file) => (
+                                  <div key={file.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', paddingTop: '4px', borderTop: '1px dashed var(--border-light)' }}>
+                                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.fileName}</span>
+                                    <button className="btn btn-secondary btn-sm" onClick={() => handleViewDocument(file)}>View File</button>
+                                    <button className="btn btn-ghost btn-sm" style={{ color: 'var(--status-error)' }} onClick={() => handleRemoveDocumentFile(group.docTypeId, file.id)}>Remove</button>
                                   </div>
-                                  {docObj.storageKey && (
-                                    <button className="btn btn-secondary btn-sm" onClick={() => handleViewDocument(docObj)}>
-                                      View File
-                                    </button>
-                                  )}
-                                </div>
-                              );
-                            })}
+                                ))}
+                              </div>
+                            ))}
                           </div>
                         </div>
                       );
@@ -1843,7 +1685,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                     </div>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
-                    <div className="form-group"><label className="form-label">Price (₹) per student</label><NumericInput className="form-input" value={renewAmount} onChange={(e) => setRenewAmount(Number(e.target.value))} /></div>
+                    <div className="form-group"><label className="form-label">Price (₹) per student</label><NumericInput className="form-input" value={renewAmount} readOnly={!canEditAmount} onChange={(e) => canEditAmount && setRenewAmountRaw(Number(e.target.value))} /></div>
                     <div className="form-group"><label className="form-label">Discount (₹) per student</label><NumericInput className="form-input" value={renewDiscount} onChange={(e) => setRenewDiscount(Number(e.target.value))} /></div>
                     <div className="form-group"><label className="form-label">Fine (₹) per student</label><NumericInput className="form-input" value={renewFine} onChange={(e) => setRenewFine(Number(e.target.value))} /></div>
                   </div>
@@ -2040,8 +1882,23 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                       </button>
                     </div>
                   )}
+                  {(() => {
+                    if (cycleCfg.mode === 'ANNIVERSARY' || !selectedStudent?.expiryDate) return null;
+                    const monthly = (renewAlign ? renewAlign.baseSuggested : Number(renewSuggested)) / Math.max(1, Number(renewDuration) || 1);
+                    const b = bridgeCharge(monthly, selectedStudent.expiryDate, cycleCfg);
+                    if (!b || b.aligned) return null;
+                    return (
+                      <label data-testid="align-box" style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', marginTop: '16px', fontSize: '12px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '8px 10px' }}>
+                        <input type="checkbox" checked={!!renewAlign} onChange={e => {
+                          if (e.target.checked) { const base = Number(renewSuggested); const sum = Number(renewAmount) + b.amount; setRenewAmountRaw(sum); setRenewSuggested(base + b.amount); setRenewAlign({ ...b, baseSuggested: base }); }
+                          else { const base = renewAlign.baseSuggested; setRenewAmountRaw(Number(renewAmount) - renewAlign.amount); setRenewSuggested(base); setRenewAlign(null); }
+                        }} />
+                        <span>Align to library cycle: add bridge ₹{b.amount.toLocaleString()} for {b.days} of {b.totalDays} days ({b.from} to {b.to}), then renew from the cycle start. Leave unticked to keep this student's own dates.</span>
+                      </label>
+                    );
+                  })()}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginTop: '16px' }}>
-                    <div className="form-group"><label className="form-label">Price (₹)</label><NumericInput className="form-input" value={renewAmount} onChange={(e) => setRenewAmount(Number(e.target.value))} /></div>
+                    <div className="form-group"><label className="form-label">Price (₹)</label><NumericInput className="form-input" value={renewAmount} readOnly={!canEditAmount} title={canEditAmount ? undefined : 'You do not have permission to change amounts'} onChange={(e) => canEditAmount && setRenewAmountRaw(Number(e.target.value))} /></div>
                     <div className="form-group"><label className="form-label">Discount (₹)</label><NumericInput className="form-input" value={renewDiscount} onChange={(e) => setRenewDiscount(Number(e.target.value))} /></div>
                     <div className="form-group"><label className="form-label">Fine (₹)</label><NumericInput className="form-input" value={renewFine} onChange={(e) => setRenewFine(Number(e.target.value))} /></div>
                   </div>
@@ -2162,6 +2019,25 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                       )}
                     </select>
                   </div>
+                {relocPriceChange && relocPriceChange.amount !== 0 && (
+                  <div data-testid="reloc-price" style={{ fontSize: '12px', background: relocPriceChange.amount > 0 ? '#fff7ed' : '#ecfdf5', border: '1px solid #e2e8f0', borderRadius: '6px', padding: '8px 10px', marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <span>
+                      {relocPriceChange.amount > 0 ? 'Upgrade charge' : 'Credit to student'}: ₹{Math.abs(relocPriceChange.amount).toLocaleString()}
+                      {' '}(₹{relocPriceChange.oldFee} → ₹{relocPriceChange.newFee}/month, {relocPriceChange.days} of {relocPriceChange.totalDays} days left)
+                    </span>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                      <NumericInput className="form-input" style={{ maxWidth: '120px' }} value={relocOverride != null ? relocOverride : relocPriceChange.amount} readOnly={!canEditAmount} onChange={e => canEditAmount && setRelocOverride(Number(e.target.value))} />
+                      {relocPriceChange.amount > 0 && (
+                        <>
+                          <label style={{ display: 'flex', gap: '4px', alignItems: 'center' }}><input type="checkbox" checked={relocCollect} onChange={e => setRelocCollect(e.target.checked)} /> Collect now</label>
+                          <select className="form-select" style={{ maxWidth: '110px' }} value={relocMethod} onChange={e => setRelocMethod(e.target.value)}>
+                            <option>Cash</option><option>UPI</option><option>Card</option>
+                          </select>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
                   <div className="form-group">
                     <label className="form-label">Reason</label>
                     <input type="text" className="form-input" value={seatChangeReason} onChange={(e) => setSeatChangeReason(e.target.value)} required />
@@ -2187,8 +2063,10 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                 <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }} onClick={() => setPreviewDoc(null)} title="Close"><X size={20} /></button>
               </div>
               <div style={{ textAlign: 'center', maxHeight: '65vh', overflowY: 'auto', background: '#f8fafc', padding: '16px', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
-                {previewDoc.dataUrl?.startsWith('data:application/pdf') ? (
-                  <embed src={previewDoc.dataUrl} type="application/pdf" width="100%" height="450px" />
+                {isPdfAttachment({ name: previewDoc.fileName, type: previewDoc.fileType }) || previewDoc.dataUrl?.startsWith('data:application/pdf') ? (
+                  <object data={previewDoc.dataUrl} type="application/pdf" width="100%" height="450px" style={{ background: '#fff', borderRadius: 4 }}>
+                    <a href={previewDoc.dataUrl} target="_blank" rel="noreferrer">Open PDF</a>
+                  </object>
                 ) : (
                   <img src={previewDoc.dataUrl} alt={previewDoc.name} style={{ maxWidth: '100%', maxHeight: '450px', objectFit: 'contain', borderRadius: '4px' }} />
                 )}

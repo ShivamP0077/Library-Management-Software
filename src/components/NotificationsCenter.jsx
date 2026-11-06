@@ -1,8 +1,9 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import { Bell, AlertTriangle, CheckCircle2, RefreshCw, Paperclip, Plus, X } from 'lucide-react';
 import { api } from '../utils/api';
 import { openNotificationLink } from '../utils/notificationLinks';
+import { DocPreview } from './DocPreview';
 
 const SEV = { critical: { bg: '#fee2e2', fg: '#991b1b' }, important: { bg: '#fef9c3', fg: '#854d0e' }, info: { bg: '#eff6ff', fg: '#1e40af' } };
 const FILTERS = [
@@ -14,33 +15,119 @@ const FILTERS = [
 const changed = () => window.dispatchEvent(new Event('notifications:changed'));
 const when = (d) => (d ? new Date(d).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '');
 
+const NOTICE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+const MAX_NOTICE_FILES = 8;
+const MAX_NOTICE_BYTES = 5 * 1024 * 1024;
+const MAX_NOTICE_TOTAL = 10 * 1024 * 1024;
+const newRequestId = () => (globalThis.crypto?.randomUUID?.() || `notice-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+const validateNoticeFiles = (files) => {
+  if (files.length > MAX_NOTICE_FILES) throw new Error(`At most ${MAX_NOTICE_FILES} files per notice`);
+  files.forEach(validateNoticeFile);
+  if (files.reduce((sum, file) => sum + file.size, 0) > MAX_NOTICE_TOTAL) throw new Error('Files must be 10 MB or less in total. Remove a file or use smaller files.');
+};
+const validateNoticeFile = (file) => {
+  if (!NOTICE_TYPES.includes(file.type)) throw new Error('Only JPG, PNG, WEBP or PDF files are allowed');
+  if (file.size > MAX_NOTICE_BYTES) throw new Error(`${file.name} is larger than 5 MB`);
+};
+const readNoticeFile = (file) => new Promise((ok, bad) => {
+  const r = new FileReader(); r.onload = () => ok({ name: file.name, data: r.result }); r.onerror = bad; r.readAsDataURL(file);
+});
+const FileThumb = ({ file }) => {
+  const [url, setUrl] = useState(null);
+  useEffect(() => {
+    if (!file.type.startsWith('image/')) { setUrl(null); return undefined; }
+    const u = URL.createObjectURL(file); setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [file]);
+  return url ? <img src={url} alt="" style={{ width: 34, height: 34, objectFit: 'cover', borderRadius: 6 }} /> : <Paperclip size={18} />;
+};
+
 const NoticeForm = ({ onDone }) => {
   const [title, setTitle] = useState('');
   const [summary, setSummary] = useState('');
-  const [file, setFile] = useState(null);
+  const [files, setFiles] = useState([]); // [{ key, file }]
   const [busy, setBusy] = useState(false);
-  const submit = async (e) => {
-    e.preventDefault();
-    if (file && !['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].includes(file.type)) return toast.error('Only JPG, PNG, WEBP or PDF files are allowed');
-    if (file && file.size > 5 * 1024 * 1024) return toast.error('File is larger than 5 MB');
-    setBusy(true);
+  const [error, setError] = useState('');
+  const [preview, setPreview] = useState(null); // { key, file }
+  const [previewUrl, setPreviewUrl] = useState(null);
+  // Stable across retries: the server returns the existing notice instead of creating duplicates.
+  const clientRequestId = useRef(newRequestId());
+  const nextKey = useRef(0);
+  useEffect(() => {
+    if (!preview) { setPreviewUrl(null); return undefined; }
+    const u = URL.createObjectURL(preview.file); setPreviewUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [preview]);
+  const addFiles = (list) => {
+    const arr = Array.from(list || []);
+    if (!arr.length) return;
     try {
-      let attachment;
-      if (file) attachment = { name: file.name, data: await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = bad; r.readAsDataURL(file); }) };
-      await api.createNotice({ title, summary, attachment });
+      validateNoticeFiles([...files.map(f => f.file), ...arr]);
+      const next = [...files, ...arr.map(file => ({ key: nextKey.current++, file }))];
+      if (next.length > MAX_NOTICE_FILES) throw new Error(`At most ${MAX_NOTICE_FILES} files per notice`);
+      setFiles(next);
+    } catch (e) { toast.error(e.message); }
+  };
+  const removeFile = (key) => {
+    setFiles(prev => prev.filter(f => f.key !== key));
+    setPreview(prev => (prev?.key === key ? null : prev));
+  };
+  const replaceFile = (key, file) => {
+    if (!file) return;
+    try { validateNoticeFiles(files.map(f => f.key === key ? file : f.file)); setFiles(prev => prev.map(f => (f.key === key ? { ...f, file } : f))); }
+    catch (e) { toast.error(e.message); }
+  };
+  const submit = async (e) => {
+    e?.preventDefault?.();
+    if (busy) return;
+    setBusy(true); setError('');
+    try {
+      const attachments = await Promise.all(files.map(f => readNoticeFile(f.file)));
+      await api.createNotice({ title, summary, attachments, clientRequestId: clientRequestId.current }, { retries: 3 });
       toast.success('Notice added to Action Required');
+      clientRequestId.current = newRequestId();
       onDone();
-    } catch (err) { toast.error(err.message || 'Could not save notice'); } finally { setBusy(false); }
+    } catch (err) {
+      // Keep the title, summary and every selected file so the user can retry safely.
+      setError(err.message || 'Could not save notice');
+      toast.error(err.message || 'Could not save notice');
+    } finally { setBusy(false); }
   };
   return (
     <form onSubmit={submit} className="glass-panel" style={{ padding: 16, marginBottom: 16, display: 'grid', gap: 10 }}>
       <strong>New notice / letter</strong>
       <input className="form-input" placeholder="Title (e.g. Electricity board letter)" value={title} onChange={e => setTitle(e.target.value)} required minLength={3} maxLength={140} />
       <textarea className="form-input" placeholder="Short summary (optional)" rows={3} value={summary} onChange={e => setSummary(e.target.value)} maxLength={2000} />
-      <input type="file" accept=".jpg,.jpeg,.png,.webp,.pdf" onChange={e => setFile(e.target.files?.[0] || null)} style={{ maxWidth: '100%' }} />
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <label className="btn btn-secondary btn-sm" style={{ margin: 0, cursor: 'pointer' }}>Attach files
+          <input type="file" multiple accept=".jpg,.jpeg,.png,.webp,.pdf" onChange={e => { addFiles(e.target.files); e.target.value = ''; }} style={{ display: 'none' }} />
+        </label>
+        <label className="btn btn-secondary btn-sm" style={{ margin: 0, cursor: 'pointer' }} aria-label="Take photo of notice">Camera
+          <input type="file" accept="image/*" capture="environment" onChange={e => { addFiles(e.target.files); e.target.value = ''; }} style={{ display: 'none' }} />
+        </label>
+        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Up to {MAX_NOTICE_FILES} files · 5 MB each · 10 MB total</span>
+      </div>
+      {files.length > 0 && (
+        <div style={{ display: 'grid', gap: 6 }}>
+          {files.map(({ key, file }) => (
+            <div key={key} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: 6, border: '1px solid var(--border-light)', borderRadius: 8, minWidth: 0 }}>
+              <FileThumb file={file} />
+              <span style={{ flex: '1 1 140px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13 }}>{file.name}</span>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPreview({ key, file })}>Preview</button>
+              <label className="btn btn-ghost btn-sm" style={{ margin: 0, cursor: 'pointer' }}>Replace
+                <input type="file" accept=".jpg,.jpeg,.png,.webp,.pdf" onChange={e => { replaceFile(key, e.target.files?.[0]); e.target.value = ''; }} style={{ display: 'none' }} />
+              </label>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => removeFile(key)} style={{ color: 'var(--status-error, #dc2626)' }}>Remove</button>
+            </div>
+          ))}
+        </div>
+      )}
+      {preview && previewUrl && <DocPreview src={previewUrl} name={preview.file.name} fileType={preview.file.type} onClose={() => setPreview(null)} onRemove={() => removeFile(preview.key)} />}
+      {error && <div role="alert" style={{ fontSize: 13, color: 'var(--danger, #dc2626)' }}>Not saved: {error}</div>}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <button className="btn btn-primary btn-sm" disabled={busy}>{busy ? 'Saving…' : 'Save notice'}</button>
-        <button type="button" className="btn btn-secondary btn-sm" onClick={onDone}>Cancel</button>
+        {error && <button type="button" className="btn btn-secondary btn-sm" onClick={submit} disabled={busy}>Retry</button>}
+        <button type="button" className="btn btn-secondary btn-sm" onClick={onDone} disabled={busy}>Cancel</button>
       </div>
     </form>
   );
@@ -53,9 +140,10 @@ export const NotificationItem = ({ n, setActiveTab, onChanged, compact = false }
     if (!n.read) api.markNotificationRead(n.id).then(changed).catch(() => {});
     openNotificationLink(n.link, setActiveTab);
   };
-  const download = async () => {
+  const noticeFiles = n.attachments?.length ? n.attachments : (n.attachment ? [n.attachment] : []);
+  const download = async (attachmentId) => {
     try {
-      const a = await api.notificationAttachment(n.id);
+      const a = attachmentId === 'legacy' ? await api.notificationAttachment(n.id) : await api.notificationAttachments(n.id, attachmentId);
       const link = document.createElement('a'); link.href = a.data; link.download = a.name; link.click();
     } catch (e) { toast.error(e.message || 'Could not open file'); }
   };
@@ -74,7 +162,7 @@ export const NotificationItem = ({ n, setActiveTab, onChanged, compact = false }
         </div>
         {!compact && (
           <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-            {n.attachment && <button className="btn btn-secondary btn-sm" onClick={download}><Paperclip size={14} /> {n.attachment.name}</button>}
+            {noticeFiles.map(a => <button key={a.id} className="btn btn-secondary btn-sm" onClick={() => download(a.id)}><Paperclip size={14} /> {a.name}</button>)}
             {n.status === 'open' && <button className="btn btn-secondary btn-sm" onClick={() => act(() => api.markNotificationRead(n.id, n.read), n.read ? 'Marked unread' : null)}>{n.read ? 'Mark unread' : 'Mark read'}</button>}
             {n.status === 'open' && n.actionRequired && (
               <button className="btn btn-primary btn-sm" onClick={() => { const r = window.prompt('How was this resolved? (optional)', ''); if (r !== null) act(() => api.resolveNotification(n.id, r), 'Marked resolved'); }}>

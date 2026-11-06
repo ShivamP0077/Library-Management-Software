@@ -440,15 +440,28 @@ body {
 .seat-selected { box-shadow: 0 0 0 3px var(--brand-primary); transform: scale(1.05); z-index: 20; border-color: var(--brand-primary); }
 .seat-selected-outline { outline: 3px solid #16a34a !important; outline-offset: 2px !important; transform: scale(1.04); z-index: 20; }
 
+/* Issue #12: the on-screen receipt is responsive inside the modal. */
+.printable-receipt { width: 100%; min-width: 0; font-size: 0.875rem; }
+.printable-receipt table { table-layout: fixed; }
+.printable-receipt td, .printable-receipt th { overflow-wrap: anywhere; }
+
 /* Print */
+/* Issue #12: receipts print on A4 as two A5 halves (student copy + library copy),
+   each scaled to fit its half. On screen the sheet is kept off-screen for measuring. */
+.receipt-print-sheet, .receipt-outer { position: fixed; left: -10000px; top: 0; width: 210mm; visibility: hidden; pointer-events: none; }
+.receipt-print-sheet .rc-copy { width: 210mm; height: 148.5mm; padding: 8mm; box-sizing: border-box; overflow: hidden; background: #fff; color: #000; display: flex; justify-content: center; align-items: flex-start; }
+.receipt-print-sheet .rc-copy + .rc-copy { border-top: 1px dashed #999; }
+.receipt-print-sheet .rc-inner { transform-origin: top center; }
+.receipt-print-sheet .rc-measure { position: absolute; left: 0; top: 0; visibility: hidden !important; }
+.receipt-print-sheet .rc-measure * { visibility: hidden !important; }
 @media print {
+  @page { size: A4 portrait; margin: 0; }
+  html, body { background: #fff !important; }
   body * { visibility: hidden; }
-  .printable-receipt, .printable-receipt * { visibility: visible; }
-  .printable-receipt {
-    position: absolute; left: 0; top: 0; width: 100%;
-    max-width: 80mm; padding: 10px; background: #fff !important;
-    color: #000 !important; font-family: monospace; font-size: 12px;
-  }
+  .receipt-print-sheet, .receipt-print-sheet *, .receipt-outer, .receipt-outer * { visibility: visible; }
+  .receipt-print-sheet, .receipt-outer { position: absolute; left: 0; top: 0; }
+  .receipt-print-sheet .rc-measure { display: none; }
+  .receipt-print-sheet .rc-copy { page-break-inside: avoid; break-inside: avoid; }
   .no-print { display: none !important; }
 }
 

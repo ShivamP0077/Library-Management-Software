@@ -21,13 +21,19 @@ function getTransport() {
   return transport;
 }
 
-/** Returns true when handed to SMTP; false when captured (not configured / test). */
-export async function sendMail({ to, subject, text, html }) {
+const cleanAttachments = (list) => (Array.isArray(list) ? list : [])
+  .filter(a => a && a.filename && a.content != null)
+  .map(a => ({ filename: String(a.filename), content: a.content, contentType: a.contentType || undefined }));
+
+/** Returns true when handed to SMTP; false when captured (not configured / test). Throws on transport failure. */
+export async function sendMail({ to, subject, text, html, attachments }) {
+  const files = cleanAttachments(attachments);
   if (!mailEnabled()) {
-    outbox.push({ to, subject, text, at: new Date() });
+    // Capture metadata only; attachment bytes and credentials are never logged.
+    outbox.push({ to, subject, text, at: new Date(), attachments: files.map(f => ({ filename: f.filename, contentType: f.contentType, size: f.content?.length || 0 })) });
     if (outbox.length > 50) outbox.shift();
     return false;
   }
-  await getTransport().sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to, subject, text, html });
+  await getTransport().sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to, subject, text, html, ...(files.length ? { attachments: files } : {}) });
   return true;
 }

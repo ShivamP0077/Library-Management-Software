@@ -11,8 +11,14 @@ import { LibrarySettings } from './components/LibrarySettings';
 import { NewStudentModal } from './components/Modals/NewStudentModal';
 import { PrintReceiptModal } from './components/Modals/PrintReceiptModal';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Toaster } from 'react-hot-toast';
-import { ShieldAlert, ArrowLeft, LogOut, Eye, WifiOff, Cloud } from 'lucide-react';
+import toast, { Toaster } from 'react-hot-toast';
+import { ShieldAlert, ArrowLeft, LogOut, Eye, WifiOff, Cloud, KeyRound, CreditCard, UserRound, Sparkles } from 'lucide-react';
+import { ChangePasswordModal } from './auth/ChangePasswordModal';
+import { MySubscriptionModal } from './auth/MySubscriptionModal';
+import { MyProfileModal } from './auth/MyProfileModal';
+import { MySoftwarePlanModal } from './auth/MySoftwarePlanModal';
+import { initHistory, navTab, TAB_FROM_HASH } from './utils/appHistory';
+import { useBackClose } from './utils/useBackClose';
 import { NotificationsCenter } from './components/NotificationsCenter';
 import { SupportCenter } from './components/SupportCenter';
 import { PreviousStudentRecords } from './components/PreviousStudentRecords';
@@ -20,10 +26,13 @@ import { SetupWizard } from './components/SetupWizard';
 import { useLibrary } from './context/LibraryContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { AuthProvider, useAuth, prepareLocalCacheFor } from './auth/AuthContext';
+import { setCacheScope, clearCacheScope } from './utils/tenantCache';
 import { LoginScreen } from './auth/LoginScreen';
 import { SuperAdminDashboard } from './auth/SuperAdminDashboard';
 import { PartnerPortal } from './auth/PartnerPortal';
 import { setTenantContext } from './utils/api';
+import { WhatsAppHub } from './components/WhatsAppHub';
+import { WhatsAppBanner } from './components/WhatsAppBanner';
 
 const pageVariants = {
   initial: { opacity: 0 },
@@ -32,14 +41,35 @@ const pageVariants = {
 };
 
 export const AppContent = () => {
-  const { settings, hasPermission } = useLibrary();
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const { settings, hasPermission, currentStaff } = useLibrary();
+  const KNOWN_TABS = ['dashboard', 'students', 'seats', 'payments', 'expenses', 'reports', 'settings', 'whatsapp', 'archives', 'notifications', 'support'];
+  const [activeTab, setActiveTab] = useState(() => { const t = TAB_FROM_HASH(); return KNOWN_TABS.includes(t) ? t : 'dashboard'; });
+  // Issue #1: browser Back/Forward move between screens.
+  React.useEffect(() => initHistory(activeTab, (t) => { if (KNOWN_TABS.includes(t)) setActiveTab(t); }), []); // eslint-disable-line react-hooks/exhaustive-deps
+  React.useEffect(() => { navTab(activeTab); }, [activeTab]);
+  React.useEffect(() => {
+    const onStart = () => toast('You are on the first screen. Use Sign out to leave.', { id: 'back-at-start' });
+    window.addEventListener('libos:back-at-start', onStart);
+    return () => window.removeEventListener('libos:back-at-start', onStart);
+  }, []);
+  const [whatsappPage, setWhatsappPage] = useState('messages');
+  const canManageWhatsapp = !currentStaff || currentStaff.role === 'Admin' || currentStaff.role === 'Manager' || hasPermission('settings', 'manage') || hasPermission('settings', 'edit');
+  // Deep links from anywhere (banner Reconnect, Settings shortcuts): navigateTo(tab, sub)
+  React.useEffect(() => {
+    const onNav = (e) => { const { tab, sub } = e.detail || {}; if (tab === 'whatsapp' && sub) setWhatsappPage(sub); if (tab) setActiveTab(tab); };
+    window.addEventListener('libos:navigate', onNav);
+    return () => window.removeEventListener('libos:navigate', onNav);
+  }, []);
   const [isNewStudentModalOpen, setIsNewStudentModalOpen] = useState(false);
   const [waitlistPayload, setWaitlistPayload] = useState(null);
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [renewActionStudent, setRenewActionStudent] = useState(null);
   const [relocateActionStudent, setRelocateActionStudent] = useState(null);
   const [activeReceiptToPrint, setActiveReceiptToPrint] = useState(null);
+  // Back closes these first (issue #1).
+  useBackClose(isNewStudentModalOpen, () => setIsNewStudentModalOpen(false));
+  useBackClose(!!selectedStudent, () => setSelectedStudent(null));
+  useBackClose(!!activeReceiptToPrint, () => setActiveReceiptToPrint(null));
   
   // Integrity deep-link action & Setup Wizard state
   const [settingsAction, setSettingsAction] = useState(null);
@@ -72,11 +102,12 @@ export const AppContent = () => {
         }}
       />
 
+      <WhatsAppBanner />
       {/* Main Page Body Container */}
       <div className="page-body-wrapper" style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         
         {/* Scroller for the main content */}
-        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+        <div className="page-scroller" style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
           <main className="main-content">
             <AnimatePresence mode="wait">
               <motion.div
@@ -89,7 +120,7 @@ export const AppContent = () => {
                 style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
               >
                 <ErrorBoundary componentName="Active Module">
-            {!hasPermission(activeTab, 'view') && activeTab !== 'dashboard' && activeTab !== 'archives' && activeTab !== 'notifications' && activeTab !== 'support' ? (
+            {!hasPermission(activeTab, 'view') && activeTab !== 'dashboard' && activeTab !== 'archives' && activeTab !== 'notifications' && activeTab !== 'support' && activeTab !== 'whatsapp' ? (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '64px 24px', textAlign: 'center', minHeight: '400px' }}>
                 <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#fee2e2', color: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px' }}>
                   <ShieldAlert size={32} />
@@ -174,6 +205,9 @@ export const AppContent = () => {
                   />
                 )}
 
+                {activeTab === 'whatsapp' && (
+                  <WhatsAppHub page={whatsappPage} setPage={setWhatsappPage} canManage={canManageWhatsapp} />
+                )}
                 {activeTab === 'archives' && (
                   <PreviousStudentRecords setActiveTab={setActiveTab} />
                 )}
@@ -217,8 +251,23 @@ export const AppContent = () => {
 
 /** Thin bar above the app showing who is signed in, read-only state, offline mode, and navigation. */
 const SessionBar = ({ libraryName, readOnly, onBack, isOffline = false, onSwitchToCloud }) => {
-  const { user, logout } = useAuth();
+  const { user, logout, subscriptionAccess } = useAuth();
+  const [pwOpen, setPwOpen] = useState(false);
+  const [subOpen, setSubOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [softwareOpen, setSoftwareOpen] = useState(false);
+  useBackClose(pwOpen, () => setPwOpen(false));
+  useBackClose(profileOpen, () => setProfileOpen(false));
+  useBackClose(softwareOpen, () => setSoftwareOpen(false));
+  const locked = subscriptionAccess && subscriptionAccess.ok === false;
   return (
+    <>
+    {locked && (
+      <div data-testid="subscription-lock-banner" style={{ padding: '8px 16px', background: '#fef2f2', color: '#991b1b', fontSize: 13, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <span>{subscriptionAccess.message || 'Your plan is inactive. Renew to keep editing.'}</span>
+        {user?.role === 'client_admin' && <button type="button" className="btn btn-primary btn-sm" onClick={() => setSoftwareOpen(true)}>View plan</button>}
+      </div>
+    )}
     <div id="session-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '6px 16px', fontSize: 12, background: readOnly ? '#fef3c7' : isOffline ? '#1e293b' : '#111827', color: readOnly ? '#92400e' : '#e5e7eb' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         {onBack && <button className="btn btn-ghost btn-sm" onClick={onBack} style={{ color: 'inherit' }}><ArrowLeft size={14} /> <span>All libraries</span></button>}
@@ -238,27 +287,39 @@ const SessionBar = ({ libraryName, readOnly, onBack, isOffline = false, onSwitch
         ) : (
           <>
             <span><span className="session-email">{user?.email} · </span>{user?.role === 'superadmin' ? 'Super Admin' : user?.role === 'client_admin' ? 'Client Admin' : user?.role === 'partner' ? 'Partner' : user?.role === 'agent' ? 'Agent' : 'Staff'}</span>
+            {!onBack && <button className="btn btn-ghost btn-sm" onClick={() => setProfileOpen(true)} style={{ color: 'inherit' }} aria-label="My Profile"><UserRound size={14} /> <span>My Profile</span></button>}
+            {!onBack && user?.role === 'client_admin' && <button className="btn btn-ghost btn-sm" onClick={() => setSoftwareOpen(true)} style={{ color: 'inherit' }} aria-label="My Software Plan"><Sparkles size={14} /> <span>My Software Plan</span></button>}
+            {!onBack && <button className="btn btn-ghost btn-sm" onClick={() => setPwOpen(true)} style={{ color: 'inherit' }} aria-label="Change password"><KeyRound size={14} /> <span>Password</span></button>}
             <button className="btn btn-ghost btn-sm" onClick={logout} style={{ color: 'inherit' }}><LogOut size={14} /> <span>Sign out</span></button>
+            {subOpen && <MySubscriptionModal libraryName={libraryName} onClose={() => setSubOpen(false)} />}
+            {profileOpen && <MyProfileModal onClose={() => setProfileOpen(false)} />}
+            {softwareOpen && <MySoftwarePlanModal onClose={() => setSoftwareOpen(false)} />}
+            {pwOpen && <ChangePasswordModal onClose={() => setPwOpen(false)} hasPassword={!(user?.authProviders?.length && !user.authProviders.includes('password'))} />}
           </>
         )}
       </div>
     </div>
+    </>
   );
 };
 
 const LibraryWorkspace = ({ libraryId, libraryName, readOnly = false, lockedStaffId = null, onBack, isOffline = false, onSwitchToCloud }) => {
   const [ready, setReady] = useState(false);
   React.useLayoutEffect(() => {
-    if (!isOffline && libraryId) {
+    if (isOffline) {
+      setCacheScope({ offline: true }); // offline mode keeps its original local cache
+    } else if (libraryId) {
       setTenantContext(onBack ? { libraryId, readOnly } : {});
-      prepareLocalCacheFor(`${libraryId}${readOnly ? ':ro' : ''}`);
+      prepareLocalCacheFor(libraryId, { readOnly });
+    } else {
+      clearCacheScope();
     }
     setReady(true);
   }, [libraryId, readOnly, onBack, isOffline]);
 
   if (!ready) return null;
   return (
-    <div className="lib-workspace" style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+    <div className="lib-workspace" style={{ display: 'flex', flexDirection: 'column' }}>
       <SessionBar libraryName={libraryName} readOnly={readOnly} onBack={onBack} isOffline={isOffline} onSwitchToCloud={onSwitchToCloud} />
       <div style={{ flex: 1, minHeight: 0 }}>
         <LibraryProvider key={`${libraryId || 'local'}-${readOnly}-${isOffline}`} readOnly={readOnly} lockedStaffId={lockedStaffId}>

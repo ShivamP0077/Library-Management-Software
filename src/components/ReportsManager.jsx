@@ -4,6 +4,7 @@ import { BarChart3, TrendingUp, TrendingDown, DollarSign, Receipt, PieChart, Use
 import { motion } from 'framer-motion';
 import { api } from '../utils/api';
 import toast from 'react-hot-toast';
+import { isVoidedPayment, sumActivePayments } from '../utils/paymentVoid';
 
 const firstOfMonth = (dateStr) => {
   const d = dateStr ? new Date(`${dateStr}T00:00:00`) : new Date();
@@ -64,12 +65,13 @@ export const ReportsManager = () => {
   const filteredExpenses = expenses.filter(e => activeBranchId === 'all' || e.branchId === activeBranchId);
   const filteredStudents = students.filter(s => activeBranchId === 'all' || s.branchId === activeBranchId);
 
-  const totalIncome = filteredPayments.reduce((sum, p) => sum + (p.netTotal || 0), 0);
+  const totalIncome = sumActivePayments(filteredPayments);
   const totalExpenses = filteredExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
   const netProfitLoss = totalIncome - totalExpenses;
 
   const methodTotals = { UPI: 0, Cash: 0, Card: 0, 'Bank Transfer': 0 };
   filteredPayments.forEach(p => {
+    if (isVoidedPayment(p)) return;
     if (p.method === 'Split' && Array.isArray(p.breakdown)) {
       p.breakdown.forEach(b => {
         const m = b.method || 'Other';

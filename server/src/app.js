@@ -6,6 +6,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { redact } from './db.js';
 import routes, { healthHandler } from './routes.js';
+import { createPaymentsWebhookRouter } from './paymentsWebhook.js';
 
 export function createApp() {
   const app = express();
@@ -13,12 +14,14 @@ export function createApp() {
   const corsOrigins = (process.env.CORS_ORIGIN || '*').split(',').map(s => s.trim().replace(/\/+$/, '')).filter(Boolean);
   app.use(cors({ origin: corsOrigins.includes('*') ? true : corsOrigins }));
   app.set('trust proxy', 1);
+  // Issue #19: raw body for payment webhook HMAC (must be before express.json).
+  app.use('/api/payments/webhook', express.raw({ type: '*/*' }), createPaymentsWebhookRouter());
   app.use(express.json({ limit: process.env.JSON_LIMIT || '25mb' })); // documents are base64 data URLs
   if (process.env.NODE_ENV !== 'test') {
     // Never log query strings for OAuth routes (they can contain codes/state).
     morgan.token('safe-url', (req) => {
       const url = req.originalUrl || req.url || '';
-      return url.startsWith('/api/auth/google') ? url.split('?')[0] : url;
+      return url.startsWith('/api/auth/google') || url.startsWith('/api/whatsapp/webhook') || url.startsWith('/api/payments/webhook') ? url.split('?')[0] : url;
     });
     app.use(morgan(':method :safe-url :status :response-time ms'));
   }
@@ -35,8 +38,9 @@ export function createApp() {
 
   app.use((err, _req, res, _next) => {
     const status = err.status || (err.code === 11000 ? 409 : 500);
+    const message = err.type === 'entity.too.large' ? 'Upload is too large. Notices: 8 files, 5 MB each, 10 MB total. Support: 3 files per message, 8 MB total.' : status === 500 ? 'Internal server error' : redact(err.message);
     if (status === 500) console.error('[api] error:', redact(err.message));
-    res.status(status).json({ error: status === 500 ? 'Internal server error' : redact(err.message), ...(err.code && typeof err.code === 'string' ? { code: err.code } : {}), ...(err.details ? { details: err.details } : {}) });
+    res.status(status).json({ error: message, ...(err.code && typeof err.code === 'string' ? { code: err.code } : {}), ...(err.details ? { details: err.details } : {}) });
   });
   return app;
 }

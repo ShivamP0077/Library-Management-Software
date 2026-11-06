@@ -17,6 +17,7 @@ export const CATEGORIES = ['summary', 'students', 'seats', 'payments', 'expenses
 // Which staff module permission is needed to see a category (owner/superadmin see everything).
 const CATEGORY_MODULE = { summary: 'reports', students: 'students', seats: 'seats', payments: 'payments', expenses: 'expenses', notices: null, whatsapp: 'settings', support: null, security: '__owner__', system: '__owner__' };
 
+const attachmentSchema = new mongoose.Schema({ name: String, type: { type: String }, size: Number, data: String }, { _id: true });
 const schema = new mongoose.Schema({
   tenantId: { type: String, required: true, index: true },
   dedupeKey: { type: String, required: true },
@@ -32,7 +33,10 @@ const schema = new mongoose.Schema({
   lastNotifiedAt: { type: Date, default: Date.now },
   readBy: { type: [String], default: [] },
   resolvedAt: Date, resolvedBy: String, resolution: String,
-  attachment: { name: String, type: { type: String }, size: Number, data: String }, // notices only (validated)
+  // `attachment` is the legacy single-file field; `attachments` is the Issue #22 multi-file shape.
+  attachment: { name: String, type: { type: String }, size: Number, data: String },
+  attachments: { type: [attachmentSchema], default: [] },
+  clientRequestId: String,
   createdBy: String,
 }, { timestamps: true });
 schema.index({ tenantId: 1, dedupeKey: 1 }, { unique: true });
@@ -144,10 +148,43 @@ export async function viewerScope(req) {
 }
 const visibleCats = (scope) => CATEGORIES.filter(c => scope.can(c));
 
-const pub = (n, uid) => ({ id: String(n._id), category: n.category, severity: n.severity, title: n.title, body: n.body, link: n.link, status: n.status, actionRequired: n.actionRequired, notifyCount: n.notifyCount, at: n.lastNotifiedAt, createdAt: n.createdAt, read: (n.readBy || []).includes(uid), source: n.source, createdBy: n.createdBy, resolvedAt: n.resolvedAt, resolvedBy: n.resolvedBy, resolution: n.resolution, attachment: n.attachment ? { name: n.attachment.name, type: n.attachment.type, size: n.attachment.size } : undefined });
+const pubAttachment = (a) => ({ id: a._id ? String(a._id) : 'legacy', name: a.name, type: a.type, size: a.size });
+const pub = (n, uid) => {
+  const files = Array.isArray(n.attachments) && n.attachments.length ? n.attachments : (n.attachment ? [n.attachment] : []);
+  const attachments = files.map(pubAttachment);
+  return { id: String(n._id), category: n.category, severity: n.severity, title: n.title, body: n.body, link: n.link, status: n.status, actionRequired: n.actionRequired, notifyCount: n.notifyCount, at: n.lastNotifiedAt, createdAt: n.createdAt, read: (n.readBy || []).includes(uid), source: n.source, createdBy: n.createdBy, resolvedAt: n.resolvedAt, resolvedBy: n.resolvedBy, resolution: n.resolution,
+    attachments,
+    // Keep the legacy field so older clients/tests continue to work.
+    attachment: attachments[0],
+  };
+};
 
 export const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
 export const MAX_ATTACHMENT = 5 * 1024 * 1024;
+export const MAX_NOTICE_ATTACHMENTS = 8;
+export const MAX_NOTICE_TOTAL = 10 * 1024 * 1024;
+export const MAX_SUPPORT_TOTAL = 8 * 1024 * 1024;
+
+/** Validate the legacy single attachment and/or the new attachments array together. */
+export function parseNoticeAttachments({ attachment, attachments } = {}) {
+  const raw = [
+    ...(Array.isArray(attachments) ? attachments : []),
+    ...(attachment ? [attachment] : []),
+  ];
+  if (raw.length > MAX_NOTICE_ATTACHMENTS) throw Object.assign(new Error(`At most ${MAX_NOTICE_ATTACHMENTS} files per notice`), { status: 400 });
+  let totalBytes = 0;
+  return raw.map((a) => {
+    const m = /^data:([\w/+.-]+);base64,([A-Za-z0-9+/=]+)$/.exec(String(a?.data || ''));
+    if (!m || !ALLOWED_TYPES.includes(m[1])) throw Object.assign(new Error('Only JPG, PNG, WEBP or PDF files are allowed'), { status: 400 });
+    const size = Math.ceil(m[2].replace(/=+$/, '').length * 3 / 4);
+    if (size > MAX_ATTACHMENT) throw Object.assign(new Error('File is larger than 5 MB'), { status: 413, code: 'ATTACHMENT_TOO_LARGE' });
+    totalBytes += size;
+    if (totalBytes > MAX_NOTICE_TOTAL) throw Object.assign(new Error('Notice attachments must be 10 MB or less in total'), { status: 413, code: 'NOTICE_TOTAL_TOO_LARGE' });
+    return { name: String(a.name || 'notice').replace(/[^\w .()-]/g, '_').slice(0, 120), type: m[1], size, data: a.data };
+  });
+}
+// In-process guard so a retry cannot start a second save while the first request is still writing.
+const noticeInflight = new Set();
 
 export function createNotificationRouter() {
   const r = express.Router();
@@ -204,26 +241,50 @@ export function createNotificationRouter() {
   r.get('/notifications/:id/attachment', wrap(async (req, res) => {
     const n = await findVisible(req); if (!n?._id) return res.status(404).json({ error: 'Not found' });
     const full = await Notification.findOne({ tenantId: req.tenantId, _id: n._id }).lean();
-    if (!full?.attachment?.data) return res.status(404).json({ error: 'No attachment' });
-    res.json({ name: full.attachment.name, type: full.attachment.type, data: full.attachment.data });
+    const files = Array.isArray(full?.attachments) && full.attachments.length ? full.attachments : (full?.attachment ? [full.attachment] : []);
+    const a = files[0];
+    if (!a?.data) return res.status(404).json({ error: 'No attachment' });
+    res.json({ name: a.name, type: a.type, data: a.data });
+  }));
+
+  r.get('/notifications/:id/attachments/:aid', wrap(async (req, res) => {
+    const n = await findVisible(req); if (!n?._id) return res.status(404).json({ error: 'Not found' });
+    const full = await Notification.findOne({ tenantId: req.tenantId, _id: n._id }).lean();
+    const files = Array.isArray(full?.attachments) && full.attachments.length ? full.attachments : (full?.attachment ? [full.attachment] : []);
+    const a = files.find(x => String(x._id) === req.params.aid) || (req.params.aid === 'legacy' ? full?.attachment : null) || (/^\d+$/.test(req.params.aid) ? files[Number(req.params.aid)] : null); // numeric index kept for older clients
+    if (!a?.data) return res.status(404).json({ error: 'Attachment not found' });
+    res.json({ name: a.name, type: a.type, data: a.data });
   }));
 
   /** Staff upload an official notice (e.g. fire-safety letter); owner gets it as Action Required. */
   r.post('/notices', wrap(async (req, res) => {
-    const { title, summary, attachment } = req.body || {};
+    const { title, summary, clientRequestId } = req.body || {};
     if (!title || String(title).trim().length < 3) return res.status(400).json({ error: 'Title is required' });
-    let att;
-    if (attachment) {
-      const m = /^data:([\w/+.-]+);base64,(.+)$/.exec(String(attachment.data || ''));
-      if (!m || !ALLOWED_TYPES.includes(m[1])) return res.status(400).json({ error: 'Only JPG, PNG, WEBP or PDF files are allowed' });
-      const size = Math.floor(m[2].length * 3 / 4);
-      if (size > MAX_ATTACHMENT) return res.status(400).json({ error: 'File is larger than 5 MB' });
-      att = { name: String(attachment.name || 'notice').slice(0, 120), type: m[1], size, data: attachment.data };
+    const files = parseNoticeAttachments(req.body || {});
+    const requestId = clientRequestId ? String(clientRequestId).slice(0, 120) : null;
+    const inflightKey = requestId ? `${req.tenantId}:${requestId}` : null;
+    const dedupeKey = requestId ? `notice:client:${requestId}` : `notice:${Date.now()}:${req.user.id}`;
+    if (requestId) {
+      const existing = await Notification.findOne({ tenantId: req.tenantId, dedupeKey }).lean();
+      if (existing) return res.status(200).json({ ...pub(existing, req.user.id), deduplicated: true });
+      if (noticeInflight.has(inflightKey)) return res.status(409).json({ error: 'Notice is still saving. Please retry in a moment.', code: 'NOTICE_IN_FLIGHT' });
+      noticeInflight.add(inflightKey);
     }
-    const n = await Notification.create({ tenantId: req.tenantId, dedupeKey: `notice:${Date.now()}:${req.user.id}`, category: 'notices', severity: 'important', actionRequired: true, source: 'manual',
-      title: String(title).trim().slice(0, 140), body: summary ? String(summary).slice(0, 2000) : '', attachment: att, createdBy: req.user.email, readBy: [req.user.id], link: { tab: 'notifications', params: {} } });
-    await audit(req, 'notice.uploaded', { target: String(n._id), detail: { title: n.title, hasAttachment: !!att } });
-    res.status(201).json(pub(n.toObject(), req.user.id));
+    try {
+      const n = await Notification.create({ tenantId: req.tenantId, dedupeKey, category: 'notices', severity: 'important', actionRequired: true, source: 'manual',
+        title: String(title).trim().slice(0, 140), body: summary ? String(summary).slice(0, 2000) : '', attachment: files[0], attachments: files,
+        clientRequestId: requestId || undefined, createdBy: req.user.email, readBy: [req.user.id], link: { tab: 'notifications', params: {} } });
+      await audit(req, 'notice.uploaded', { target: String(n._id), detail: { title: n.title, attachments: files.length } });
+      res.status(201).json(pub(n.toObject(), req.user.id));
+    } catch (e) {
+      if (e?.code === 11000 && requestId) {
+        const existing = await Notification.findOne({ tenantId: req.tenantId, dedupeKey }).lean();
+        if (existing) return res.status(200).json({ ...pub(existing, req.user.id), deduplicated: true });
+      }
+      throw e;
+    } finally {
+      if (inflightKey) noticeInflight.delete(inflightKey);
+    }
   }));
 
   r.post('/notifications/refresh', wrap(async (req, res) => {

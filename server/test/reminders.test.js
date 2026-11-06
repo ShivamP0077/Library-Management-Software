@@ -110,3 +110,30 @@ test('auto receipt on new payment: admission then renewal, once per receipt', as
   await call('PUT', '/api/payments', { token: A(), body: (await call('GET', '/api/payments', { token: A() })).body });
   assert.equal(sent.length, n + 2);
 });
+
+test('auto receipt when the payment arrives before the student (admission race)', async () => {
+  setReceiptDeps({ client, retryMs: [20] });
+  const n = sent.length;
+  const all = (await call('GET', '/api/payments', { token: A() })).body;
+  await call('PUT', '/api/payments', { token: A(), body: [...all, { id: 'R-9', receiptNo: 'R-9', studentId: 'S9', amount: 500, netTotal: 500, method: 'Cash', date: today }] });
+  assert.equal(sent.length, n, 'no student yet: nothing sent');
+  let msg = await WhatsappMessage.findOne({ libraryId: 'lib-a', dedupeKey: 'receipt:R-9' }).lean();
+  assert.equal(msg.status, 'skipped'); assert.equal(msg.reason, 'no_student');
+  const students = (await call('GET', '/api/students', { token: A() })).body;
+  await call('PUT', '/api/students', { token: A(), body: [...students, { id: 'S9', name: 'Meera', phone: '9876544444', expiryDate: addDays(today, 30) }] });
+  assert.equal(sent.length, n + 1); assert.match(sent.at(-1).body, /R-9/);
+  msg = await WhatsappMessage.findOne({ libraryId: 'lib-a', dedupeKey: 'receipt:R-9' }).lean();
+  assert.equal(msg.status, 'sent'); assert.equal(msg.type, 'admission_receipt');
+  // re-syncing students does not resend
+  await call('PUT', '/api/students', { token: A(), body: (await call('GET', '/api/students', { token: A() })).body });
+  assert.equal(sent.length, n + 1);
+});
+
+test('skipped receipt rows record why (no_phone)', async () => {
+  setReceiptDeps({ client, retryMs: [] });
+  const students = (await call('GET', '/api/students', { token: A() })).body;
+  await call('PUT', '/api/students', { token: A(), body: [...students, { id: 'S10', name: 'NoPhone', expiryDate: addDays(today, 30) }] });
+  await call('POST', '/api/payments', { token: A(), body: { id: 'R-10', receiptNo: 'R-10', studentId: 'S10', amount: 500, netTotal: 500, method: 'Cash', date: today } });
+  const msg = await WhatsappMessage.findOne({ libraryId: 'lib-a', dedupeKey: 'receipt:R-10' }).lean();
+  assert.equal(msg.status, 'skipped'); assert.equal(msg.reason, 'no_phone');
+});

@@ -24,6 +24,7 @@ const sendReceiptsAfterSave = async (tenantId, payments, newStudentKeys) => {
   if (process.env.NODE_ENV === 'test') await p;
 };
 import { deleteLibraryData } from './deleteLibrary.js';
+import { confirmNameMatches } from './confirmName.js';
 import { createSignupRouter, createGoogleSignupPending, signupEnabled } from './signup.js';
 import { createSubscriptionRouter } from './subscription.js';
 import { requireActiveSubscription, requireFeature, refreshSubscriptionStatus, accessFor } from './subscriptionAccess.js';
@@ -326,7 +327,7 @@ admin.patch('/libraries/:libraryId', wrap(async (req, res) => {
 admin.delete('/libraries/:libraryId', wrap(async (req, res) => {
   const lib = await Library.findOne({ libraryId: req.params.libraryId }).lean();
   if (!lib) return res.status(404).json({ error: 'Library not found' });
-  if (String(req.body?.confirmName ?? '').trim() !== String(lib.name).trim()) return res.status(400).json({ error: 'Type the library name exactly to confirm', code: 'confirm_mismatch' });
+  if (!confirmNameMatches(req.body?.confirmName, lib.name)) return res.status(400).json({ error: `The name you typed does not match "${lib.name}". Nothing was deleted.`, code: 'confirm_mismatch' });
   const r = await deleteLibraryData(lib.libraryId, { evolution: req.app.locals.evolutionClient });
   await audit(req, 'library.deleted', { tenantId: lib.libraryId, target: lib.libraryId, detail: { name: lib.name, ...r } });
   res.json({ ok: true, libraryId: lib.libraryId, ...r });

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-06 (IST)
+
+- **#16 Delete permanently fix** — 12:05 IST. Cause: the type-the-name check compared text exactly, on both the app and the server. iPhone typing changes text (auto capital letter, curly ’ instead of ', extra or non-breaking spaces), so the button stayed greyed out with no reason shown, or the server refused with an error that appeared as a toast behind the full-screen dialog. Fix: one shared rule (`src/utils/confirmName.js`, copy in `server/src/confirmName.js`) ignores capital letters, quote style and extra spaces but still needs the full name. Input has auto-capital/auto-correct off. The dialog shows "Name matches" / "does not match yet" and any server error inside the dialog; error text says "Nothing was deleted". Server error codes unchanged.
+
 ## 2026-11-05 (IST)
 
 - **Release: merge `release/21-issues` → main** — 22:05 IST. Ships all 21 PDF issues plus #9 server price lock, #11 voided history kept, #14 subscription enforcement, #15 Google signup hooks, #19 Razorpay/PayPal provider config, #2 dry-run report script, and log redaction (PRs #30–#58). Public signup and live payments stay off until configured. No customer data deleted; no DB migration. Rollback: previous main `8bfcbaf`, Render `dep-dblj6og473hc73b9jur0`, Vercel `dpl_CBn2yBVCCdQRsoHJY1Pq83PLggtp`.

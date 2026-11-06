@@ -17,7 +17,7 @@ This is an unmerged feature-branch handoff. The synthetic preview uses an isolat
 
 ## Commit status
 
-The implementation is on `feat/expanded-eight-issues`. Original base: `0fa4c03`. The branch commit and PR will be linked after they exist. This feature set deliberately contains no production migration, deployment or merge.
+Original base: `0fa4c03`. Feature implementation: [35c2545](https://github.com/ShivamP0077/Library-Management-Software/commit/35c2545a352f32a2cd6e7f9f6b47b1f4f7cd9595), [PR #64](https://github.com/ShivamP0077/Library-Management-Software/pull/64). Browser checks were unavailable and further tests were skipped at Shivam's deployment instruction.
 
 ## Required pre-deployment migration review
 

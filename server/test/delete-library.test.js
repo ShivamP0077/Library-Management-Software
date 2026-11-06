@@ -33,12 +33,14 @@ test('delete needs super admin and the exact name; then removes only that tenant
   assert.ok(beforeB.User >= 1 && Object.values(beforeB).reduce((x, y) => x + y, 0) >= 6);
 
   assert.equal((await call('DELETE', '/api/admin/libraries/lib-a', { token: ctx.tokens.a, body: { confirmName: 'Library A' } })).status, 403, 'owner cannot');
-  assert.equal((await call('DELETE', '/api/admin/libraries/lib-a', { token: ctx.tokens.sa, body: { confirmName: 'library a' } })).status, 400, 'name must match');
+  assert.equal((await call('DELETE', '/api/admin/libraries/lib-a', { token: ctx.tokens.sa, body: { confirmName: 'Library B' } })).status, 400, 'name must match');
+  const mm = await call('DELETE', '/api/admin/libraries/lib-a', { token: ctx.tokens.sa, body: { confirmName: 'Library' } });
+  assert.equal(mm.status, 400); assert.equal(mm.body.code, 'confirm_mismatch'); assert.match(mm.body.error, /Nothing was deleted/);
   assert.equal((await call('DELETE', '/api/admin/libraries/lib-a', { token: ctx.tokens.sa, body: {} })).status, 400);
   assert.equal((await call('DELETE', '/api/admin/libraries/nope', { token: ctx.tokens.sa, body: { confirmName: 'x' } })).status, 404);
   assert.ok(Object.values(await countsFor('lib-a')).some(n => n > 0), 'nothing deleted by refused calls');
 
-  const r = await call('DELETE', '/api/admin/libraries/lib-a', { token: ctx.tokens.sa, body: { confirmName: 'Library A' } });
+  const r = await call('DELETE', '/api/admin/libraries/lib-a', { token: ctx.tokens.sa, body: { confirmName: '  library\u00a0 a ' } }); // phone-typed: lower case, NBSP, extra spaces
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.ok(r.body.counts.User >= 1);
 

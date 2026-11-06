@@ -197,7 +197,7 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
             <button
               key={t.id}
               id={`nav-tab-${t.id}`}
-              onClick={() => setActiveTab(t.id)}
+              onClick={() => { setDrawerOpen(false); setActiveTab(t.id); }}
               style={{
                 position: 'relative',
                 display: 'flex',

@@ -689,7 +689,8 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     }
   };
 
-  // Issue #4: ticking a box (or Select all) opens the one Bulk Actions bar (Select Students mode).
+  // One selection flow: "Select Students" shows the boxes and the Bulk Actions bar (Renew, Send WhatsApp, Remove).
+  // In that mode tapping a row ticks it; outside it a tap opens the profile.
   const handleToggleSelectAll = (e) => {
     if (e.target.checked) {
       setIsSelectionMode(true);
@@ -1021,9 +1022,9 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       </div>
 
       {/* Student rows: one student per row; extra columns appear as the screen grows */}
-      <div className="st-list" role="table" aria-label="Students">
+      <div className={`st-list${isSelectionMode ? ' selecting' : ''}`} role="table" aria-label="Students">
         <div className="st-row st-head" role="row">
-          <span className="st-c st-chk"><input type="checkbox" aria-label="Select all shown" checked={filteredStudents.length > 0 && filteredStudents.every(s => selectedIds.includes(s.id))} onChange={handleToggleSelectAll} /></span>
+          {isSelectionMode && <span className="st-c st-chk"><input type="checkbox" aria-label="Select all shown" checked={filteredStudents.length > 0 && filteredStudents.every(s => selectedIds.includes(s.id))} onChange={handleToggleSelectAll} /></span>}
           <span className="st-c st-name">Student</span>
           <span className="st-c st-branch">Branch</span>
           <span className="st-c st-seat">Seat</span>
@@ -1040,10 +1041,12 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
           const checked = selectedIds.includes(student.id);
           const missingSeat = student.seatNo !== 'Non-Fixed Seat' && student.seatNo !== 'None' && (student.status === 'Active' || student.status === 'Expiring Soon') && !getValidDesksList(student.branchId, student.sectionId).includes(student.seatNo);
           return (
-            <div key={student.id} role="row" className={`st-row${checked ? ' sel' : ''}`} onClick={() => setSelectedStudent(student)}>
-              <span className="st-c st-chk" onClick={e => e.stopPropagation()}>
-                <input type="checkbox" aria-label={`Select ${student.name}`} checked={checked} onChange={() => handleToggleSelect(student.id)} />
-              </span>
+            <div key={student.id} role="row" aria-selected={isSelectionMode ? checked : undefined} className={`st-row${checked ? ' sel' : ''}`} onClick={() => isSelectionMode ? handleToggleSelect(student.id) : setSelectedStudent(student)}>
+              {isSelectionMode && (
+                <span className="st-c st-chk" onClick={e => e.stopPropagation()}>
+                  <input type="checkbox" aria-label={`Select ${student.name}`} checked={checked} onChange={() => handleToggleSelect(student.id)} />
+                </span>
+              )}
               <span className="st-c st-name">
                 <b title={student.name}>{student.name}</b>
                 <small className="st-meta">{student.id} • {student.phone}</small>

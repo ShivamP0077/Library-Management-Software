@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-06 (IST)
+
+- **Student profile: personal WhatsApp message** — 12:50 IST. The profile **WhatsApp** tab now has a small "Personal message" box above the sent / not-sent list. It shows the student's WhatsApp number, sends through the same server route and checks as every other manual send (`type: custom`: signed-in tenant only, read-only blocked, active subscription, WhatsApp plan feature, connection status). The number always comes from the student record on the server. Success or error shows in the box and the list refreshes; you stay on the profile. Files: `src/components/WhatsAppSendModal.jsx` (`WhatsAppPersonalSend`), `src/components/StudentManager.jsx`.
+
 ## 2026-11-05 (IST)
 
 - **Release: merge `release/21-issues` → main** — 22:05 IST. Ships all 21 PDF issues plus #9 server price lock, #11 voided history kept, #14 subscription enforcement, #15 Google signup hooks, #19 Razorpay/PayPal provider config, #2 dry-run report script, and log redaction (PRs #30–#58). Public signup and live payments stay off until configured. No customer data deleted; no DB migration. Rollback: previous main `8bfcbaf`, Render `dep-dblj6og473hc73b9jur0`, Vercel `dpl_CBn2yBVCCdQRsoHJY1Pq83PLggtp`.

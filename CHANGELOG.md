@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-10 (IST)
+
+- **#15 Google signup fix** — 21:55 IST. Cause: the signup page's Continue with Google button used the relative link `/api/auth/google/start?signup=1`, which on Vercel opened the website itself instead of the API, so no Google signup started and the user landed back on sign in. Fix: it now uses the same API address as the sign-in Google button (`api.googleStartUrl()`) with `?signup=1`. File: `src/auth/SignupPanel.jsx`.
+
 ## 2026-11-06 (IST)
 
 - **Expanded issues #3, #12, #15, #16, #18, #19, #20 and #22, implemented on `feat/expanded-eight-issues`.** Students can keep several documents and download them. Student receipts and WhatsApp delivery have clearer states. Owners can download their registration confirmation even when delivery fails. My Profile and My Software Plan are separate, while existing navigation stays in place. The plan page includes wallet history, referral information and clear invoice totals. Super Admin can verify Razorpay or PayPal and see the same owner billing history. Support ticket numbers have a chronological global sequence, with old aliases still searchable; the included migration is dry-run by default. Support and notices accept multiple attachments, with size checks. No production data was migrated, no live payments were made, and deployment has not happened. Live-provider delivery and payment verification still require configured production credentials and explicit approval.

@@ -52,7 +52,7 @@ export function SignupPanel({ plans = [], googleSignup = false, paymentsConfigur
   };
 
   const startGoogle = () => {
-    window.location.href = '/api/auth/google/start?signup=1';
+    window.location.href = `${api.googleStartUrl()}?signup=1`;
   };
 
   const finish = (e) => {

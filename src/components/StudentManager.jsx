@@ -17,6 +17,8 @@ import { StudentExcelViewModal } from './Modals/StudentExcelViewModal';
 import { BulkStudentModal } from './Modals/BulkStudentModal';
 import { EditStudentModal } from './Modals/EditStudentModal';
 import { handleSplitAmountChange, handleAddSplitComponent, handleRemoveSplitComponent, validateSplitPayment } from '../utils/splitPaymentUtils';
+import { paymentReferenceError } from '../utils/paymentReference';
+import { ReferenceField } from './ReferenceField';
 import { getSubscriptionStatus, validatePaidOn, renewalPeriodForStudent, isMoreThanOneMonthLate } from '../utils/dateUtils';
 import { getDocumentBlob, deleteDocumentBlob, saveDocumentBlobNow } from '../utils/idbStorage';
 import { uploadAttachmentFile, makeAttachmentKey, isPdfAttachment } from '../utils/attachmentUpload';
@@ -330,6 +332,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   const [renewDuration, setRenewDuration] = useState(1);
   const [renewShiftId, setRenewShiftId] = useState('');
   const [renewPaymentMethod, setRenewPaymentMethod] = useState('');
+  const [renewReferenceNo, setRenewReferenceNo] = useState('');
   const [renewSplitBreakdown, setRenewSplitBreakdown] = useState([{ method: '', amount: '' }]);
   const [renewAmount, setRenewAmountRaw] = useState(0);
   // Issue #9: system-computed price, so a manual change is flagged for the server permission check + audit.
@@ -338,6 +341,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   const setRenewAmount = (v) => { setRenewAmountRaw(v); setRenewSuggested(v); setRenewAlign(null); };
   const [relocCollect, setRelocCollect] = useState(true);
   const [relocMethod, setRelocMethod] = useState('Cash');
+  const [relocReferenceNo, setRelocReferenceNo] = useState('');
   const [relocOverride, setRelocOverride] = useState(null);
   const [renewDiscount, setRenewDiscount] = useState(0);
   const [renewFine, setRenewFine] = useState(0);
@@ -597,6 +601,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     setRenewDiscount(disc);
     setRenewFine(0);
     setRenewPaymentMethod('');
+    setRenewReferenceNo('');
     setRenewSplitBreakdown([{ method: '', amount: '' }]);
     setRenewPaidOn(todayStr);
     setRenewChoice('continue');
@@ -623,6 +628,15 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
         toast.error(splitCheck.error);
         return;
       }
+    }
+    const referenceErr = paymentReferenceError({
+      method: renewPaymentMethod,
+      referenceNo: renewReferenceNo,
+      breakdown: renewPaymentMethod === 'Split' ? renewSplitBreakdown : undefined,
+    });
+    if (referenceErr) {
+      toast.error(referenceErr);
+      return;
     }
 
     const paidOnError = validatePaidOn(renewPaidOn, todayStr);
@@ -657,6 +671,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       discount: renewDiscount,
       fine: renewFine,
       paymentMethod: renewPaymentMethod,
+      referenceNo: renewReferenceNo,
       breakdown: renewPaymentMethod === 'Split' ? renewSplitBreakdown : undefined,
       paidOn: renewPaidOn,
       billingAnchorDay: period.billingAnchorDay,
@@ -688,13 +703,20 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     e.preventDefault();
     if (!selectedStudent || !newSeatNo || !newShiftId || !newBlockId || !newSeatTypeId) return;
     const effectiveBranchId = relocateBranchId || selectedStudent.branchId;
+    if (relocPriceChange && relocPriceChange.amount > 0 && relocCollect) {
+      const relocRefErr = paymentReferenceError({ method: relocMethod, referenceNo: relocReferenceNo });
+      if (relocRefErr) {
+        toast.error(relocRefErr);
+        return;
+      }
+    }
     const pc = relocPriceChange;
     const priceChange = pc && pc.amount !== 0 ? {
       ...pc,
       amount: relocOverride != null ? Number(relocOverride) : pc.amount,
       suggestedAmount: pc.suggestedAmount ?? pc.amount,
       ...(relocOverride != null && Number(relocOverride) !== pc.amount ? { amountEdited: true } : {}),
-      collect: relocCollect, method: relocMethod
+      collect: relocCollect, method: relocMethod, referenceNo: relocReferenceNo
     } : null;
     const success = changeSeat(selectedStudent.id, newBlockId, newSeatTypeId, newSeatNo, seatChangeReason, newShiftId, effectiveBranchId, priceChange);
     if (success !== false) {
@@ -733,6 +755,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     setRenewDiscount(0);
     setRenewFine(0);
     setRenewPaymentMethod('');
+    setRenewReferenceNo('');
     setRenewPaidOn(todayStr);
     setRenewChoice('continue');
     setRenewFreshStart(todayStr);
@@ -753,6 +776,11 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     }
     if (renewPaymentMethod === 'Split') {
       toast.error("Split payments are not supported in Bulk Renew. Please select a single payment method.");
+      return;
+    }
+    const bulkRefErr = paymentReferenceError({ method: renewPaymentMethod, referenceNo: renewReferenceNo });
+    if (bulkRefErr) {
+      toast.error(bulkRefErr);
       return;
     }
     
@@ -811,6 +839,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
         discount: renewDiscount,
         fine: renewFine,
         paymentMethod: renewPaymentMethod,
+        referenceNo: renewReferenceNo,
         paidOn: renewPaidOn,
         billingAnchorDay: period.billingAnchorDay,
       });
@@ -1469,7 +1498,12 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                       <div key={idx} style={{ padding: '16px', border: '1px solid var(--border-light)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
                           <div style={{ fontWeight: 600, fontSize: '14px' }}>{pay.receiptNo}</div>
-                          <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>{pay.date} • {pay.method} • Staff: {pay.staffName || "Admin"}</div>
+                          <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>{pay.date} • {pay.method}{pay.referenceNo ? ` • Ref: ${pay.referenceNo}` : ''} • Staff: {pay.staffName || "Admin"}</div>
+                          {pay.method === 'Split' && Array.isArray(pay.breakdown) && pay.breakdown.some(b => b.referenceNo) && (
+                            <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '2px' }}>
+                              {pay.breakdown.filter(b => b.referenceNo).map(b => `${b.method} Ref: ${b.referenceNo}`).join(' · ')}
+                            </div>
+                          )}
                           {pay.reason && <div style={{ fontSize: '11px', color: '#ef4444', marginTop: '2px' }}>Reason: {pay.reason}</div>}
                         </div>
                         <div style={{ textAlign: 'right' }}>
@@ -1709,10 +1743,11 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                     <div className="form-group">
                       <label className="form-label">Method</label>
                       <select className="form-select" value={renewPaymentMethod} onChange={(e) => setRenewPaymentMethod(e.target.value)}>
-                        <option value="">-- Method --</option><option value="UPI">UPI</option><option value="Cash">Cash</option><option value="Card">Card</option><option value="Bank Transfer">Bank Transfer</option>
+                        <option value="">-- Method --</option><option value="UPI">UPI</option><option value="Cash">Cash</option><option value="Card">Card</option><option value="Bank Transfer">Bank Transfer</option><option value="Net Banking">Net banking</option><option value="Cheque">Cheque</option>
                       </select>
                     </div>
                   </div>
+                  <ReferenceField mode={renewPaymentMethod} value={renewReferenceNo} onChange={setRenewReferenceNo} />
                   <div className="form-group">
                     <label className="form-label">Payment date</label>
                     <input type="date" className="form-input" value={renewPaidOn} max={todayStr} min={addDays(todayStr, -60)} onChange={(e) => {
@@ -1876,10 +1911,13 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                         <option value="Cash">Cash</option>
                         <option value="Card">Debit / Credit Card</option>
                         <option value="Bank Transfer">Bank Transfer</option>
+                        <option value="Net Banking">Net banking</option>
+                        <option value="Cheque">Cheque</option>
                         <option value="Split">Split Payment</option>
                       </select>
                     </div>
                   </div>
+                  <ReferenceField mode={renewPaymentMethod} value={renewReferenceNo} onChange={setRenewReferenceNo} />
                   {(() => {
                     const period = renewalPeriodForStudent(selectedStudent, {
                       paidOn: renewPaidOn,
@@ -1944,6 +1982,8 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                               <option value="Cash">Cash</option>
                               <option value="Card">Debit / Credit Card</option>
                               <option value="Bank Transfer">Bank Transfer</option>
+                              <option value="Net Banking">Net banking</option>
+                              <option value="Cheque">Cheque</option>
                             </select>
                             <NumericInput
                               className="form-input"
@@ -1963,6 +2003,16 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                             >
                               <X size={16} />
                             </button>
+                            <ReferenceField
+                              compact
+                              mode={item.method}
+                              value={item.referenceNo}
+                              onChange={(value) => {
+                                const newB = [...renewSplitBreakdown];
+                                newB[idx] = { ...newB[idx], referenceNo: value };
+                                setRenewSplitBreakdown(newB);
+                              }}
+                            />
                           </div>
                         );
                       })}
@@ -2127,9 +2177,10 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                       {relocPriceChange.amount > 0 && (
                         <>
                           <label style={{ display: 'flex', gap: '4px', alignItems: 'center' }}><input type="checkbox" checked={relocCollect} onChange={e => setRelocCollect(e.target.checked)} /> Collect now</label>
-                          <select className="form-select" style={{ maxWidth: '110px' }} value={relocMethod} onChange={e => setRelocMethod(e.target.value)}>
-                            <option>Cash</option><option>UPI</option><option>Card</option>
+                          <select className="form-select" style={{ maxWidth: '140px' }} value={relocMethod} onChange={e => setRelocMethod(e.target.value)}>
+                            <option>Cash</option><option>UPI</option><option>Card</option><option>Bank Transfer</option><option>Net Banking</option><option>Cheque</option>
                           </select>
+                          <ReferenceField mode={relocMethod} value={relocReferenceNo} onChange={setRelocReferenceNo} />
                         </>
                       )}
                     </div>

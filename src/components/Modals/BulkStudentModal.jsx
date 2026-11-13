@@ -4,6 +4,8 @@ import { X, Users, AlertCircle, Check } from 'lucide-react';
 import { NumericInput } from '../NumericInput';
 import toast from 'react-hot-toast';
 import { calculatePricing } from '../../utils/pricingCalculator';
+import { paymentReferenceError } from '../../utils/paymentReference';
+import { ReferenceField } from '../ReferenceField';
 import { getCanonicalSeatTypes } from '../../utils/seatTypeUtils';
 
 export const BulkStudentModal = ({ isOpen, onClose }) => {
@@ -20,6 +22,7 @@ export const BulkStudentModal = ({ isOpen, onClose }) => {
   const [selectedSeatType, setSelectedSeatType] = useState('all');
   const [addToWaitlist, setAddToWaitlist] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('');
+  const [referenceNo, setReferenceNo] = useState('');
 
   // Pre-calculate distinct physical slots
   const distributionPool = useMemo(() => {
@@ -162,6 +165,11 @@ export const BulkStudentModal = ({ isOpen, onClose }) => {
       toast.error("Please select a payment method.");
       return;
     }
+    const referenceErr = paymentReferenceError({ method: paymentMethod, referenceNo });
+    if (referenceErr) {
+      toast.error(referenceErr);
+      return;
+    }
 
     if (canAdmitNow === 0 && !addToWaitlist) {
       toast.error("Capacity is 0 and Waiting List is disabled.");
@@ -240,6 +248,7 @@ export const BulkStudentModal = ({ isOpen, onClose }) => {
         fine: 0,
         netTotal: pricing.netTotal,
         paymentMethod,
+        referenceNo,
         startDate: new Date(),
         expiryDate: (() => { const d = new Date(); d.setMonth(d.getMonth() + 1); return d; })()
       });
@@ -415,7 +424,12 @@ export const BulkStudentModal = ({ isOpen, onClose }) => {
                   <option value="Cash">Cash</option>
                   <option value="Card">Debit / Credit Card</option>
                   <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="Net Banking">Net banking</option>
+                  <option value="Cheque">Cheque</option>
                 </select>
+                <div style={{ marginTop: '8px' }}>
+                  <ReferenceField mode={paymentMethod} value={referenceNo} onChange={setReferenceNo} />
+                </div>
               </div>
 
               {remaining > 0 && (

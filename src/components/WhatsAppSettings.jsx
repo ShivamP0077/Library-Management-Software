@@ -22,10 +22,11 @@ const QR_TTL_MS = 3 * 60 * 1000; // stop offering a QR after 3 minutes
 const QR_REFRESH_MS = 40 * 1000; // request a fresh QR every 40 seconds
 const STATUS_POLL_MS = 3 * 1000;
 
-const Toggle = ({ checked, disabled, label, onChange }) => (
+const Toggle = ({ checked, disabled, label, hint, onChange }) => (
   <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '14px', padding: '12px 0', borderTop: '1px solid var(--border-light)', cursor: disabled ? 'not-allowed' : 'pointer' }}>
     <span style={{ fontSize: '14px', fontWeight: 500, color: disabled ? 'var(--text-muted)' : 'var(--text-primary)' }}>
       {label}
+      {hint ? <span style={{ display: 'block', fontSize: '12px', fontWeight: 400, color: 'var(--text-muted)', marginTop: '2px' }}>{hint}</span> : null}
     </span>
     <span style={{ position: 'relative', width: '44px', height: '24px', flexShrink: 0 }}>
       <input
@@ -247,6 +248,9 @@ const WhatsAppSettingsInner = () => {
     if (!toggles || savingSettings) return;
     const previous = toggles;
     const next = { ...toggles, [key]: value };
+    // One switch on screen. Keep the older 'receipts' flag in step so nothing else drifts.
+    if (key === 'paymentReceipts') { next.paymentReceiptsEffective = value; next.receipts = value; }
+    if (key === 'receipts' && typeof toggles.paymentReceipts !== 'boolean') next.paymentReceiptsEffective = value;
     setToggles(next);
     setSavingSettings(true);
     try {
@@ -467,10 +471,11 @@ const WhatsAppSettingsInner = () => {
             onChange={(value) => handleToggle('enabled', value)}
           />
           <Toggle
-            label="Admission & renewal receipts"
-            checked={Boolean(toggles.receipts)}
+            label="Payment receipts"
+            hint="After an admission payment or a renewal payment, send the student their payment receipt on WhatsApp."
+            checked={typeof toggles.paymentReceipts === 'boolean' ? toggles.paymentReceipts : (typeof toggles.paymentReceiptsEffective === 'boolean' ? toggles.paymentReceiptsEffective : Boolean(toggles.receipts))}
             disabled={!toggles.enabled || savingSettings}
-            onChange={(value) => handleToggle('receipts', value)}
+            onChange={(value) => handleToggle('paymentReceipts', value)}
           />
           <Toggle
             label="Fee reminders"

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import { createEvolutionClient, instanceNameFor, normalizePhone } from '../src/evolution.js';
-import { sendWhatsappMessage, canManageWhatsapp, buildReceiptText, createWhatsappRouter, WhatsappConfig } from '../src/whatsapp.js';
+import { sendWhatsappMessage, canManageWhatsapp, buildReceiptText, createWhatsappRouter, WhatsappConfig, paymentReceiptsEnabled, publicWhatsappSettings } from '../src/whatsapp.js';
 
 const lean = (v) => ({ lean: async () => v });
 
@@ -98,6 +98,44 @@ test('receipt text', () => {
   }, { name: 'Ravi', expiryDate: '2027-01-31' });
   assert.match(backdated, /Paid on 2026-12-07/);
   assert.match(backdated, /Period: 2026-12-01 to 2026-12-31/);
+  assert.doesNotMatch(t, /Ref:/);
+  const withRef = buildReceiptText({ receiptNo: 'R3', netTotal: 400, method: 'UPI', referenceNo: 'UTR99', date: '2026-11-02' }, { name: 'Meera' });
+  assert.match(withRef, /Ref: UTR99/);
+  const split = buildReceiptText({
+    receiptNo: 'R4', netTotal: 1000, method: 'Split', date: '2026-11-02',
+    breakdown: [{ method: 'UPI', amount: 600, referenceNo: 'U1' }, { method: 'Cash', amount: 400 }],
+  }, { name: 'Meera' });
+  assert.match(split, /Ref: UPI U1/);
+});
+
+test('payment receipts follow the admission toggle until the library sets them', () => {
+  assert.equal(paymentReceiptsEnabled(undefined), true);
+  assert.equal(paymentReceiptsEnabled({}), true);
+  assert.equal(paymentReceiptsEnabled({ receipts: true }), true);
+  assert.equal(paymentReceiptsEnabled({ receipts: false }), false);
+  assert.equal(paymentReceiptsEnabled({ receipts: false, paymentReceipts: true }), true);
+  assert.equal(paymentReceiptsEnabled({ receipts: true, paymentReceipts: false }), false);
+  const inherited = publicWhatsappSettings({ receipts: false });
+  assert.equal(inherited.paymentReceiptsEffective, false);
+  assert.equal(inherited.paymentReceipts, undefined);
+  const explicit = publicWhatsappSettings({ receipts: true, paymentReceipts: false });
+  assert.equal(explicit.paymentReceipts, false);
+  assert.equal(explicit.paymentReceiptsEffective, false);
+});
+
+test('payment receipt sends use the effective toggle, not the admission toggle alone', async () => {
+  const off = deps({ cfg: { receipts: true, paymentReceipts: false } });
+  assert.equal((await sendWhatsappMessage(msg, off)).reason, 'disabled');
+  assert.equal(off.sent.length, 0);
+  const renewOff = deps({ cfg: { receipts: true, paymentReceipts: false } });
+  assert.equal((await sendWhatsappMessage({ ...msg, type: 'renewal_receipt', dedupeKey: 'receipt:R2' }, renewOff)).reason, 'disabled');
+  assert.equal(renewOff.sent.length, 0);
+  const on = deps({ cfg: { receipts: false, paymentReceipts: true } });
+  assert.equal((await sendWhatsappMessage(msg, on)).status, 'sent');
+  assert.equal(on.sent.length, 1);
+  const inheritedOff = deps({ cfg: { receipts: false } });
+  assert.equal((await sendWhatsappMessage({ ...msg, dedupeKey: 'receipt:R3' }, inheritedOff)).reason, 'disabled');
+  assert.equal(inheritedOff.sent.length, 0);
 });
 
 // Route-level tests with a mocked Evolution client and stubbed config model

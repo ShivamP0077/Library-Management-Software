@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import { Library, models } from './models.js';
 import crypto from 'crypto';
 import { createEvolutionClient, evolutionConfigured, instanceNameFor, normalizePhone, webhookTokenFor } from './evolution.js';
+import { receiptReferenceText } from '../../src/utils/paymentReference.js';
 
 /* ---------------------------------------------------------------- Models */
 export const MESSAGE_TYPES = ['otp', 'admission_receipt', 'renewal_receipt', 'fee_reminder', 'expiry_reminder', 'test', 'fee_receipt', 'renewal_reminder', 'seat_info', 'custom'];
@@ -18,6 +19,8 @@ export const WhatsappConfig = mongoose.models.WhatsappConfig || mongoose.model('
   receipts: { type: Boolean, default: DEFAULT_TOGGLES.receipts },
   feeReminders: { type: Boolean, default: DEFAULT_TOGGLES.feeReminders },
   expiryReminders: { type: Boolean, default: DEFAULT_TOGGLES.expiryReminders },
+  // No default: missing means "follow the admission & renewal receipts toggle".
+  paymentReceipts: Boolean,
   connectedNumber: String,
   // Reminder timing (spec §6): set via PUT /reminders/settings
   reminderSettings: { expiryDaysBefore: Number, expiryFixedDay: Number, feeEveryDays: Number, feeMaxReminders: Number, rules: { type: mongoose.Schema.Types.Mixed, default: undefined } },
@@ -52,7 +55,21 @@ export const WhatsappMessage = mongoose.models.WhatsappMessage || mongoose.model
 
 /** Statuses that mean the message already went out (never re-sent, never overwritten). */
 const DONE = ['queued', 'sent', 'delivered', 'read'];
-const TOGGLE_FOR_TYPE = { otp: 'otp', admission_receipt: 'receipts', renewal_receipt: 'receipts', fee_reminder: 'feeReminders', expiry_reminder: 'expiryReminders', test: null, fee_receipt: null, renewal_reminder: null, seat_info: null, custom: null };
+const TOGGLE_FOR_TYPE = { otp: 'otp', admission_receipt: 'paymentReceipts', renewal_receipt: 'paymentReceipts', fee_reminder: 'feeReminders', expiry_reminder: 'expiryReminders', test: null, fee_receipt: null, renewal_reminder: null, seat_info: null, custom: null };
+
+/**
+ * Whether admission and renewal payment receipts go out on WhatsApp.
+ * A saved true/false wins. If the library has never set it, follow "Admission & renewal receipts".
+ */
+export function paymentReceiptsEnabled(cfg) {
+  if (cfg && typeof cfg.paymentReceipts === 'boolean') return cfg.paymentReceipts;
+  if (cfg && typeof cfg.receipts === 'boolean') return cfg.receipts;
+  return DEFAULT_TOGGLES.receipts;
+}
+
+export function publicWhatsappSettings(cfg = {}) {
+  return { ...DEFAULT_TOGGLES, ...pickToggles(cfg), paymentReceiptsEffective: paymentReceiptsEnabled(cfg) };
+}
 
 /* ---------------------------------------------------------------- Permissions */
 /**
@@ -83,8 +100,9 @@ export async function sendWhatsappMessage({ libraryId, type, to, text, dedupeKey
   if (!dedupeKey) throw Object.assign(new Error('dedupeKey is required'), { status: 400 });
   const cfg = { ...DEFAULT_TOGGLES, ...((await Config.findOne({ libraryId }).lean()) || {}) };
   const toggle = manual ? null : TOGGLE_FOR_TYPE[type]; // hand-sent messages only honor the master switch
+  const toggleOff = toggle === 'paymentReceipts' ? !paymentReceiptsEnabled(cfg) : Boolean(toggle && !cfg[toggle]);
   const number = normalizePhone(to);
-  const reason = !cfg.enabled || (toggle && !cfg[toggle]) ? 'disabled' : !consent ? 'no_consent' : !number ? 'invalid_number' : null;
+  const reason = !cfg.enabled || toggleOff ? 'disabled' : !consent ? 'no_consent' : !number ? 'invalid_number' : null;
   const who = { ...(studentId != null ? { studentId: String(studentId) } : {}), ...(studentName ? { studentName } : {}) };
   if (reason) { await logSkipped({ libraryId, type, to, dedupeKey, reason, text, ...who }, Message); return { status: 'skipped', reason }; }
 
@@ -210,6 +228,8 @@ export function buildReceiptText(payment, student) {
     `Amount: ${money(payment.netTotal ?? payment.amount)}`,
   ];
   if (paid) lines.push(`Paid on ${paid}`);
+  const refLine = receiptReferenceText(payment);
+  if (refLine) lines.push(refLine);
   if (start || end) lines.push(`Period: ${start || '—'} to ${end || '—'}`);
   else if (student?.expiryDate || student?.endDate) lines.push(`Valid till: ${student.expiryDate || student.endDate}`);
   return lines.join('\n');
@@ -271,7 +291,7 @@ export function createWhatsappRouter({ client = createEvolutionClient(), isConfi
     const s = await status(req.instance, { fresh: req.query.fresh === 'true' });
     const cfg = (await WhatsappConfig.findOne({ libraryId: req.libraryId }).lean()) || {};
     if (s.number && cfg.connectedNumber !== s.number) await WhatsappConfig.updateOne({ libraryId: req.libraryId }, { $set: { connectedNumber: s.number } }, { upsert: true });
-    res.json({ ...s, instance: req.instance, settings: { ...DEFAULT_TOGGLES, ...pickToggles(cfg) } });
+    res.json({ ...s, instance: req.instance, settings: publicWhatsappSettings(cfg) });
   }));
 
   // Creates the library's instance if needed and returns a fresh QR code.
@@ -299,7 +319,7 @@ export function createWhatsappRouter({ client = createEvolutionClient(), isConfi
   r.put('/settings', wrap(async (req, res) => {
     const set = pickToggles(req.body || {});
     const cfg = await WhatsappConfig.findOneAndUpdate({ libraryId: req.libraryId }, { $set: { ...set, updatedBy: req.user.email } }, { upsert: true, new: true, lean: true });
-    res.json({ ...DEFAULT_TOGGLES, ...pickToggles(cfg) });
+    res.json(publicWhatsappSettings(cfg));
   }));
 
   // Send the receipt for an existing payment to the student's phone (admission/renewal receipts).
@@ -462,6 +482,6 @@ export function createWhatsappWebhookRouter({ Message = WhatsappMessage } = {}) 
 
 function pickToggles(o) {
   const out = {};
-  for (const k of Object.keys(DEFAULT_TOGGLES)) if (typeof o[k] === 'boolean') out[k] = o[k];
+  for (const k of [...Object.keys(DEFAULT_TOGGLES), 'paymentReceipts']) if (typeof o?.[k] === 'boolean') out[k] = o[k];
   return out;
 }

@@ -18,7 +18,7 @@ test('FEE-01: ₹2,500 × 3 × (1−5%) = ₹7,125; changing base recomputes', a
 
 test('split payments must sum exactly; negatives/fractions rejected', async () => {
   const pay = (receiptNo, breakdown, netTotal = 1000) => ({ receiptNo, studentId: 'S1', amount: netTotal, discount: 0, fine: 0, netTotal, method: 'Split', breakdown, date: '2026-10-05' });
-  assert.equal((await call('POST', '/api/payments', { token: A(), body: pay('R1', [{ method: 'UPI', amount: 600 }, { method: 'Cash', amount: 400 }]) })).status, 201);
+  assert.equal((await call('POST', '/api/payments', { token: A(), body: pay('R1', [{ method: 'UPI', amount: 600, referenceNo: 'UTR-R1' }, { method: 'Cash', amount: 400 }]) })).status, 201);
   const bad = await call('POST', '/api/payments', { token: A(), body: pay('R2', [{ method: 'UPI', amount: 600 }, { method: 'Cash', amount: 300 }]) });
   assert.equal(bad.status, 400); assert.match(bad.body.error, /add up exactly/);
   assert.equal((await call('POST', '/api/payments', { token: A(), body: pay('R3', [{ method: 'UPI', amount: 1200 }, { method: 'Cash', amount: -200 }]) })).status, 400);

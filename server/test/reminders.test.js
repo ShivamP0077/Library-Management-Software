@@ -110,7 +110,7 @@ test('auto receipt on new payment: admission then renewal, once per receipt', as
   let msg = await WhatsappMessage.findOne({ libraryId: 'lib-a', dedupeKey: 'receipt:R-1' }).lean();
   assert.equal(msg.type, 'admission_receipt');
   const all = (await call('GET', '/api/payments', { token: A() })).body;
-  await call('PUT', '/api/payments', { token: A(), body: [...all, { id: 'R-2', receiptNo: 'R-2', studentId: 'S5', amount: 800, netTotal: 800, method: 'UPI', date: today }] });
+  await call('PUT', '/api/payments', { token: A(), body: [...all, { id: 'R-2', receiptNo: 'R-2', studentId: 'S5', amount: 800, netTotal: 800, method: 'UPI', referenceNo: 'UTR-R2', date: today }] });
   assert.equal(sent.length, n + 2);
   msg = await WhatsappMessage.findOne({ libraryId: 'lib-a', dedupeKey: 'receipt:R-2' }).lean();
   assert.equal(msg.type, 'renewal_receipt');

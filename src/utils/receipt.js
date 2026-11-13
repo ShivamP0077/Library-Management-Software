@@ -4,6 +4,8 @@
  * invented. A failed/voided/unpaid receipt is never presented as settled.
  */
 
+import { receiptReferenceText } from './paymentReference.js';
+
 const str = (v) => (v == null ? '' : String(v).trim());
 const num = (v) => {
   const n = Number(v);
@@ -89,6 +91,7 @@ export function receiptView(receipt, { student, renewal, payment, branch, settin
     seatNo: str(receipt?.seatNo || receipt?.seatName || student?.seatNo),
     shift: str(receipt?.shift || student?.shift),
     method: str(receipt?.method || receipt?.paymentMethod),
+    referenceLine: receiptReferenceText(receipt),
     libraryName: str(settings?.name),
     libraryAddress: str(branch?.address || settings?.address),
     libraryPhone: str(settings?.phone),

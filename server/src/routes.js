@@ -7,7 +7,7 @@ import { signToken, requireAuth, requireRole, tenantScope } from './auth.js';
 import { createLibrary, createUser, computeMetrics, hashPassword, validatePassword } from './services.js';
 import { verifyGoogleIdToken, googleEnabled, googleConfig, buildAuthUrl, exchangeCode } from './google.js';
 import { createWhatsappRouter, createWhatsappWebhookRouter } from './whatsapp.js';
-import { createFinanceRouter, validatePaymentBatch, normalizeStudentPaymentDates, applyPaidOn } from './finance.js';
+import { createFinanceRouter, validatePaymentBatch, normalizeStudentPaymentDates, applyPaidOn, applyPaymentReference } from './finance.js';
 import { createStudentRouter, recordStudentDiff, recordArchiveDiff, checkCapacity } from './students.js';
 import { audit, AuditLog } from './audit.js';
 import { enforceAmountEdits, amountSettingsChanged, isOwnerRole } from './amountPermission.js';
@@ -621,6 +621,7 @@ tenant.put('/:col/:key', colParam, wrap(async (req, res) => {
   const patch = stripMeta(req.body);
   if (req.params.col === 'payments') {
     const prev = await req.Model.findOne({ tenantId: req.tenantId, _key: req.params.key }).lean();
+    applyPaymentReference(patch, { required: !prev });
     const mergedPay = { ...(prev ? clean(prev) : {}), ...patch, receiptNo: prev?.receiptNo ?? req.params.key };
     if (prev) validatePaymentBatch([mergedPay], new Map([[req.params.key, prev]]));
     else validatePaymentBatch([mergedPay]);
@@ -683,6 +684,7 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
     if (!_key || seen.has(_key)) return;
     if (col === 'payments') {
       const prevPay = prevPayByKey.get(String(_key));
+      applyPaymentReference(body, { required: !prevPay });
       if (!prevPay || prevPay.paidOn !== body.paidOn) applyPaidOn(body);
     }
     if (col === 'students') normalizeStudentPaymentDates(body, req.studentDiff?.previous?.get(String(_key)));

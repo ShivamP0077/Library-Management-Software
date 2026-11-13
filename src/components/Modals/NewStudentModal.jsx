@@ -6,6 +6,8 @@ import { NumericInput } from '../NumericInput';
 import toast from 'react-hot-toast';
 import { calculatePricing } from '../../utils/pricingCalculator';
 import { handleSplitAmountChange, handleAddSplitComponent, handleRemoveSplitComponent, validateSplitPayment } from '../../utils/splitPaymentUtils';
+import { paymentReferenceError } from '../../utils/paymentReference';
+import { ReferenceField } from '../ReferenceField';
 import { calculateSubscriptionExpiry, validatePaidOn } from '../../utils/dateUtils';
 import { cycleConfig, firstAdmissionCharge, addDays } from '../../utils/billingCycle';
 import { saveDocumentBlobNow, deleteDocumentBlob, getDocumentBlob } from '../../utils/idbStorage';
@@ -155,6 +157,7 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
   const [discountValue, setDiscountValue] = useState(0);
   const [fine, setFine] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState('');
+  const [referenceNo, setReferenceNo] = useState('');
   const [splitBreakdown, setSplitBreakdown] = useState([{ method: '', amount: '' }]);
   const [paidOn, setPaidOn] = useState(todayStr);
   const [joiningDate, setJoiningDate] = useState(todayStr);
@@ -243,6 +246,7 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
         setPlanId('');
         setShiftId('');
         setPaymentMethod('');
+        setReferenceNo('');
         setSplitBreakdown([{ method: '', amount: '' }]);
         setPaidOn(todayStr);
         setJoiningDate(todayStr);
@@ -415,6 +419,12 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
         errs.splitAmount = splitCheck.error;
       }
     }
+    const referenceErr = paymentReferenceError({
+      method: paymentMethod,
+      referenceNo,
+      breakdown: paymentMethod === 'Split' ? splitBreakdown : undefined,
+    });
+    if (referenceErr) errs.referenceNo = referenceErr;
 
     // Document requirement validation
     if (effectiveDocRequirement === 'Required' && !docFileAttached && !submitDocLater) {
@@ -502,6 +512,7 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
       discount: calculatedDiscount,
       fine: Number(fine),
       paymentMethod,
+      referenceNo,
       breakdown: paymentMethod === 'Split' ? splitBreakdown : undefined,
       internalNotes,
       documents: docRecords,
@@ -1016,10 +1027,13 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                       <option value="Cash">Cash</option>
                       <option value="Card">Debit / Credit Card</option>
                       <option value="Bank Transfer">Bank Transfer</option>
+                      <option value="Net Banking">Net banking</option>
+                      <option value="Cheque">Cheque</option>
                       <option value="Split">Split Payment</option>
                     </select>
                     {errors.paymentMethod && <div className="form-error" style={{ color: 'red', fontSize: '11px', marginTop: '4px' }}>{errors.paymentMethod}</div>}
                   </div>
+                  <ReferenceField mode={paymentMethod} value={referenceNo} onChange={setReferenceNo} error={errors.referenceNo} />
 
                   {paymentMethod === 'Split' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
@@ -1039,8 +1053,10 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                             <option value="UPI">UPI / QR Code</option>
                             <option value="Cash">Cash</option>
                             <option value="Card">Debit / Credit Card</option>
-                            <option value="Bank Transfer">Bank Transfer</option>
-                          </select>
+                              <option value="Bank Transfer">Bank Transfer</option>
+                              <option value="Net Banking">Net banking</option>
+                              <option value="Cheque">Cheque</option>
+                            </select>
                           <NumericInput
                             className="form-input"
                             value={item.amount}
@@ -1059,6 +1075,17 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                           >
                             <X size={16} />
                           </button>
+                          <ReferenceField
+                            compact
+                            mode={item.method}
+                            value={item.referenceNo}
+                            error={errors.referenceNo}
+                            onChange={(value) => {
+                              const newB = [...splitBreakdown];
+                              newB[idx] = { ...newB[idx], referenceNo: value };
+                              setSplitBreakdown(newB);
+                            }}
+                          />
                         </div>
                       ))}
                       <button

@@ -4,6 +4,8 @@ import { Receipt, PlusCircle, X, RefreshCw, Pencil } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { NumericInput } from './NumericInput';
 import { api } from '../utils/api';
+import { paymentReferenceError } from '../utils/paymentReference';
+import { ReferenceField } from './ReferenceField';
 import toast from 'react-hot-toast';
 
 const CUSTOM_CATEGORY = '__custom__';
@@ -52,6 +54,7 @@ export const ExpenseManager = () => {
   const [branchId, setBranchId] = useState(activeBranchId === 'all' ? (branches[0]?.id || '') : activeBranchId);
   const [date, setDate] = useState(todayDate);
   const [mode, setMode] = useState('UPI');
+  const [referenceNo, setReferenceNo] = useState('');
   const [notes, setNotes] = useState('');
 
   // Issue #8: first due date + repeat every N days / months / years.
@@ -73,6 +76,7 @@ export const ExpenseManager = () => {
   const [payAmount, setPayAmount] = useState('');
   const [payDate, setPayDate] = useState(todayDate);
   const [payMode, setPayMode] = useState('Cash');
+  const [payReferenceNo, setPayReferenceNo] = useState('');
   const [paySaving, setPaySaving] = useState(false);
 
   const [editInstance, setEditInstance] = useState(null);
@@ -161,7 +165,13 @@ export const ExpenseManager = () => {
     }
 
     if (expenseType === 'one_time') {
-      addExpense({ branchId, category: resolvedCategory, amount: numericAmount, date, mode, notes });
+      const referenceErr = paymentReferenceError({ mode, referenceNo }, { required: false });
+      if (referenceErr) {
+        toast.error(referenceErr);
+        return;
+      }
+      addExpense({ branchId, category: resolvedCategory, amount: numericAmount, date, mode, referenceNo, notes });
+      setReferenceNo('');
       setIsAddExpenseModalOpen(false);
       setAmount('');
       setNotes('');
@@ -217,6 +227,7 @@ export const ExpenseManager = () => {
     setPayAmount(String(remaining));
     setPayDate(todayDate);
     setPayMode('Cash');
+    setPayReferenceNo('');
   };
 
   const handlePaySubmit = async (e) => {
@@ -226,9 +237,14 @@ export const ExpenseManager = () => {
       toast.error('Enter a positive whole amount');
       return;
     }
+    const referenceErr = paymentReferenceError({ mode: payMode, referenceNo: payReferenceNo }, { required: false });
+    if (referenceErr) {
+      toast.error(referenceErr);
+      return;
+    }
     setPaySaving(true);
     try {
-      await api.payExpenseInstance(payInstance.id, { amount: numericAmount, date: payDate, mode: payMode });
+      await api.payExpenseInstance(payInstance.id, { amount: numericAmount, date: payDate, mode: payMode, referenceNo: payReferenceNo });
       toast.success('Payment recorded');
       setPayInstance(null);
       await loadRecurring();
@@ -370,7 +386,7 @@ export const ExpenseManager = () => {
                     </td>
                     <td style={{ fontSize: '13px', fontWeight: 500 }}>{getBranchCode(exp.branchId)}</td>
                     <td><span style={{ fontWeight: 700, color: '#ef4444' }}>₹{exp.amount.toLocaleString()}</span></td>
-                    <td style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{exp.mode}</td>
+                    <td style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{exp.mode}{exp.referenceNo ? ` · Ref: ${exp.referenceNo}` : ''}</td>
                     <td style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{exp.notes || '—'}</td>
                   </tr>
                 ))
@@ -580,7 +596,10 @@ export const ExpenseManager = () => {
                           <option value="Bank Transfer">Bank Transfer</option>
                           <option value="Cash">Cash</option>
                           <option value="Card">Card</option>
+                          <option value="Net Banking">Net banking</option>
+                          <option value="Cheque">Cheque</option>
                         </select>
+                        <ReferenceField mode={mode} value={referenceNo} onChange={setReferenceNo} optional />
                       </div>
                     ) : (
                       <div className="form-group" style={{ minWidth: 0 }}>
@@ -712,9 +731,12 @@ export const ExpenseManager = () => {
                         <option value="UPI">UPI</option>
                         <option value="Card">Card</option>
                         <option value="Bank Transfer">Bank Transfer</option>
+                        <option value="Net Banking">Net banking</option>
+                        <option value="Cheque">Cheque</option>
                       </select>
                     </div>
                   </div>
+                  <ReferenceField mode={payMode} value={payReferenceNo} onChange={setPayReferenceNo} optional />
                 </div>
                 <div className="modal-footer">
                   <button type="button" className="btn btn-secondary" onClick={() => setPayInstance(null)}>Cancel</button>

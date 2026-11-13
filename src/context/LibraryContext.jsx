@@ -6,6 +6,7 @@ import { isShiftInPlan, resolveCanonicalShift, getCanonicalShifts, normalizeShif
 import { areSeatTypesEquivalent } from '../utils/seatTypeUtils';
 import { buildAdmissionVoid } from '../utils/admissionVoid.js';
 import { buildRenewalVoid, markPaymentVoided } from '../utils/paymentVoid.js';
+import { todayIST, validatePaidOn, applyRenewalToStudent, formatDate } from '../utils/dateUtils';
 import { scopedStorage, canSeedServer } from '../utils/tenantCache';
 // Issue #2: all cache reads/writes in this file go to the current library's own namespace.
 const localStorage = scopedStorage;
@@ -108,8 +109,6 @@ const INITIAL_STAFF = [
     permissions: getDefaultPermissionsForRole('Admin')
   }
 ];
-
-const todayStr = new Date().toISOString().split('T')[0];
 
 const INITIAL_STUDENTS = [];
 const INITIAL_EXPENSES = [];
@@ -524,6 +523,17 @@ export const reconcileSeats = ({ savedSeats, students = [], sections = [], branc
 };
 
 export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = null }) => {
+  const todayStr = todayIST();
+  const paidStamp = (paidOn, period) => {
+    const paid = paidOn || todayStr;
+    return {
+      date: paid,
+      paidOn: paid,
+      enteredAt: new Date().toISOString(),
+      ...(period?.start ? { periodStart: period.start, startDate: period.start } : {}),
+      ...(period?.end ? { periodEnd: period.end, endDate: period.end } : {}),
+    };
+  };
   const [settings, setSettings] = useState(() => {
     const saved = localStorage.getItem('library_settings');
     return saved ? JSON.parse(saved) : INITIAL_SETTINGS;
@@ -1534,6 +1544,14 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       }
     }
 
+    const paidOn = studentData.paidOn || todayStr;
+    const paidOnError = validatePaidOn(paidOn, todayStr);
+    if (paidOnError) {
+      toast.error(paidOnError);
+      return { error: 'INVALID_DATE', message: paidOnError };
+    }
+    const paid = paidStamp(paidOn);
+
     const newRenewal = {
       renewalId: `RN-${Date.now()}`,
       planId: studentData.planId,
@@ -1548,7 +1566,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       discount,
       fine,
       receiptNo: newReceiptNo,
-      date: todayStr,
+      ...paid,
       staffName: currentStaff?.name || "Admin"
     };
 
@@ -1584,7 +1602,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       suggestedAmount: studentData.suggestedAmount != null ? Number(studentData.suggestedAmount) : Number(amountPaid),
       ...(studentData.amountEdited ? { amountEdited: true } : {}),
       ...(studentData.proRated ? { proRated: studentData.proRated } : {}),
-      date: todayStr,
+      ...paidStamp(paidOn, { start: studentData.startDate, end: studentData.expiryDate }),
       staffName: currentStaff?.name || "Admin"
     };
 
@@ -1609,7 +1627,8 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       expiryDate: studentData.expiryDate,
       status: "Active",
       internalNotes: studentData.internalNotes || "",
-      joinedDate: todayStr,
+      joinedDate: studentData.startDate || todayStr,
+      billingAnchorDay: Number(String(studentData.startDate || todayStr).slice(8, 10)) || undefined,
       renewalHistory: [newRenewal],
       seatHistory: [newSeatLog],
       paymentHistory: [newPayment]
@@ -1631,10 +1650,14 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
     const accumulatedStudents = [];
     const accumulatedPayments = [];
     const accumulatedWaitlist = [];
-    const todayStr = new Date().toISOString().split('T')[0];
 
     for (let i = 0; i < bulkDataArray.length; i++) {
       const studentData = bulkDataArray[i];
+      const paidOnError = validatePaidOn(studentData.paidOn || todayStr, todayStr);
+      if (paidOnError) {
+        toast.error(paidOnError);
+        continue;
+      }
 
       // 1. Transactional Validation
       const check = canAdmitStudent(
@@ -1689,7 +1712,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         discount: studentData.calculatedDiscount,
         fine: studentData.fine,
         receiptNo: newReceiptNo,
-        date: todayStr,
+        ...paidStamp(studentData.paidOn || todayStr),
         staffName: currentStaff?.name || "Admin"
       };
 
@@ -1715,7 +1738,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         netTotal: studentData.netTotal,
         method: studentData.paymentMethod || "Cash",
         breakdown: studentData.breakdown,
-        date: todayStr,
+        ...paidStamp(studentData.paidOn || todayStr, { start: studentData.startDate, end: studentData.expiryDate }),
         staffName: currentStaff?.name || "Admin"
       };
 
@@ -1740,7 +1763,8 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         expiryDate: studentData.expiryDate,
         status: "Active",
         internalNotes: "Bulk Admitted",
-        joinedDate: todayStr,
+        joinedDate: studentData.startDate || todayStr,
+        billingAnchorDay: Number(String(studentData.startDate || todayStr).slice(8, 10)) || undefined,
         renewalHistory: [newRenewal],
         seatHistory: [newSeatLog],
         paymentHistory: [newPayment]
@@ -1774,6 +1798,10 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
     const student = students.find(s => s.id === studentId);
     if (!student) return { error: 'NOT_FOUND', message: 'Student not found.' };
 
+    const paidOn = renewalData.paidOn || todayStr;
+    const paidOnError = validatePaidOn(paidOn, todayStr);
+    if (paidOnError) return { error: 'INVALID_DATE', message: paidOnError };
+
     const newReceiptNo = generateReceiptNo();
     const amountPaid = Number(renewalData.amountPaid || 0);
     const discount = Number(renewalData.discount || 0);
@@ -1794,7 +1822,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       discount,
       fine,
       receiptNo: newReceiptNo,
-      date: todayStr,
+      ...paidStamp(paidOn),
       staffName: currentStaff?.name || "Admin",
       seatNo: student.seatNo
     };
@@ -1822,24 +1850,13 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       suggestedAmount: renewalData.suggestedAmount != null ? Number(renewalData.suggestedAmount) : Number(amountPaid),
       ...(renewalData.amountEdited ? { amountEdited: true } : {}),
       ...(renewalData.bridge ? { bridge: renewalData.bridge } : {}),
-      date: todayStr,
+      ...paidStamp(paidOn, { start: renewalData.startDate, end: renewalData.expiryDate }),
       staffName: currentStaff?.name || "Admin"
     };
 
     setStudents(prev => prev.map(s => {
       if (s.id === studentId) {
-        return {
-          ...s,
-          planId: renewalData.planId || s.planId,
-          shiftId: renewalData.shiftId || s.shiftId,
-          shift: renewalData.shift || s.shift,
-          durationMonths: Number(renewalData.durationMonths || s.durationMonths || 1),
-          startDate: renewalData.startDate,
-          expiryDate: renewalData.expiryDate,
-          status: "Active",
-          renewalHistory: [newRenewal, ...s.renewalHistory],
-          paymentHistory: [newPayment, ...s.paymentHistory]
-        };
+        return applyRenewalToStudent(s, newRenewal, newPayment, { billingAnchorDay: renewalData.billingAnchorDay });
       }
       return s;
     }));
@@ -2572,24 +2589,22 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       let startDateStr = todayStr;
       let expiryDateStr = '';
       const scenarioSeed = i % 10;
-      const now = new Date();
+      const shiftDays = (iso, days) => {
+        const [y, m, d] = String(iso).split('-').map(Number);
+        return formatDate(new Date(y, m - 1, d + days));
+      };
 
       if (scenarioSeed === 8) {
         status = 'Expiring Soon';
-        const expDate = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
-        expiryDateStr = expDate.toISOString().split('T')[0];
-        const stDate = new Date(expDate.getTime() - durationMonths * 30 * 24 * 60 * 60 * 1000);
-        startDateStr = stDate.toISOString().split('T')[0];
+        expiryDateStr = shiftDays(todayStr, 3);
+        startDateStr = shiftDays(expiryDateStr, -durationMonths * 30);
       } else if (scenarioSeed === 9) {
         status = 'Expired';
-        const expDate = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000);
-        expiryDateStr = expDate.toISOString().split('T')[0];
-        const stDate = new Date(expDate.getTime() - durationMonths * 30 * 24 * 60 * 60 * 1000);
-        startDateStr = stDate.toISOString().split('T')[0];
+        expiryDateStr = shiftDays(todayStr, -5);
+        startDateStr = shiftDays(expiryDateStr, -durationMonths * 30);
       } else {
         status = 'Active';
-        const expDate = new Date(now.getTime() + (durationMonths * 30 - 5) * 24 * 60 * 60 * 1000);
-        expiryDateStr = expDate.toISOString().split('T')[0];
+        expiryDateStr = shiftDays(todayStr, durationMonths * 30 - 5);
         startDateStr = todayStr;
       }
 
@@ -2601,6 +2616,10 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       const receiptNo = `TEST-REC-${Date.now()}-${createdCount + 1}`;
       const gender = i % 2 === 0 ? 'Male' : 'Female';
       const phone = `98765${String(10000 + (uniqueNum % 90000)).slice(-5)}`;
+      // Keep paidOn off when the synthetic start is outside the 60-day window so a later sync is not rejected.
+      const historyPaid = !validatePaidOn(startDateStr, todayStr)
+        ? paidStamp(startDateStr, { start: startDateStr, end: expiryDateStr })
+        : { date: startDateStr, periodStart: startDateStr, periodEnd: expiryDateStr, startDate: startDateStr, endDate: expiryDateStr, enteredAt: new Date().toISOString() };
 
       const newRenewal = {
         renewalId: `TEST-RN-${Date.now()}-${createdCount + 1}`,
@@ -2616,7 +2635,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         discount,
         fine: 0,
         receiptNo,
-        date: startDateStr,
+        ...historyPaid,
         staffName: currentStaff?.name || "Admin (Test Generator)"
       };
 
@@ -2642,6 +2661,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         status,
         internalNotes: "Synthetic student created via Test Data Generator.",
         joinedDate: startDateStr,
+        billingAnchorDay: Number(String(startDateStr).slice(8, 10)) || undefined,
         renewalHistory: [newRenewal],
         seatHistory: [{
           changeId: `TEST-SH-${Date.now()}-${createdCount + 1}`,
@@ -2666,12 +2686,13 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         fine: 0,
         netTotal,
         method: i % 3 === 0 ? "Cash" : "UPI",
-        date: startDateStr,
+        ...historyPaid,
         staffName: currentStaff?.name || "Admin (Test Generator)",
         isTestData: true,
         source: 'TEST_GENERATOR'
       };
 
+      newStudentObj.paymentHistory = [newPayment];
       newStudents.push(newStudentObj);
       newPayments.push(newPayment);
       createdCount++;

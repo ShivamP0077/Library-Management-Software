@@ -84,6 +84,8 @@ export const User = mongoose.model('User', userSchema);
  * The frontend owns rich, evolving documents, so each collection uses a flexible
  * schema (strict: false) keyed by the UI's business id (_key) and ALWAYS scoped by
  * tenantId. Uniqueness is per tenant: { tenantId, _key }.
+ * paidOn and enteredAt are optional. Old payments keep working with `date` only.
+ * No migration is required; strict:false already stores the extra fields.
  * ------------------------------------------------------------------------- */
 const tenantSchema = (fields = {}) => {
   const s = new mongoose.Schema(
@@ -101,7 +103,7 @@ const tenantSchema = (fields = {}) => {
 export const COLLECTIONS = {
   students:         { name: 'Student',          keys: ['id'], fields: { id: String, name: String, phone: String, branchId: String, status: String, seatNo: String } },
   archivedStudents: { name: 'ArchivedStudent',  keys: ['id'], fields: { id: String, name: String, phone: String } },
-  payments:         { name: 'Payment',          keys: ['receiptNo', 'id'], fields: { receiptNo: String, studentId: String, netTotal: Number, amount: Number, date: String, branchId: String } },
+  payments:         { name: 'Payment',          keys: ['receiptNo', 'id'], fields: { receiptNo: String, studentId: String, netTotal: Number, amount: Number, date: String, paidOn: String, enteredAt: String, periodStart: String, periodEnd: String, branchId: String } },
   expenses:         { name: 'Expense',          keys: ['id'], fields: { id: String, category: String, amount: Number, date: String, branchId: String } },
   staffMembers:     { name: 'Staff',            keys: ['id'], fields: { id: String, name: String, email: String, role: String, status: String } },
   branches:         { name: 'Branch',           keys: ['id'], fields: { id: String, name: String, code: String } },

@@ -1,9 +1,41 @@
 /**
  * Calendar-based Subscription and Billing Utilities
- * 
+ *
  * Implements strict calendar month arithmetic (respecting 28/29/30/31 day months),
  * anniversary billing, grace period calculations, and custom due-date extensions.
+ * Month steps use the same anchored helper as library billing cycles.
  */
+import { addDays, addMonthsAnchored, cycleConfig, cycleFor } from './billingCycle.js';
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Today's calendar date in Asia/Kolkata, as YYYY-MM-DD. */
+export function todayIST(d = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(d);
+}
+
+export function isIsoDate(value) {
+  const v = String(value || '').slice(0, 10);
+  if (!ISO_DAY.test(v)) return false;
+  const [y, m, d] = v.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
+
+/**
+ * Payment date window: not in the future, and not more than 60 days ago.
+ * Returns '' when the date is allowed, otherwise a short message in plain English.
+ */
+export function validatePaidOn(paidOn, today = todayIST()) {
+  const v = String(paidOn || '').slice(0, 10);
+  if (!isIsoDate(v)) return 'Enter a valid payment date (YYYY-MM-DD).';
+  const day = String(today || '').slice(0, 10);
+  if (v > day) return 'Payment date cannot be in the future.';
+  if (v < addDays(day, -60)) return 'Payment date cannot be more than 60 days ago.';
+  return '';
+}
 
 /**
  * Format a Date object to 'YYYY-MM-DD'
@@ -34,63 +66,134 @@ export function parseDate(dateStr) {
   return new Date(dateStr);
 }
 
-/**
- * Add calendar months to a start date and subtract 1 day to get the period expiry.
- * 
- * Example:
- * 15 Feb + 1 month -> 14 March
- * 15 March + 1 month -> 14 April
- * 15 April + 1 month -> 14 May
- * 31 Jan + 1 month (non-leap) -> 27 Feb (ends 1 day before clamped 28 Feb)
- */
-export function calculateSubscriptionExpiry(startDate, durationMonths = 1) {
-  const d = parseDate(startDate);
-  const numMonths = Math.max(1, parseInt(durationMonths, 10) || 1);
+function asIso(value) {
+  if (!value) return '';
+  if (value instanceof Date) return formatDate(value);
+  return String(value).slice(0, 10);
+}
 
-  const startDay = d.getDate();
-  const startMonth = d.getMonth();
-  const startYear = d.getFullYear();
-
-  const totalMonths = startMonth + numMonths;
-  const targetYear = startYear + Math.floor(totalMonths / 12);
-  const targetMonth = ((totalMonths % 12) + 12) % 12;
-
-  // Number of days in target month (e.g. 28, 29, 30, 31)
-  const daysInTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
-  const targetDay = Math.min(startDay, daysInTargetMonth);
-
-  // Target anniversary boundary
-  const targetBoundary = new Date(targetYear, targetMonth, targetDay, 12, 0, 0);
-
-  // Expiry is 1 day before the next period starts
-  targetBoundary.setDate(targetBoundary.getDate() - 1);
-
-  return formatDate(targetBoundary);
+function resolvedCycle(cycle) {
+  if (!cycle) return cycleConfig({});
+  return cycle.mode ? cycle : cycleConfig(cycle);
 }
 
 /**
- * Calculate the next renewal start date based on current expiry.
- * If current expiry is in future or today, new period starts on expiry + 1 day.
- * If current expiry is in the past, new period starts today.
+ * Inclusive period end. Default rule: end = start + N months − 1 day, keeping the
+ * anchor day of the month (31 Jan → 28 Feb → 31 Mar; 29 Feb stays on the 29th in
+ * leap years and the last day of February otherwise).
+ * Every-N-days libraries extend by N × the library cycle length instead of months.
  */
-export function calculateRenewalStartDate(currentExpiryDate) {
-  if (!currentExpiryDate) return formatDate(new Date());
-  const expiry = parseDate(currentExpiryDate);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  
-  const expiryMidnight = new Date(expiry);
-  expiryMidnight.setHours(0, 0, 0, 0);
+export function periodEndDate(startDate, durationMonths = 1, { anchorDay, cycle } = {}) {
+  const start = asIso(startDate);
+  const n = Math.max(1, parseInt(durationMonths, 10) || 1);
+  const c = resolvedCycle(cycle);
+  if (c.mode === 'N_DAYS') return addDays(start, n * c.cycleDays - 1);
+  // Anniversary, calendar-month and yearly plans: N months from the anchor day, inclusive end.
+  // Yearly libraries still take the duration in months (12 months = one year). The owner
+  // "align to library cycle" option walks real yearly / calendar cycles separately.
+  const next = addMonthsAnchored(start, n, anchorDay || undefined);
+  return addDays(next, -1);
+}
 
-  if (expiryMidnight >= today) {
-    // Active: next day after expiry
-    const nextStart = new Date(expiry);
-    nextStart.setDate(nextStart.getDate() + 1);
-    return formatDate(nextStart);
-  } else {
-    // Expired: starts today
-    return formatDate(today);
+/**
+ * Add calendar months to a start date and subtract 1 day to get the period expiry.
+ * Pass anchorDay to keep a 31st / 29 Feb start when this period itself began on a
+ * shorter month (for example a renewal that continued from 28 Feb).
+ */
+export function calculateSubscriptionExpiry(startDate, durationMonths = 1, anchorDay) {
+  return periodEndDate(startDate, durationMonths, { anchorDay });
+}
+
+/**
+ * Next renewal starts the day after the previous end date, whether that end
+ * is still ahead or already past. A missing end date falls back to `asOf`.
+ */
+export function calculateRenewalStartDate(currentExpiryDate, asOf = todayIST()) {
+  const end = asIso(currentExpiryDate);
+  if (!isIsoDate(end)) return asIso(asOf) || todayIST();
+  return addDays(end, 1);
+}
+
+/** Paid more than one month after the old end date (the end date's own day, one month later). */
+export function isMoreThanOneMonthLate(previousEnd, paidOn) {
+  const end = asIso(previousEnd);
+  const paid = asIso(paidOn);
+  if (!isIsoDate(end) || !isIsoDate(paid) || paid <= end) return false;
+  return paid > addMonthsAnchored(end, 1);
+}
+
+/** Day of month to keep across renewals. Prefers an explicit anchor, then the join date. */
+export function anchorDayFromStudent(student) {
+  if (!student) return undefined;
+  const explicit = Number(student.billingAnchorDay);
+  if (explicit >= 1 && explicit <= 31) return explicit;
+  const src = student.joinedDate || student.renewalHistory?.[0]?.startDate || student.startDate;
+  const day = Number(asIso(src).slice(8, 10));
+  return day >= 1 && day <= 31 ? day : undefined;
+}
+
+/**
+ * One renewal period. Start is the day after the previous end (early or late).
+ * If the payment is more than a month late and choice is 'fresh', start is the
+ * chosen date (default: the payment date). End follows periodEndDate.
+ * alignTo walks library cycles from the day after that date (owner "align" option).
+ */
+export function planRenewalPeriod({
+  previousEnd, paidOn, durationMonths = 1, choice = 'continue', freshStart, anchorDay, cycle, alignTo,
+} = {}) {
+  const paid = asIso(paidOn) || todayIST();
+  const longGap = isMoreThanOneMonthLate(previousEnd, paid);
+  const useFresh = choice === 'fresh' && longGap;
+  const start = useFresh
+    ? (asIso(freshStart) || paid)
+    : calculateRenewalStartDate(previousEnd, paid);
+  const chosen = useFresh ? 'fresh' : 'continue';
+  if (alignTo && isIsoDate(asIso(alignTo))) {
+    const c = resolvedCycle(cycle);
+    let next = addDays(asIso(alignTo), 1);
+    const n = Math.max(1, parseInt(durationMonths, 10) || 1);
+    let end = next;
+    for (let i = 0; i < n; i++) {
+      const cy = cycleFor(next, c);
+      end = cy.end;
+      next = addDays(cy.end, 1);
+    }
+    return { start, end, longGap, choice: chosen };
   }
+  const end = periodEndDate(start, durationMonths, { anchorDay: useFresh ? undefined : anchorDay, cycle });
+  return { start, end, longGap, choice: chosen };
+}
+
+/** Same dates for the single-student renew screen and bulk renew. */
+export function renewalPeriodForStudent(student, opts = {}) {
+  const period = planRenewalPeriod({
+    previousEnd: student?.expiryDate || student?.endDate,
+    anchorDay: anchorDayFromStudent(student),
+    ...opts,
+  });
+  const billingAnchorDay = period.choice === 'fresh'
+    ? Number(String(period.start).slice(8, 10))
+    : (anchorDayFromStudent(student) || Number(String(period.start).slice(8, 10)));
+  return { ...period, billingAnchorDay };
+}
+
+/** Append a renewal without throwing when older students have no history arrays. */
+export function applyRenewalToStudent(student, renewal, payment, { billingAnchorDay } = {}) {
+  const s = student || {};
+  const months = Number(renewal?.durationMonths || s.durationMonths || 1);
+  return {
+    ...s,
+    planId: renewal?.planId || s.planId,
+    shiftId: renewal?.shiftId || s.shiftId,
+    shift: renewal?.shift || s.shift,
+    durationMonths: months,
+    startDate: renewal?.startDate,
+    expiryDate: renewal?.endDate || renewal?.expiryDate,
+    status: 'Active',
+    billingAnchorDay: billingAnchorDay || s.billingAnchorDay || anchorDayFromStudent(s),
+    renewalHistory: [renewal, ...(Array.isArray(s.renewalHistory) ? s.renewalHistory : [])],
+    paymentHistory: [payment, ...(Array.isArray(s.paymentHistory) ? s.paymentHistory : [])],
+  };
 }
 
 /**

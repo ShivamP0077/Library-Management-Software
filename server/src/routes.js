@@ -7,7 +7,7 @@ import { signToken, requireAuth, requireRole, tenantScope } from './auth.js';
 import { createLibrary, createUser, computeMetrics, hashPassword, validatePassword } from './services.js';
 import { verifyGoogleIdToken, googleEnabled, googleConfig, buildAuthUrl, exchangeCode } from './google.js';
 import { createWhatsappRouter, createWhatsappWebhookRouter } from './whatsapp.js';
-import { createFinanceRouter, validatePaymentBatch } from './finance.js';
+import { createFinanceRouter, validatePaymentBatch, normalizeStudentPaymentDates, applyPaidOn } from './finance.js';
 import { createStudentRouter, recordStudentDiff, recordArchiveDiff, checkCapacity } from './students.js';
 import { audit, AuditLog } from './audit.js';
 import { enforceAmountEdits, amountSettingsChanged, isOwnerRole } from './amountPermission.js';
@@ -598,6 +598,7 @@ tenant.post('/:col', colParam, wrap(async (req, res) => {
   if (req.params.col === 'students') {
     const n = await req.Model.countDocuments({ tenantId: req.tenantId });
     await checkCapacity(req.tenantId, n + 1, n);
+    normalizeStudentPaymentDates(body, null);
     await reconcileStudents(req.tenantId, [body], { actor: req.user.email });
   }
   if (req.params.col === 'payments') { validatePaymentBatch([body]); await enforceAmountEdits(req, [body]); }
@@ -613,15 +614,20 @@ tenant.put('/:col/:key', colParam, wrap(async (req, res) => {
     const prev = await req.Model.findOne({ tenantId: req.tenantId, _key: req.params.key }).lean();
     if (!prev) return res.status(404).json({ error: 'Not found' });
     const merged = { ...clean(prev), ...stripMeta(req.body), id: prev.id ?? req.params.key };
+    normalizeStudentPaymentDates(merged, prev);
     await reconcileStudents(req.tenantId, [merged], { actor: req.user.email, previous: new Map([[String(merged.id), prev]]) });
     await recordStudentDiff(req.tenantId, new Map([[String(merged.id), prev]]), [merged], req.user.email);
   }
+  const patch = stripMeta(req.body);
   if (req.params.col === 'payments') {
     const prev = await req.Model.findOne({ tenantId: req.tenantId, _key: req.params.key }).lean();
-    if (prev) validatePaymentBatch([{ ...clean(prev), ...stripMeta(req.body) }], new Map([[req.params.key, prev]]));
-    await enforceAmountEdits(req, [{ ...(prev ? clean(prev) : {}), ...stripMeta(req.body), receiptNo: prev?.receiptNo ?? req.params.key }], prev ? new Map([[String(prev.receiptNo ?? req.params.key), prev]]) : new Map());
+    const mergedPay = { ...(prev ? clean(prev) : {}), ...patch, receiptNo: prev?.receiptNo ?? req.params.key };
+    if (prev) validatePaymentBatch([mergedPay], new Map([[req.params.key, prev]]));
+    else validatePaymentBatch([mergedPay]);
+    if (mergedPay.paidOn) { patch.paidOn = mergedPay.paidOn; patch.date = mergedPay.date; patch.enteredAt = mergedPay.enteredAt; }
+    await enforceAmountEdits(req, [mergedPay], prev ? new Map([[String(prev.receiptNo ?? req.params.key), prev]]) : new Map());
   }
-  const d = await req.Model.findOneAndUpdate({ tenantId: req.tenantId, _key: req.params.key }, { $set: stripMeta(req.body) }, { new: true, lean: true });
+  const d = await req.Model.findOneAndUpdate({ tenantId: req.tenantId, _key: req.params.key }, { $set: patch }, { new: true, lean: true });
   d ? res.json(clean(d)) : res.status(404).json({ error: 'Not found' });
 }));
 
@@ -645,10 +651,12 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
   const prevArchived = col === 'archivedStudents' ? await req.Model.find({ tenantId: req.tenantId }).lean() : null;
   if (col === 'seats') await validateSeatSync(req.tenantId, req.body.map(stripMeta));
   let newPayments = null;
+  let prevPayByKey = new Map();
   if (col === 'payments') {
     const prevDocs = await req.Model.find({ tenantId: req.tenantId }).lean();
-    validatePaymentBatch(req.body.map(stripMeta), new Map(prevDocs.map(d => [String(d._key), d])));
-    await enforceAmountEdits(req, req.body.map(stripMeta), new Map(prevDocs.map(d => [String(d._key), d])));
+    prevPayByKey = new Map(prevDocs.map(d => [String(d._key), d]));
+    validatePaymentBatch(req.body.map(stripMeta), prevPayByKey);
+    await enforceAmountEdits(req, req.body.map(stripMeta), prevPayByKey);
     const had = new Set(prevDocs.map(d => String(d._key)));
     newPayments = req.body.map(stripMeta).map(b => ({ ...b, _key: keyOf(col, b) })).filter(b => b._key && !had.has(String(b._key)));
   }
@@ -660,6 +668,7 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
     const prevDocs = await req.Model.find({ tenantId: req.tenantId }).lean();
     const previous = new Map(prevDocs.map(d => [String(d._key), d]));
     const incoming = req.body.map(stripMeta).filter(b => keyOf(col, b));
+    for (const s of incoming) normalizeStudentPaymentDates(s, previous.get(String(keyOf(col, s))));
     await checkCapacity(req.tenantId, new Set(incoming.map(b => keyOf(col, b))).size, prevDocs.length);
     await reconcileStudents(req.tenantId, incoming, { actor: req.user.email, previous });
     req.studentDiff = { previous, incoming };
@@ -672,6 +681,11 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
     const body = stripMeta(raw);
     const _key = keyOf(col, body);
     if (!_key || seen.has(_key)) return;
+    if (col === 'payments') {
+      const prevPay = prevPayByKey.get(String(_key));
+      if (!prevPay || prevPay.paidOn !== body.paidOn) applyPaidOn(body);
+    }
+    if (col === 'students') normalizeStudentPaymentDates(body, req.studentDiff?.previous?.get(String(_key)));
     seen.add(_key);
     ops.push({ replaceOne: { filter: { tenantId: req.tenantId, _key }, replacement: { ...body, _key, _order: i, tenantId: req.tenantId, libraryId: req.tenantId }, upsert: true } });
   });

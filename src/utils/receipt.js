@@ -35,6 +35,17 @@ export function receiptState(receipt, { payment, renewal } = {}) {
   return { code: 'unpaid', label: 'UNPAID', settled: false, tone: 'unpaid' };
 }
 
+/** The day the money was received. paidOn wins; older receipts only have date. */
+export function receiptPaidOn(receipt, payment) {
+  return str(receipt?.paidOn || payment?.paidOn || receipt?.date || payment?.date);
+}
+
+/** "Paid on YYYY-MM-DD", or '' when no date was stored. */
+export function receiptPaidLine(receipt, payment) {
+  const paid = receiptPaidOn(receipt, payment);
+  return paid ? `Paid on ${paid}` : '';
+}
+
 /** Payment period + next due date, cross-checked with the saved student/renewal. */
 export function receiptPeriod(receipt, { student, renewal } = {}) {
   const start = str(receipt?.periodStart || receipt?.startDate || renewal?.startDate || student?.startDate);
@@ -61,10 +72,13 @@ export function receiptView(receipt, { student, renewal, payment, branch, settin
   const state = receiptState(receipt, { payment, renewal });
   const period = receiptPeriod(receipt, { student, renewal });
   const amounts = receiptAmounts(receipt);
+  const paidOn = receiptPaidOn(receipt, payment);
   return {
     state,
     period,
     amounts,
+    paidOn,
+    paidOnLine: paidOn ? `Paid on ${paidOn}` : '',
     operator: receiptOperator(receipt),
     studentName: str(receipt?.studentName || student?.name),
     studentId: str(receipt?.studentId || student?.id),

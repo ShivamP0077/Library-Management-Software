@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { receiptState, receiptPeriod, receiptAmounts, receiptView } from '../src/utils/receipt.js';
+import { receiptState, receiptPeriod, receiptAmounts, receiptView, receiptPaidLine } from '../src/utils/receipt.js';
 
 test('#12: status is never upgraded to paid when void/failed/unpaid/partial', () => {
   assert.equal(receiptState({ status: 'Paid' }).code, 'paid');
@@ -27,6 +27,19 @@ test('#12: actual period/next due come from records, not from today', () => {
 test('#12: totals are only what the receipt stores', () => {
   assert.deepEqual(receiptAmounts({ basePrice: 1200, discount: 200, fine: 50 }), { base: 1200, discount: 200, fine: 50, netTotal: 1050 });
   assert.deepEqual(receiptAmounts({ netTotal: 900, discount: 100 }), { base: 900, discount: 100, fine: 0, netTotal: 900 });
+});
+
+test('receipt shows Paid on using paidOn, and falls back to date', () => {
+  const view = receiptView({
+    paidOn: '2026-12-07',
+    date: '2026-12-10',
+    periodStart: '2026-12-01',
+    periodEnd: '2026-12-31',
+  });
+  assert.equal(view.paidOn, '2026-12-07');
+  assert.equal(view.paidOnLine, 'Paid on 2026-12-07');
+  assert.equal(receiptPaidLine({ date: '2026-11-02' }), 'Paid on 2026-11-02');
+  assert.deepEqual(view.period, { start: '2026-12-01', end: '2026-12-31', nextDue: '2026-12-31' });
 });
 
 test('#12: view exposes operator label source and branch, never a fabricated operator', () => {

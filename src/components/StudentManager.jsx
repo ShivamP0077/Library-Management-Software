@@ -17,7 +17,7 @@ import { StudentExcelViewModal } from './Modals/StudentExcelViewModal';
 import { BulkStudentModal } from './Modals/BulkStudentModal';
 import { EditStudentModal } from './Modals/EditStudentModal';
 import { handleSplitAmountChange, handleAddSplitComponent, handleRemoveSplitComponent, validateSplitPayment } from '../utils/splitPaymentUtils';
-import { calculateSubscriptionExpiry, calculateRenewalStartDate, getSubscriptionStatus, formatDate } from '../utils/dateUtils';
+import { getSubscriptionStatus, validatePaidOn, renewalPeriodForStudent, isMoreThanOneMonthLate } from '../utils/dateUtils';
 import { getDocumentBlob, deleteDocumentBlob, saveDocumentBlobNow } from '../utils/idbStorage';
 import { uploadAttachmentFile, makeAttachmentKey, isPdfAttachment } from '../utils/attachmentUpload';
 import { addFilesToDocuments, removeDocumentFile, groupStudentDocuments } from '../utils/studentDocuments';
@@ -341,6 +341,9 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   const [relocOverride, setRelocOverride] = useState(null);
   const [renewDiscount, setRenewDiscount] = useState(0);
   const [renewFine, setRenewFine] = useState(0);
+  const [renewPaidOn, setRenewPaidOn] = useState(todayStr);
+  const [renewChoice, setRenewChoice] = useState('continue');
+  const [renewFreshStart, setRenewFreshStart] = useState(todayStr);
   
   const [relocateBranchId, setRelocateBranchId] = useState('');
   const [newBlockId, setNewBlockId] = useState('');
@@ -595,6 +598,9 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     setRenewFine(0);
     setRenewPaymentMethod('');
     setRenewSplitBreakdown([{ method: '', amount: '' }]);
+    setRenewPaidOn(todayStr);
+    setRenewChoice('continue');
+    setRenewFreshStart(todayStr);
     setIsRenewModalOpen(true);
   };
 
@@ -619,14 +625,22 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       }
     }
 
-    const plan = plans.find(p => p.id === renewPlanId) || plans[0];
-    const startStr = calculateRenewalStartDate(selectedStudent.expiryDate);
-    let expiryStr = calculateSubscriptionExpiry(startStr, renewDuration);
-    if (renewAlign) {
-      // Issue #9 (owner-chosen): bridge days up to the library cycle end, then whole library cycles.
-      let next = addDays(renewAlign.to, 1);
-      for (let i = 0; i < parsedDur; i++) { const c = cycleFor(next, cycleCfg); expiryStr = c.end; next = addDays(c.end, 1); }
+    const paidOnError = validatePaidOn(renewPaidOn, todayStr);
+    if (paidOnError) {
+      toast.error(paidOnError);
+      return;
     }
+    const plan = plans.find(p => p.id === renewPlanId) || plans[0];
+    const period = renewalPeriodForStudent(selectedStudent, {
+      paidOn: renewPaidOn,
+      durationMonths: renewDuration,
+      choice: renewChoice,
+      freshStart: renewFreshStart,
+      cycle: cycleCfg,
+      alignTo: renewAlign?.to,
+    });
+    const startStr = period.start;
+    const expiryStr = period.end;
     
     const result = renewSubscription(selectedStudent.id, {
       planId: plan.id,
@@ -643,7 +657,9 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       discount: renewDiscount,
       fine: renewFine,
       paymentMethod: renewPaymentMethod,
-      breakdown: renewPaymentMethod === 'Split' ? renewSplitBreakdown : undefined
+      breakdown: renewPaymentMethod === 'Split' ? renewSplitBreakdown : undefined,
+      paidOn: renewPaidOn,
+      billingAnchorDay: period.billingAnchorDay,
     });
     
     if (result && result.error) {
@@ -717,6 +733,9 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     setRenewDiscount(0);
     setRenewFine(0);
     setRenewPaymentMethod('');
+    setRenewPaidOn(todayStr);
+    setRenewChoice('continue');
+    setRenewFreshStart(todayStr);
     setIsBulkRenewModalOpen(true);
   };
 
@@ -737,6 +756,12 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       return;
     }
     
+    const paidOnError = validatePaidOn(renewPaidOn, todayStr);
+    if (paidOnError) {
+      toast.error(paidOnError);
+      return;
+    }
+
     let successCount = 0;
     let skippedCount = 0;
 
@@ -744,14 +769,15 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       const s = students.find(st => st.id === id);
       if (!s) return;
 
-      const currentExpiry = new Date(s.expiryDate);
-      const today = new Date();
-      const startDateObj = (currentExpiry > today) ? currentExpiry : today;
-      const expiryDateObj = new Date(startDateObj);
-      expiryDateObj.setMonth(expiryDateObj.getMonth() + Number(renewDuration));
-      
-      const startDateStr = startDateObj.toISOString().split('T')[0];
-      const expiryDateStr = expiryDateObj.toISOString().split('T')[0];
+      const period = renewalPeriodForStudent(s, {
+        paidOn: renewPaidOn,
+        durationMonths: renewDuration,
+        choice: renewChoice,
+        freshStart: renewFreshStart,
+        cycle: cycleCfg,
+      });
+      const startDateStr = period.start;
+      const expiryDateStr = period.end;
 
       const isDuplicate = s.renewalHistory?.some(
         r => r.startDate === startDateStr && r.endDate === expiryDateStr
@@ -784,7 +810,9 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
         amountPaid: appliedAmount,
         discount: renewDiscount,
         fine: renewFine,
-        paymentMethod: renewPaymentMethod
+        paymentMethod: renewPaymentMethod,
+        paidOn: renewPaidOn,
+        billingAnchorDay: period.billingAnchorDay,
       });
       
       if (result && result.error) {
@@ -811,14 +839,15 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       const s = students.find(st => st.id === id);
       if (!s) return;
       
-      const currentExpiry = new Date(s.expiryDate);
-      const today = new Date();
-      const startDateObj = (currentExpiry > today) ? currentExpiry : today;
-      const expiryDateObj = new Date(startDateObj);
-      expiryDateObj.setMonth(expiryDateObj.getMonth() + Number(renewDuration));
-      
-      const startDateStr = startDateObj.toISOString().split('T')[0];
-      const expiryDateStr = expiryDateObj.toISOString().split('T')[0];
+      const period = renewalPeriodForStudent(s, {
+        paidOn: renewPaidOn,
+        durationMonths: renewDuration,
+        choice: renewChoice,
+        freshStart: renewFreshStart,
+        cycle: cycleCfg,
+      });
+      const startDateStr = period.start;
+      const expiryDateStr = period.end;
 
       const isDuplicate = s.renewalHistory?.some(
         r => r.startDate === startDateStr && r.endDate === expiryDateStr
@@ -1684,6 +1713,31 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                       </select>
                     </div>
                   </div>
+                  <div className="form-group">
+                    <label className="form-label">Payment date</label>
+                    <input type="date" className="form-input" value={renewPaidOn} max={todayStr} min={addDays(todayStr, -60)} onChange={(e) => {
+                      const next = e.target.value;
+                      setRenewPaidOn(next);
+                      setRenewFreshStart(prev => prev === renewPaidOn ? next : prev);
+                    }} />
+                  </div>
+                  {bulkRenewTarget.some(id => isMoreThanOneMonthLate(students.find(st => st.id === id)?.expiryDate, renewPaidOn)) && (
+                    <fieldset style={{ border: '1px solid var(--border-light)', borderRadius: '8px', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
+                      <legend style={{ fontSize: '12px', fontWeight: 700, padding: '0 4px' }}>Some students are more than a month late</legend>
+                      <label style={{ display: 'flex', gap: '8px', alignItems: 'center', fontSize: '13px' }}>
+                        <input type="radio" name="bulk-renew-gap" checked={renewChoice === 'continue'} onChange={() => setRenewChoice('continue')} />
+                        Continue from old end date
+                      </label>
+                      <label style={{ display: 'flex', gap: '8px', alignItems: 'center', fontSize: '13px' }}>
+                        <input type="radio" name="bulk-renew-gap" checked={renewChoice === 'fresh'} onChange={() => { setRenewChoice('fresh'); setRenewFreshStart(renewPaidOn || todayStr); }} />
+                        Start fresh from chosen date
+                      </label>
+                      {renewChoice === 'fresh' && (
+                        <input type="date" className="form-input" value={renewFreshStart} onChange={(e) => setRenewFreshStart(e.target.value)} />
+                      )}
+                      <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Students who are not more than a month late still continue from the day after their current end date.</span>
+                    </fieldset>
+                  )}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
                     <div className="form-group"><label className="form-label">Price (₹) per student</label><NumericInput className="form-input" value={renewAmount} readOnly={!canEditAmount} onChange={(e) => canEditAmount && setRenewAmountRaw(Number(e.target.value))} /></div>
                     <div className="form-group"><label className="form-label">Discount (₹) per student</label><NumericInput className="form-input" value={renewDiscount} onChange={(e) => setRenewDiscount(Number(e.target.value))} /></div>
@@ -1826,6 +1880,49 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                       </select>
                     </div>
                   </div>
+                  {(() => {
+                    const period = renewalPeriodForStudent(selectedStudent, {
+                      paidOn: renewPaidOn,
+                      durationMonths: renewDuration,
+                      choice: renewChoice,
+                      freshStart: renewFreshStart,
+                      cycle: cycleCfg,
+                      alignTo: renewAlign?.to,
+                    });
+                    const longGap = isMoreThanOneMonthLate(selectedStudent.expiryDate, renewPaidOn);
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '16px' }}>
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label className="form-label">Payment date</label>
+                          <input type="date" className="form-input" value={renewPaidOn} max={todayStr} min={addDays(todayStr, -60)} onChange={(e) => {
+                            const next = e.target.value;
+                            setRenewPaidOn(next);
+                            setRenewFreshStart(prev => prev === renewPaidOn ? next : prev);
+                          }} />
+                          <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>The day the student paid. This can be earlier than the new period.</span>
+                        </div>
+                        {longGap && (
+                          <fieldset style={{ border: '1px solid var(--border-light)', borderRadius: '8px', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <legend style={{ fontSize: '12px', fontWeight: 700, padding: '0 4px' }}>This payment is more than a month late</legend>
+                            <label style={{ display: 'flex', gap: '8px', alignItems: 'center', fontSize: '13px' }}>
+                              <input type="radio" name="renew-gap" checked={renewChoice === 'continue'} onChange={() => setRenewChoice('continue')} />
+                              Continue from old end date
+                            </label>
+                            <label style={{ display: 'flex', gap: '8px', alignItems: 'center', fontSize: '13px' }}>
+                              <input type="radio" name="renew-gap" checked={renewChoice === 'fresh'} onChange={() => { setRenewChoice('fresh'); setRenewFreshStart(renewPaidOn || todayStr); }} />
+                              Start fresh from chosen date
+                            </label>
+                            {renewChoice === 'fresh' && (
+                              <input type="date" className="form-input" value={renewFreshStart} onChange={(e) => setRenewFreshStart(e.target.value)} />
+                            )}
+                          </fieldset>
+                        )}
+                        <div style={{ fontSize: '13px', background: 'var(--bg-main)', borderRadius: '8px', padding: '10px 12px' }}>
+                          Service period: <strong>{period.start}</strong> to <strong>{period.end}</strong>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {renewPaymentMethod === 'Split' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '16px', background: '#f8fafc', padding: '16px', borderRadius: '8px' }}>
                       <label className="form-label" style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Split Breakdown</label>

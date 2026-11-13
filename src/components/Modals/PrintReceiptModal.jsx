@@ -30,7 +30,7 @@ const ReceiptBody = ({ receipt, settings, branch, photo, copyLabel, view }) => {
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '0.75rem', borderBottom: '1px solid #ddd', paddingBottom: '0.45rem' }}>
         <div>
           <div><strong>RECEIPT NO:</strong> {receipt.receiptNo || '—'}</div>
-          <div><strong>DATE:</strong> {receipt.date || '—'}</div>
+          <div><strong>Paid on</strong> {v.paidOn || '—'}</div>
           <div><strong>PERIOD:</strong> {v.period.start || '—'} to {v.period.end || '—'}</div>
           <div><strong>NEXT DUE:</strong> {v.period.nextDue || '—'}</div>
         </div>

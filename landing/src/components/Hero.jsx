@@ -1,30 +1,10 @@
 import { useRef, useState, useEffect } from 'react';
 import { m, useScroll, useTransform } from 'framer-motion';
-import { ArrowRight, CalendarClock, Check, IndianRupee, Armchair } from 'lucide-react';
+import { ArrowRight, CalendarClock } from 'lucide-react';
 import Scene3D from './Scene3D.jsx';
 import { APP_URL, DEMO_HREF } from '../config.js';
 
 const ease = [0.22, 1, 0.36, 1];
-
-function Chip({ className, icon: Icon, title, sub, delay, tone = 'gold' }) {
-  const tones = { gold: 'bg-gold-400/15 text-gold-300', green: 'bg-emerald-400/15 text-emerald-300' };
-  return (
-    <m.div
-      initial={{ opacity: 0, y: 16, scale: 0.96 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ duration: 0.8, delay, ease }}
-      className={`glass pointer-events-none absolute hidden items-center gap-3 rounded-2xl px-3.5 py-3 shadow-2xl md:flex ${className}`}
-    >
-      <span className={`grid h-9 w-9 place-items-center rounded-xl ${tones[tone]}`}>
-        <Icon size={18} />
-      </span>
-      <span className="leading-tight">
-        <span className="block text-[13px] font-semibold text-white">{title}</span>
-        <span className="block text-xs text-stone-400">{sub}</span>
-      </span>
-    </m.div>
-  );
-}
 
 export default function Hero() {
   const ref = useRef(null);
@@ -37,13 +17,12 @@ export default function Hero() {
 
   return (
     <section id="top" ref={ref} className="grain relative isolate overflow-hidden bg-ink-950 pt-16">
-      {/* backdrop */}
       <div className="grid-lines absolute inset-0 -z-10 [mask-image:radial-gradient(ellipse_at_60%_40%,black_20%,transparent_70%)]" />
-      <div className="absolute -top-40 right-[-10%] -z-10 h-[620px] w-[620px] rounded-full bg-gold-500/20 blur-[140px]" />
-      <div className="absolute bottom-[-20%] left-[-10%] -z-10 h-[480px] w-[480px] rounded-full bg-amber-900/30 blur-[120px]" />
+      <div className="absolute -top-40 right-[-10%] -z-10 h-[420px] w-[420px] rounded-full bg-gold-500/20 blur-[140px] md:h-[620px] md:w-[620px]" />
+      <div className="absolute bottom-[-20%] left-[-10%] -z-10 h-[320px] w-[320px] rounded-full bg-amber-900/30 blur-[120px] md:h-[480px] md:w-[480px]" />
 
-      <div className="container-x relative grid min-h-[calc(100svh-4rem)] items-center gap-6 pb-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] lg:pb-0">
-        <m.div style={{ y: textY }} className="relative z-10 pt-10 lg:pt-0">
+      <div className="container-x relative grid items-center gap-8 pb-14 pt-8 md:gap-12 md:pb-20 md:pt-14 xl:min-h-[calc(100svh-4rem)] xl:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] xl:gap-6 xl:pb-8 xl:pt-6">
+        <m.div style={{ y: textY }} className="relative z-10 mx-auto w-full max-w-xl text-center xl:mx-0 xl:max-w-none xl:pt-4 xl:text-left">
           <m.span
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -56,7 +35,7 @@ export default function Hero() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, delay: 0.08, ease }}
-            className="mt-6 font-display text-[2.4rem] font-black leading-[1.02] text-white sm:text-6xl xl:text-7xl"
+            className="mt-5 font-display text-[2rem] font-black leading-[1.05] text-white md:mt-6 md:text-5xl xl:text-[3.35rem] xl:leading-[1.02]"
           >
             Every seat, shift <br />
             and rupee — <br />
@@ -66,16 +45,15 @@ export default function Hero() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, delay: 0.16, ease }}
-            className="mt-6 max-w-xl text-base leading-relaxed text-stone-300 sm:text-lg"
+            className="mx-auto mt-4 max-w-md text-[15px] leading-relaxed text-stone-300 md:mt-6 md:max-w-lg md:text-lg xl:mx-0"
           >
-            My Library OS replaces registers and spreadsheets with a live seat map, shift-based admissions, split payments
-            with printable receipts, expenses and P&amp;L — plus a super admin view across every branch you run.
+            The front desk for reading libraries: seats, shifts, admissions and fees, live on one screen.
           </m.p>
           <m.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, delay: 0.24, ease }}
-            className="mt-8 grid grid-cols-2 gap-3 sm:flex sm:items-center"
+            className="mx-auto mt-7 grid w-full max-w-md grid-cols-2 gap-3 md:mt-8 xl:mx-0 xl:max-w-none xl:flex xl:items-center"
           >
             <a href={APP_URL} className="btn-gold group !px-3 !py-3.5 !text-[15px] sm:!px-6 sm:!text-base">
               Start free trial <ArrowRight size={18} className="transition-transform group-hover:translate-x-0.5" />
@@ -95,40 +73,16 @@ export default function Hero() {
               Sign in with Google
             </a>
           </m.p>
-          <m.ul
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.8, delay: 0.4 }}
-            className="mt-8 hidden flex-wrap gap-x-6 gap-y-2 text-sm text-stone-400 sm:flex"
-          >
-            {['Runs in the browser', 'Google sign-in', 'Each library’s data kept separate'].map((t) => (
-              <li key={t} className="flex items-center gap-2">
-                <Check size={16} className="text-gold-400" /> {t}
-              </li>
-            ))}
-          </m.ul>
         </m.div>
 
         <m.div
           style={{ y: sceneY, opacity: sceneOpacity }}
-          className="relative -mx-5 h-[380px] sm:mx-0 sm:h-[520px] lg:absolute lg:inset-y-0 lg:right-[-2%] lg:h-auto lg:w-[60%]"
+          className="relative mx-auto h-[340px] w-full max-w-lg sm:h-[400px] md:h-[460px] md:max-w-2xl xl:absolute xl:inset-y-0 xl:right-[-2%] xl:mx-0 xl:h-auto xl:max-w-none xl:w-[56%]"
         >
           <Scene3D eventSource={eventSource} />
-          <Chip className="left-[8%] top-[20%]" icon={Armchair} title="Seat 14 · Morning shift" sub="Assigned just now" delay={1.1} />
-          <Chip className="bottom-[22%] right-[12%]" icon={IndianRupee} title="Split payment recorded" sub="Cash + UPI · receipt ready" delay={1.35} tone="green" />
-          <m.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 1.5, duration: 0.8 }}
-            className="glass pointer-events-none absolute bottom-4 left-1/2 flex -translate-x-1/2 gap-4 rounded-full px-4 py-2 text-xs text-stone-300 lg:bottom-[10%]"
-          >
-            <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-gold-400" />Occupied</span>
-            <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-emerald-400" />Vacant</span>
-            <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-rose-400" />Maintenance</span>
-          </m.div>
         </m.div>
       </div>
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-b from-transparent to-ink-950" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-b from-transparent to-ink-950 md:h-24" />
     </section>
   );
 }

@@ -32,7 +32,7 @@ export function FinalCTA() {
 
 export default function Footer() {
   const cols = [
-    ['Product', [['Features', '#features'], ['Product tour', '#product'], ['Multi-branch', '#branches'], ['Pricing', '#pricing']]],
+    ['Product', [['Features', '#features'], ['Product tour', '#product'], ['Pricing', '#pricing']]],
     ['Get started', [['Start free trial', APP_URL], ['Sign in', APP_URL], ['Book a demo', DEMO_HREF], ['FAQ', '#faq']]],
   ];
   return (

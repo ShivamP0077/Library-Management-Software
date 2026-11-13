@@ -1,6 +1,6 @@
 import { m } from 'framer-motion';
 import {
-  LayoutGrid, Clock3, UserPlus, Wallet, ReceiptText, PiggyBank, BarChart3, ShieldCheck, Building2, KeyRound,
+  LayoutGrid, Clock3, UserPlus, Wallet, ReceiptText, PiggyBank, BarChart3, Building2, KeyRound,
 } from 'lucide-react';
 import { Reveal, SectionHeading } from './ui.jsx';
 
@@ -58,16 +58,15 @@ function SplitMini() {
 }
 
 const features = [
-  { icon: LayoutGrid, title: 'Live seat map', body: 'See every seat at a glance — occupied, vacant or under maintenance — and assign the right seat for the right shift in a click.', span: 'lg:col-span-2 lg:row-span-2', extra: <SeatMini />, feature: true },
-  { icon: Clock3, title: 'Shifts & timings', body: 'Define morning, evening or full-day shifts with their own fees, and book seats per shift.' },
-  { icon: UserPlus, title: 'Student admissions', body: 'Admission forms with ID documents, bulk import, PDF student lists and past records you can restore.' },
-  { icon: Wallet, title: 'Payments & split payments', body: 'Collect fees in cash, UPI or card — or a mix of all three in a single payment.', span: 'lg:col-span-2', extra: <SplitMini /> },
-  { icon: ReceiptText, title: 'Printable receipts', body: 'Print a clean receipt with your library’s details for every payment, right at the desk.' },
-  { icon: PiggyBank, title: 'Expenses', body: 'Log rent, electricity, salaries and supplies so costs sit right beside collections.' },
-  { icon: BarChart3, title: 'Reports & P&L', body: 'Collections, expenses and profit & loss for the month, side by side.' },
-  { icon: ShieldCheck, title: 'Staff permissions', body: 'Give each staff member exactly the access they need — nothing more.' },
-  { icon: Building2, title: 'Multi-branch + super admin', body: 'Run several branches; a super admin sees totals across all, branch admins see only theirs.', span: 'lg:col-span-2' },
-  { icon: KeyRound, title: 'Google sign-in', body: 'Sign in with your Google account — your email decides your role. No extra passwords to remember or reset.', span: 'lg:col-span-2' },
+  { icon: LayoutGrid, title: 'Live seat map', body: 'See which seats are taken, free or under maintenance, and assign one for the right shift.', span: 'md:col-span-2 xl:col-span-2 xl:row-span-2', extra: <SeatMini />, feature: true },
+  { icon: Clock3, title: 'Shifts & timings', body: 'Morning, evening or full-day shifts, each with its own fee.' },
+  { icon: UserPlus, title: 'Student admissions', body: 'Admit students with their documents, in bulk or one at a time.' },
+  { icon: ReceiptText, title: 'Printable receipts', body: 'Print a receipt with your library’s details at the desk.' },
+  { icon: PiggyBank, title: 'Expenses', body: 'Log rent, salaries and supplies next to what you collect.' },
+  { icon: Wallet, title: 'Payments & split payments', body: 'Take a fee in cash, UPI, card, or a mix of all three.', extra: <SplitMini /> },
+  { icon: BarChart3, title: 'Reports & P&L', body: 'Collections, expenses and profit for the month, side by side.' },
+  { icon: Building2, title: 'Branches & permissions', body: 'Manage every branch in one place, with secure role-based permissions so each person only sees their work.' },
+  { icon: KeyRound, title: 'Google sign-in', body: 'Sign in with Google. The email on the account sets the role.' },
 ];
 
 export default function Features() {
@@ -78,9 +77,9 @@ export default function Features() {
         <SectionHeading
           eyebrow="Features"
           title="Everything a reading library runs on"
-          sub="Built around how study rooms actually work: seats sold by shift, monthly plans, mixed payment modes and owners who manage more than one branch."
+          sub="The tools a study room uses every day, from the seat map to the monthly numbers."
         />
-        <div className="mt-16 grid auto-rows-auto gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-12 grid auto-rows-auto gap-4 md:mt-16 md:grid-cols-2 xl:grid-cols-4">
           {features.map((f, i) => (
             <Reveal
               key={f.title}
@@ -102,14 +101,6 @@ export default function Features() {
               <h3 className={`relative mt-5 font-display text-xl font-bold ${f.feature ? 'sm:text-3xl' : ''}`}>{f.title}</h3>
               <p className={`relative mt-2 text-[15px] leading-relaxed ${f.feature ? 'max-w-md text-stone-300' : 'text-stone-600'}`}>{f.body}</p>
               {f.extra && <div className="relative">{f.extra}</div>}
-              {f.feature && (
-                <div className="relative mt-5 flex flex-wrap gap-4 text-xs text-stone-300">
-                  <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-gold-400" />Occupied</span>
-                  <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-emerald-400" />Vacant</span>
-                  <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-rose-400" />Maintenance</span>
-                  <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-stone-500" />Unavailable</span>
-                </div>
-              )}
             </Reveal>
           ))}
         </div>

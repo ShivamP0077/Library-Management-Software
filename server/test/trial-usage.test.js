@@ -5,8 +5,9 @@ import { setup, teardown, call, ctx } from './helpers.js';
 import { outbox } from '../src/mailer.js';
 import { resetRateLimits } from '../src/accounts.js';
 import { User, Library } from '../src/models.js';
-import { normalizeTrialEmail, normalizeTrialPhone, hashTrialValue, TRIAL_USED_MESSAGE, TrialUsage } from '../src/trialUsage.js';
+import { normalizeTrialEmail, normalizeTrialPhone, hashTrialValue, gmailVariantPattern, TRIAL_USED_MESSAGE, TrialUsage, trialIdentityUsed } from '../src/trialUsage.js';
 import { deleteLibraryData } from '../src/deleteLibrary.js';
+import { AuditLog } from '../src/audit.js';
 
 before(async () => {
   await setup('trial_usage');
@@ -23,6 +24,22 @@ const signup = async (email, extra = {}) => {
     body: { email, code: codeFor(email), name: 'Owner', password: 'OwnerPass-123', libraryName: `Lib ${email}`, planId: 'pro', ...extra },
   });
 };
+
+test('gmail variant pattern allows optional dots and a plus tag, and escapes the local part', () => {
+  const re = new RegExp(gmailVariantPattern('user'), 'i');
+  assert.match('user@gmail.com', re);
+  assert.match('u.s.e.r+tag@gmail.com', re);
+  assert.match('user+news@googlemail.com', re);
+  assert.doesNotMatch('userx@gmail.com', re);
+  assert.doesNotMatch('other@gmail.com', re);
+  assert.doesNotMatch('user@example.com', re);
+  const plus = new RegExp(gmailVariantPattern('a+b'), 'i');
+  assert.match('a+b@gmail.com', plus);
+  assert.match('a.+b+tag@gmail.com', plus);
+  assert.doesNotMatch('aaab@gmail.com', plus);
+  assert.equal(gmailVariantPattern(''), null);
+  assert.equal(gmailVariantPattern('a'.repeat(65)), null);
+});
 
 test('normalises gmail dots, plus tags and googlemail.com; Indian phones become 91XXXXXXXXXX', () => {
   assert.equal(normalizeTrialEmail('  US.ER+tag@GoogleMail.com '), 'user@gmail.com');
@@ -90,6 +107,68 @@ test('lazy backfill: an existing disabled owner with the same gmail or Google su
   assert.equal(r.body.needsPayment, true);
   assert.equal(r.body.message, TRIAL_USED_MESSAGE);
   assert.ok(await TrialUsage.countDocuments({ kind: 'google' }) > before);
+});
+
+test('lazy backfill counts owners and library contacts, not staff, partners or agents', async () => {
+  await User.create({
+    email: 'staff.person@gmail.com', name: 'Staff', role: 'staff', status: 'Active',
+    tenantId: 'lib-staff', libraryId: 'lib-staff', mobile: '919876511111', googleSub: 'staff-google-sub',
+  });
+  await User.create({ email: 'agent.one@example.com', name: 'Agent', role: 'agent', mobile: '919876511112' });
+  await User.create({ email: 'partner.one@example.com', name: 'Partner', role: 'partner', mobile: '9876511113' });
+  assert.equal((await trialIdentityUsed({ email: 'staffperson@gmail.com' })).used, false);
+  assert.equal((await trialIdentityUsed({ email: 'staff.person+news@googlemail.com' })).used, false);
+  assert.equal((await trialIdentityUsed({ mobile: '9876511111' })).used, false);
+  assert.equal((await trialIdentityUsed({ googleSub: 'staff-google-sub' })).used, false);
+  assert.equal((await trialIdentityUsed({ email: 'agent.one@example.com' })).used, false);
+  assert.equal((await trialIdentityUsed({ mobile: '9876511112' })).used, false);
+  assert.equal((await trialIdentityUsed({ mobile: '9876511113' })).used, false);
+
+  await User.create({
+    email: 'own.er+x@gmail.com', name: 'Owner', role: 'client_admin', status: 'Disabled',
+    tenantId: 'lib-gmail-owner', libraryId: 'lib-gmail-owner',
+  });
+  const owner = await trialIdentityUsed({ email: 'owner@gmail.com' });
+  assert.equal(owner.used, true);
+  assert.equal(owner.source, 'backfill');
+  assert.equal((await trialIdentityUsed({ email: 'other.person@gmail.com' })).used, false);
+
+  await Library.create({
+    libraryId: 'lib-contact-mail', name: 'Contact', status: 'Disabled',
+    contactEmail: 'lib.contact+news@gmail.com',
+  });
+  assert.equal((await trialIdentityUsed({ email: 'libcontact@gmail.com' })).used, true);
+
+  await Library.create({
+    libraryId: 'lib-contact-phone', name: 'Phone', status: 'Active',
+    contactEmail: 'front-desk@library.test', phone: '+91 98765 00099',
+  });
+  const byPhone = await trialIdentityUsed({ mobile: '9876500099' });
+  assert.equal(byPhone.used, true);
+  assert.equal(byPhone.source, 'backfill');
+
+  await AuditLog.create({
+    action: 'library.deleted', target: 'lib-gone-mail', at: new Date(),
+    detail: { contactEmail: 'gone.owner@example.com', name: 'Gone' },
+  });
+  assert.equal((await trialIdentityUsed({ email: 'gone.owner@example.com' })).used, true);
+  await AuditLog.create({
+    action: 'library.deleted', target: 'lib-gone-phone', at: new Date(),
+    detail: { phone: '09876500088' },
+  });
+  assert.equal((await trialIdentityUsed({ mobile: '9876500088' })).used, true);
+
+  const longLocal = 'b'.repeat(65);
+  await User.create({
+    email: `${longLocal}@gmail.com`, name: 'Long', role: 'client_admin', status: 'Active',
+    tenantId: 'lib-long', libraryId: 'lib-long',
+  });
+  await User.create({
+    email: `${'c'.repeat(65)}@gmail.com`, name: 'Long staff', role: 'staff', status: 'Active',
+    tenantId: 'lib-staff', libraryId: 'lib-staff',
+  });
+  assert.equal((await trialIdentityUsed({ email: `${longLocal}@gmail.com` })).used, true);
+  assert.equal((await trialIdentityUsed({ email: `${'c'.repeat(65)}@gmail.com` })).used, false);
 });
 
 test('deleting the library does not remove trial hashes', async () => {

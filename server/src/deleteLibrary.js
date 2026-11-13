@@ -6,6 +6,7 @@ import { AuditLog } from './audit.js';
 import { SoftwareInvoice } from './payments/invoices.js';
 import { DeletionJob } from './deletionJob.js';
 import { createEvolutionClient, evolutionConfigured, instanceNameFor } from './evolution.js';
+import { recordTrialIdentifiers } from './trialUsage.js';
 
 // Retained on purpose. Everything else with tenantId/libraryId is removed.
 // TrialUsage stores only hashed identities and has no tenant field, so a delete
@@ -162,6 +163,16 @@ async function performDelete(libraryId, { evolution, now = new Date() } = {}) {
 
   // 1. Close account-linked one-time codes before their users disappear. These
   //    rows carry only a userId and would otherwise be dangling after the delete.
+  // Keep the trial identity after the owner and library contact rows are removed.
+  const [owners, libDoc] = await Promise.all([
+    User.find({ role: 'client_admin', $or: [{ tenantId: libraryId }, { libraryId }] }).select('email mobile googleSub').lean(),
+    Library.findOne({ libraryId }).select('contactEmail phone').lean(),
+  ]);
+  for (const owner of owners) {
+    await recordTrialIdentifiers({ email: owner.email, mobile: owner.mobile, googleSub: owner.googleSub });
+  }
+  if (libDoc) await recordTrialIdentifiers({ email: libDoc.contactEmail, mobile: libDoc.phone });
+
   const tenantUsers = await User.find({ role: { $ne: 'superadmin' }, $or: [{ tenantId: libraryId }, { libraryId }] }).select('_id').lean();
   const userIds = tenantUsers.map((u) => String(u._id));
   if (userIds.length) {

@@ -19,6 +19,7 @@ import {
 } from '../utils/staffPermissions';
 import { getCanonicalSeatTypes } from '../utils/seatTypeUtils';
 import toast from 'react-hot-toast';
+import { EnquiryQrCard } from './enquiry/EnquiryQrCard';
 
 const ALL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -2758,6 +2759,8 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
           </div>
         )}
       </AnimatePresence>
+
+      <EnquiryQrCard />
 
       {/* ======================================================== */}
       {/* MODAL: SETUP WIZARD (EDIT / RESUME MODE) */}

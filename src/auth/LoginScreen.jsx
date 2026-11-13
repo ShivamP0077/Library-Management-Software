@@ -194,12 +194,12 @@ export function LoginScreen({ onContinueOffline }) {
   const inviteLibraryName = typeof inviteInfo?.library === 'string' ? inviteInfo.library : inviteInfo?.library?.name;
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, background: 'var(--bg-primary, #f8fafc)' }}>
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: mode === 'signup' ? 'flex-start' : 'center', justifyContent: 'center', padding: 24, background: 'var(--bg-primary, #f8fafc)' }}>
       <style>{`
         #google-signin:hover { background: #f8fafc !important; }
         #google-signin:focus-visible { outline: 2px solid var(--brand-accent, #2563eb); outline-offset: 2px; }
       `}</style>
-      <div className="premium-card" style={{ width: '100%', maxWidth: 400, padding: 32 }}>
+      <div className="premium-card" style={{ width: '100%', maxWidth: mode === 'signup' ? 480 : 400, padding: 32 }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
           <img
             src="/logo-full.png"

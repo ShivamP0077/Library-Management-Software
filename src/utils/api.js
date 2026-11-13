@@ -233,6 +233,11 @@ export const api = {
   getStudentDocument: (studentId, key) => apiRequest(`/students/${encodeURIComponent(studentId)}/documents/${encodeURIComponent(key)}`, { timeoutMs: 30000 }).then(r => r?.data ?? null),
   updateDocumentMeta: (key, meta = {}) => apiRequest(`/documents/${encodeURIComponent(key)}`, { method: 'PATCH', body: meta, timeoutMs: 20000 }),
   deleteDocument: (key) => apiRequest(`/documents/${encodeURIComponent(key)}`, { method: 'DELETE', timeoutMs: 20000 }),
+  enquiryCount: () => apiRequest('/enquiries/count'),
+  enquiries: (status = 'waiting') => apiRequest(`/enquiries?status=${encodeURIComponent(status)}`),
+  enquiryLink: () => apiRequest('/enquiries/link'),
+  regenerateEnquiryLink: () => apiRequest('/enquiries/link/regenerate', { method: 'POST', body: {} }),
+  updateEnquiry: (id, status) => apiRequest(`/enquiries/${encodeURIComponent(id)}`, { method: 'PATCH', body: { status } }),
 };
 
 /** Collections persisted by LibraryContext, mapped to backend collection names. */

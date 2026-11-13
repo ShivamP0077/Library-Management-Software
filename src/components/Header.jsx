@@ -23,6 +23,10 @@ import {
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
+import { useAuth } from '../auth/AuthContext';
+import { isLibraryLocked } from '../utils/subscriptionLock';
+import { useWaitingEnquiryCount } from './enquiry/useWaitingEnquiryCount';
+import { badgeCount } from '../utils/enquiry';
 
 export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
   const { 
@@ -37,6 +41,8 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
     refreshData,
     isRefreshing
   } = useLibrary();
+  const { user, subscriptionAccess } = useAuth() || {};
+  const enquiryBadge = badgeCount(useWaitingEnquiryCount(isLibraryLocked(subscriptionAccess, user)));
 
   const handleRefresh = async () => {
     if (isRefreshing) return;
@@ -220,6 +226,9 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
             >
               <Icon size={16} />
               <span>{t.label}</span>
+              {t.id === 'students' && enquiryBadge && (
+                <span aria-label={`${enquiryBadge} waiting enquiries`} style={{ minWidth: 18, height: 18, padding: '0 5px', borderRadius: 999, background: '#dc2626', color: '#fff', fontSize: 10, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{enquiryBadge}</span>
+              )}
               {isActive && (
                 <motion.div
                   layoutId="activeTabIndicator"
@@ -266,8 +275,11 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
         {primaryMobileTabs.map(t => {
           const Icon = t.icon;
           return (
-            <button key={t.id} id={`bottom-tab-${t.id}`} className={activeTab === t.id ? 'active' : ''} onClick={() => setActiveTab(t.id)}>
+            <button key={t.id} id={`bottom-tab-${t.id}`} className={activeTab === t.id ? 'active' : ''} onClick={() => setActiveTab(t.id)} style={{ position: 'relative' }}>
               <Icon size={20} />
+              {t.id === 'students' && enquiryBadge && (
+                <span aria-label={`${enquiryBadge} waiting enquiries`} style={{ position: 'absolute', top: 2, right: 8, minWidth: 16, height: 16, padding: '0 4px', borderRadius: 999, background: '#dc2626', color: '#fff', fontSize: 9, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{enquiryBadge}</span>
+              )}
               <span>{t.label.split(' ')[0]}</span>
             </button>
           );

@@ -30,6 +30,11 @@ import { clientCanEditAmount } from '../utils/amountPermission';
 import { cycleConfig, cycleFor, addDays, bridgeCharge, upgradeCharge } from '../utils/billingCycle';
 import { isAdmissionVoid } from '../utils/admissionVoid.js';
 import { areSeatTypesEquivalent } from '../utils/seatTypeUtils';
+import { WaitingList } from './enquiry/WaitingList';
+import { useWaitingEnquiryCount } from './enquiry/useWaitingEnquiryCount';
+import { badgeCount } from '../utils/enquiry';
+import { useAuth } from '../auth/AuthContext';
+import { isLibraryLocked } from '../utils/subscriptionLock';
 
 /**
  * Accessible kebab/context menu. Rendered in a portal with fixed positioning so
@@ -226,6 +231,9 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     currentStaff, waitingList, removeFromWaitingList, updateWaitingListStatus, hasPermission, updateStudentDetails,
     lockedStaffId, getMatchingPlans, todayStr, readOnly: isReadOnly
   } = useLibrary();
+  const { user, subscriptionAccess } = useAuth() || {};
+  const enquiryWaiting = useWaitingEnquiryCount(isLibraryLocked(subscriptionAccess, user));
+  const enquiryBadge = badgeCount(enquiryWaiting);
   const canEditAmount = clientCanEditAmount({ lockedStaffId, currentStaff, settings });
   const cycleCfg = cycleConfig(settings);
 
@@ -234,7 +242,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   const [shiftFilter, setShiftFilter] = useState('All');
   const [activeDrawerTab, setActiveDrawerTab] = useState('history');
   const profilePhoto = useStudentPhoto(selectedStudent);
-  const [viewMode, setViewMode] = useState('active'); // active | waiting 
+  const [viewMode, setViewMode] = useState('active'); // active | waiting | enquiries 
   const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
   const [isExcelViewOpen, setIsExcelViewOpen] = useState(false);
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
@@ -908,6 +916,10 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
             Waiting List
             {waitingList.length > 0 && <span style={{ background: viewMode === 'waiting' ? '#fff' : 'var(--brand-primary)', color: viewMode === 'waiting' ? 'var(--brand-primary)' : '#fff', borderRadius: '12px', padding: '2px 6px', fontSize: '10px', fontWeight: 700 }}>{waitingList.length}</span>}
           </button>
+          <button className={`btn ${viewMode === 'enquiries' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setViewMode('enquiries')} style={{ padding: '6px 16px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            Waiting list
+            {enquiryBadge && <span style={{ background: viewMode === 'enquiries' ? '#fff' : 'var(--brand-primary)', color: viewMode === 'enquiries' ? 'var(--brand-primary)' : '#fff', borderRadius: '12px', padding: '2px 6px', fontSize: '10px', fontWeight: 700 }}>{enquiryBadge}</span>}
+          </button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
           <ActionMenu
@@ -1104,6 +1116,10 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       </>
       )}
 
+
+      {viewMode === 'enquiries' && (
+        <WaitingList onAdmit={(payload) => onOpenNewStudent?.(payload)} />
+      )}
 
       {/* Waiting List View */}
       {viewMode === 'waiting' && (

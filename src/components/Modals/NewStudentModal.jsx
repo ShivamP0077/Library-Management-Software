@@ -218,7 +218,8 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
   useEffect(() => {
     if (isOpen) {
       setName(''); setPhone(''); setEmergencyPhone(''); setGender('Male');
-      setInternalNotes(''); setSubmitError(''); setIsCapacityFull(false);
+      setInternalNotes(waitlistPayload?.email ? `Enquiry email: ${waitlistPayload.email}` : '');
+      setSubmitError(''); setIsCapacityFull(false);
       setDocGroups([]); setPreviewUrls({}); setPreviewDoc(null); setIsDocPreviewOpen(false);
       setIsUploadingDoc(false); setUploadProgress(0); setSubmitDocLater(false);
       resetFileInput();
@@ -588,6 +589,7 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                   <label className="form-label" style={{ fontSize: '12px' }}>Phone Number *</label>
                   <input type="tel" maxLength={10} className={`form-input ${errors.phone ? 'error' : ''}`} placeholder="10 Digits" value={phone} onChange={e => setPhone(e.target.value)} />
                   {errors.phone && <span style={{ color: '#ef4444', fontSize: '11px' }}>{errors.phone}</span>}
+                  {waitlistPayload?.email && <span style={{ color: 'var(--text-secondary)', fontSize: '11px' }}>Email: {waitlistPayload.email}</span>}
                 </div>
                 <div className="form-group" style={{ marginBottom: 0 }}>
                   <label className="form-label" style={{ fontSize: '12px' }}>Emergency Phone</label>

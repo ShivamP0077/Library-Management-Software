@@ -36,7 +36,8 @@ const schema = new mongoose.Schema({
 export const RegistrationConfirmation = mongoose.models.RegistrationConfirmation
   || mongoose.model('RegistrationConfirmation', schema);
 
-export const supportContact = () => process.env.SUPPORT_EMAIL || process.env.SMTP_FROM || 'support@libraryos.app';
+/** Address shown to owners. SMTP_FROM is the sending mailbox and is not used here. */
+export const supportContact = () => String(process.env.SUPPORT_EMAIL || '').trim() || 'mylibraryosadmin@gmail.com';
 
 const newNumber = () => `REG-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
 

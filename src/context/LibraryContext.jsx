@@ -7,6 +7,7 @@ import { areSeatTypesEquivalent } from '../utils/seatTypeUtils';
 import { buildAdmissionVoid } from '../utils/admissionVoid.js';
 import { buildRenewalVoid, markPaymentVoided } from '../utils/paymentVoid.js';
 import { todayIST, validatePaidOn, applyRenewalToStudent, formatDate } from '../utils/dateUtils';
+import { stampPaymentReference } from '../utils/paymentReference';
 import { scopedStorage, canSeedServer } from '../utils/tenantCache';
 // Issue #2: all cache reads/writes in this file go to the current library's own namespace.
 const localStorage = scopedStorage;
@@ -1595,6 +1596,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       fine,
       netTotal,
       method: studentData.paymentMethod || "UPI",
+      referenceNo: studentData.referenceNo,
       breakdown: studentData.breakdown,
       planId: studentData.planId || plan?.id || null,
       durationMonths: studentData.durationMonths || 1,
@@ -1605,6 +1607,8 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       ...paidStamp(paidOn, { start: studentData.startDate, end: studentData.expiryDate }),
       staffName: currentStaff?.name || "Admin"
     };
+
+    const stampedPayment = stampPaymentReference(newPayment);
 
     const newStudentObj = {
       id: newStudentId,
@@ -1631,18 +1635,18 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       billingAnchorDay: Number(String(studentData.startDate || todayStr).slice(8, 10)) || undefined,
       renewalHistory: [newRenewal],
       seatHistory: [newSeatLog],
-      paymentHistory: [newPayment]
+      paymentHistory: [stampedPayment]
     };
 
     setStudents(prev => [newStudentObj, ...prev]);
-    setPayments(prev => [newPayment, ...prev]);
+    setPayments(prev => [stampedPayment, ...prev]);
 
     // Remove from waiting list if present
     if (studentData.waitlistEntryId) {
       removeFromWaitingList(studentData.waitlistEntryId);
     }
 
-    return { student: newStudentObj, receipt: newPayment };
+    return { student: newStudentObj, receipt: stampedPayment };
   };
 
   // Bulk Admission Processor
@@ -1725,7 +1729,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         staffName: currentStaff?.name || "Admin"
       };
 
-      const newPayment = {
+      const newPayment = stampPaymentReference({
         receiptNo: newReceiptNo,
         studentId: newStudentId,
         studentName: studentData.name,
@@ -1737,10 +1741,11 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         fine: studentData.fine,
         netTotal: studentData.netTotal,
         method: studentData.paymentMethod || "Cash",
+        referenceNo: studentData.referenceNo,
         breakdown: studentData.breakdown,
         ...paidStamp(studentData.paidOn || todayStr, { start: studentData.startDate, end: studentData.expiryDate }),
         staffName: currentStaff?.name || "Admin"
-      };
+      });
 
       const newStudentObj = {
         id: newStudentId,
@@ -1828,7 +1833,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
     };
 
     const targetBranch = branches.find(b => b.id === student.branchId);
-    const newPayment = {
+    const newPayment = stampPaymentReference({
       receiptNo: newReceiptNo,
       studentId: student.id,
       studentName: student.name,
@@ -1843,6 +1848,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       fine,
       netTotal,
       method: renewalData.paymentMethod || "UPI",
+      referenceNo: renewalData.referenceNo,
       breakdown: renewalData.breakdown,
       planId: renewalData.planId || student.planId || null,
       durationMonths: Number(renewalData.durationMonths || 1),
@@ -1852,7 +1858,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       ...(renewalData.bridge ? { bridge: renewalData.bridge } : {}),
       ...paidStamp(paidOn, { start: renewalData.startDate, end: renewalData.expiryDate }),
       staffName: currentStaff?.name || "Admin"
-    };
+    });
 
     setStudents(prev => prev.map(s => {
       if (s.id === studentId) {
@@ -1977,7 +1983,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
     let upgradePayment = null;
     const changeAmt = priceChange ? Number(priceChange.amount) || 0 : 0;
     if (changeAmt > 0 && priceChange.collect) {
-      upgradePayment = {
+      upgradePayment = stampPaymentReference({
         receiptNo: generateReceiptNo(),
         studentId: student.id,
         studentName: student.name,
@@ -1993,6 +1999,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         fine: 0,
         netTotal: changeAmt,
         method: priceChange.method || "Cash",
+        referenceNo: priceChange.referenceNo,
         priceKind: 'relocate',
         oldFee: priceChange.oldFee ?? null,
         newFee: priceChange.newFee ?? null,
@@ -2003,7 +2010,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         ...(priceChange.amountEdited ? { amountEdited: true } : {}),
         date: todayStr,
         staffName: currentStaff?.name || "Admin"
-      };
+      });
       newSeatLog.receiptNo = upgradePayment.receiptNo;
     }
 
@@ -2031,15 +2038,16 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
 
   // Add Expense
   const addExpense = (expenseData) => {
-    const newExpense = {
+    const newExpense = stampPaymentReference({
       id: `EXP-${Date.now()}`,
       branchId: expenseData.branchId,
       category: expenseData.category,
       amount: Number(expenseData.amount),
       date: expenseData.date || todayStr,
       mode: expenseData.mode || "Cash",
+      referenceNo: expenseData.referenceNo || "",
       notes: expenseData.notes || ""
-    };
+    });
     setExpenses(prev => [newExpense, ...prev]);
   };
 
@@ -2686,6 +2694,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         fine: 0,
         netTotal,
         method: i % 3 === 0 ? "Cash" : "UPI",
+        ...(i % 3 === 0 ? {} : { referenceNo: `TEST-${receiptNo}` }),
         ...historyPaid,
         staffName: currentStaff?.name || "Admin (Test Generator)",
         isTestData: true,

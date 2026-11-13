@@ -6,6 +6,8 @@ import toast from 'react-hot-toast';
 import { NumericInput } from './NumericInput';
 import { resolveConfigurationScope, matchesScope } from '../utils/scopeResolver';
 import { buildDurationPricing } from '../utils/pricingCalculator';
+import { cycleConfig, effectiveCycleConfig, normalizePlanBillingCycle } from '../utils/billingCycle';
+import { PlanDurationFields } from './PlanDurationFields';
 import { scopedStorage } from '../utils/tenantCache';
 // Issue #2: the wizard draft belongs to the current library only.
 const localStorage = scopedStorage;
@@ -1013,6 +1015,7 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
                       sectionId: scope.resolvedSectionId || undefined,
                       monthlyPrice: DEFAULT_MONTHLY_PRICE,
                       durationPricing: buildDurationPricing(DEFAULT_MONTHLY_PRICE, DEFAULT_DURATION_PRICING),
+                      billingCycle: normalizePlanBillingCycle(cycleConfig(settings)),
                       active: true
                     }]);
                   }
@@ -1086,6 +1089,13 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
                     })}
                   </div>
                 </div>
+
+                <PlanDurationFields
+                  value={p.billingCycle?.mode ? effectiveCycleConfig(settings, p) : cycleConfig(settings)}
+                  onChange={(next) => {
+                    setTempPlans(tempPlans.map(item => item.id === p.id ? { ...item, billingCycle: normalizePlanBillingCycle(next) } : item));
+                  }}
+                />
 
                 {/* Duration Pricing */}
                 <div>
@@ -1224,6 +1234,7 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
                 sectionId: scope.resolvedSectionId || undefined,
                 monthlyPrice: DEFAULT_MONTHLY_PRICE,
                 durationPricing: buildDurationPricing(DEFAULT_MONTHLY_PRICE, DEFAULT_DURATION_PRICING),
+                billingCycle: normalizePlanBillingCycle(cycleConfig(settings)),
                 active: true
               }]);
             }}

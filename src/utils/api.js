@@ -70,6 +70,9 @@ export const api = {
   whatsappStatus: (timeoutMs = 15000) => apiRequest('/whatsapp/status', { timeoutMs }),
   whatsappConnect: (timeoutMs = 45000) => apiRequest('/whatsapp/connect', { method: 'POST', timeoutMs }),
   whatsappLogout: (timeoutMs = 20000) => apiRequest('/whatsapp/logout', { method: 'POST', timeoutMs }),
+  systemWhatsappStatus: (timeoutMs = 15000) => apiRequest('/admin/system-whatsapp/status', { timeoutMs }),
+  systemWhatsappConnect: (timeoutMs = 45000) => apiRequest('/admin/system-whatsapp/connect', { method: 'POST', timeoutMs }),
+  systemWhatsappDisconnect: (timeoutMs = 20000) => apiRequest('/admin/system-whatsapp/disconnect', { method: 'POST', timeoutMs }),
   whatsappSaveSettings: (body) => apiRequest('/whatsapp/settings', { method: 'PUT', body }),
   reminderSettings: () => apiRequest('/reminders/settings'),
   saveReminderSettings: (body) => apiRequest('/reminders/settings', { method: 'PUT', body }),
@@ -139,6 +142,8 @@ export const api = {
   auditLogs: (q = '') => apiRequest(`/audit-logs${q}`),
   // Notifications
   notifications: (q = '') => apiRequest(`/notifications${q}`),
+  actionDismissals: () => apiRequest('/dashboard/action-dismissals'),
+  saveActionDismissals: (body) => apiRequest('/dashboard/action-dismissals', { method: 'PUT', body }),
   notificationCounts: () => apiRequest('/notifications/unread-count'),
   markNotificationRead: (id, unread = false) => apiRequest(`/notifications/${encodeURIComponent(id)}/read`, { method: 'POST', body: { unread } }),
   markAllNotificationsRead: () => apiRequest('/notifications/read-all', { method: 'POST' }),

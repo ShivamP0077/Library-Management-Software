@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import { createEvolutionClient, instanceNameFor, normalizePhone } from '../src/evolution.js';
-import { sendWhatsappMessage, canManageWhatsapp, buildReceiptText, createWhatsappRouter, WhatsappConfig } from '../src/whatsapp.js';
+import { sendWhatsappMessage, canManageWhatsapp, buildReceiptText, createWhatsappRouter, WhatsappConfig, paymentReceiptsEnabled, publicWhatsappSettings } from '../src/whatsapp.js';
 
 const lean = (v) => ({ lean: async () => v });
 
@@ -11,6 +11,12 @@ test('instance name is derived from libraryId and URL safe', () => {
   assert.equal(instanceNameFor('Lib A/../x'), 'libos-lib-a-x');
   assert.notEqual(instanceNameFor('lib-a'), instanceNameFor('lib-b'));
   assert.throws(() => instanceNameFor(''));
+  // The system sender owns this name. No library id may map to it.
+  for (const id of ['system', 'SYSTEM', 'System', 'system!!!']) {
+    assert.throws(() => instanceNameFor(id), /reserved/i);
+  }
+  assert.notEqual(instanceNameFor('lib-system'), 'libos-system');
+  assert.notEqual(instanceNameFor('libos-system'), 'libos-system');
 });
 
 test('normalizePhone handles Indian numbers', () => {
@@ -98,6 +104,44 @@ test('receipt text', () => {
   }, { name: 'Ravi', expiryDate: '2027-01-31' });
   assert.match(backdated, /Paid on 2026-12-07/);
   assert.match(backdated, /Period: 2026-12-01 to 2026-12-31/);
+  assert.doesNotMatch(t, /Ref:/);
+  const withRef = buildReceiptText({ receiptNo: 'R3', netTotal: 400, method: 'UPI', referenceNo: 'UTR99', date: '2026-11-02' }, { name: 'Meera' });
+  assert.match(withRef, /Ref: UTR99/);
+  const split = buildReceiptText({
+    receiptNo: 'R4', netTotal: 1000, method: 'Split', date: '2026-11-02',
+    breakdown: [{ method: 'UPI', amount: 600, referenceNo: 'U1' }, { method: 'Cash', amount: 400 }],
+  }, { name: 'Meera' });
+  assert.match(split, /Ref: UPI U1/);
+});
+
+test('payment receipts follow the admission toggle until the library sets them', () => {
+  assert.equal(paymentReceiptsEnabled(undefined), true);
+  assert.equal(paymentReceiptsEnabled({}), true);
+  assert.equal(paymentReceiptsEnabled({ receipts: true }), true);
+  assert.equal(paymentReceiptsEnabled({ receipts: false }), false);
+  assert.equal(paymentReceiptsEnabled({ receipts: false, paymentReceipts: true }), true);
+  assert.equal(paymentReceiptsEnabled({ receipts: true, paymentReceipts: false }), false);
+  const inherited = publicWhatsappSettings({ receipts: false });
+  assert.equal(inherited.paymentReceiptsEffective, false);
+  assert.equal(inherited.paymentReceipts, undefined);
+  const explicit = publicWhatsappSettings({ receipts: true, paymentReceipts: false });
+  assert.equal(explicit.paymentReceipts, false);
+  assert.equal(explicit.paymentReceiptsEffective, false);
+});
+
+test('payment receipt sends use the effective toggle, not the admission toggle alone', async () => {
+  const off = deps({ cfg: { receipts: true, paymentReceipts: false } });
+  assert.equal((await sendWhatsappMessage(msg, off)).reason, 'disabled');
+  assert.equal(off.sent.length, 0);
+  const renewOff = deps({ cfg: { receipts: true, paymentReceipts: false } });
+  assert.equal((await sendWhatsappMessage({ ...msg, type: 'renewal_receipt', dedupeKey: 'receipt:R2' }, renewOff)).reason, 'disabled');
+  assert.equal(renewOff.sent.length, 0);
+  const on = deps({ cfg: { receipts: false, paymentReceipts: true } });
+  assert.equal((await sendWhatsappMessage(msg, on)).status, 'sent');
+  assert.equal(on.sent.length, 1);
+  const inheritedOff = deps({ cfg: { receipts: false } });
+  assert.equal((await sendWhatsappMessage({ ...msg, dedupeKey: 'receipt:R3' }, inheritedOff)).reason, 'disabled');
+  assert.equal(inheritedOff.sent.length, 0);
 });
 
 // Route-level tests with a mocked Evolution client and stubbed config model
@@ -185,6 +229,12 @@ function memMessages(rows) {
   };
 }
 
+test('webhook: libos-system events do not crash and are not applied to a library log', async () => {
+  const M = memMessages([{ _id: 'sys', libraryId: 'system', providerMessageId: 'PS', status: 'sent' }]);
+  assert.equal(await applyStatusUpdate('libos-system', { keyId: 'PS', status: 'READ' }, M), false);
+  assert.equal(M.rows[0].status, 'sent');
+});
+
 test('webhook: status only moves forward and is tenant-checked by instance', async () => {
   const M = memMessages([{ _id: 'a', libraryId: 'lib-a', providerMessageId: 'P1', status: 'sent' }]);
   assert.equal(await applyStatusUpdate('libos-lib-b', { keyId: 'P1', status: 'READ' }, M), false); // other library's instance
@@ -210,6 +260,13 @@ test('webhook route: rejects bad tokens, accepts the derived token', async () =>
     assert.equal((await post(`?token=${webhookTokenFor('libos-lib-b')}`, body)).status, 401);
     const ok = await post(`?token=${webhookTokenFor('libos-lib-a')}`, body);
     assert.equal(ok.status, 200); assert.equal((await ok.json()).updated, 1);
+    assert.equal(M.rows[0].status, 'delivered');
+    const sys = await fetch(`http://127.0.0.1:${server.address().port}/wa/webhook/libos-system?token=${webhookTokenFor('libos-system')}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event: 'messages.update', data: { keyId: 'P1', status: 'READ' } }),
+    });
+    assert.equal(sys.status, 200);
+    assert.equal((await sys.json()).ignored, true);
     assert.equal(M.rows[0].status, 'delivered');
   } finally { server.close(); process.env.EVOLUTION_API_KEY = prev; }
 });

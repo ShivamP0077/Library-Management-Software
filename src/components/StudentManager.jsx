@@ -29,7 +29,7 @@ import { getCanonicalShifts, matchesShiftFilter, isShiftInPlan, resolveCanonical
 import { getPlanBasePrice, getPlanDefaultDuration } from '../utils/pricingCalculator';
 import { isVoidedPayment } from '../utils/paymentVoid';
 import { clientCanEditAmount } from '../utils/amountPermission';
-import { cycleConfig, cycleFor, addDays, bridgeCharge, upgradeCharge } from '../utils/billingCycle';
+import { cycleConfig, effectiveCycleConfig, cycleFor, addDays, bridgeCharge, upgradeCharge } from '../utils/billingCycle';
 import { isAdmissionVoid } from '../utils/admissionVoid.js';
 import { areSeatTypesEquivalent } from '../utils/seatTypeUtils';
 
@@ -230,6 +230,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   } = useLibrary();
   const canEditAmount = clientCanEditAmount({ lockedStaffId, currentStaff, settings });
   const cycleCfg = cycleConfig(settings);
+  const cycleForPlan = (plan, { aligned = false } = {}) => (aligned ? cycleCfg : effectiveCycleConfig(settings, plan));
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
@@ -650,7 +651,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       durationMonths: renewDuration,
       choice: renewChoice,
       freshStart: renewFreshStart,
-      cycle: cycleCfg,
+      cycle: cycleForPlan(plan, { aligned: !!renewAlign }),
       alignTo: renewAlign?.to,
     });
     const startStr = period.start;
@@ -694,7 +695,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     if (!oldPlan || !newPlan || oldPlan.id === newPlan.id) return null;
     const oldFee = getPlanBasePrice(oldPlan, 1), newFee = getPlanBasePrice(newPlan, 1);
     if (!oldFee || !newFee || oldFee === newFee) return null;
-    const totalDays = cycleFor(todayStr, cycleCfg).totalDays;
+    const totalDays = cycleFor(todayStr, cycleForPlan(oldPlan)).totalDays;
     const r = upgradeCharge(oldFee, newFee, todayStr, selectedStudent.expiryDate, totalDays);
     return { amount: r.amount, days: r.remainingDays, oldFee, newFee, totalDays, newPlanId: newPlan.id, moveDate: todayStr, paidUntil: selectedStudent.expiryDate, suggestedAmount: r.amount };
   })();
@@ -797,12 +798,22 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       const s = students.find(st => st.id === id);
       if (!s) return;
 
+      let planToApply = null;
+      let appliedAmount = renewAmount;
+      if (renewPlanId === 'keep_existing') {
+        planToApply = plans.find(p => p.id === s.planId) || plans[0];
+        appliedAmount = planToApply ? getPlanBasePrice(planToApply, renewDuration) : renewAmount;
+      } else {
+        planToApply = plans.find(p => p.id === renewPlanId) || plans[0];
+      }
+      if (!planToApply) return;
+
       const period = renewalPeriodForStudent(s, {
         paidOn: renewPaidOn,
         durationMonths: renewDuration,
         choice: renewChoice,
         freshStart: renewFreshStart,
-        cycle: cycleCfg,
+        cycle: cycleForPlan(planToApply),
       });
       const startDateStr = period.start;
       const expiryDateStr = period.end;
@@ -815,17 +826,6 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
         skippedCount++;
         return;
       }
-
-      let planToApply = null;
-      let appliedAmount = renewAmount;
-      if (renewPlanId === 'keep_existing') {
-        planToApply = plans.find(p => p.id === s.planId) || plans[0];
-        appliedAmount = planToApply ? getPlanBasePrice(planToApply, renewDuration) : renewAmount;
-      } else {
-        planToApply = plans.find(p => p.id === renewPlanId) || plans[0];
-      }
-      
-      if (!planToApply) return;
 
       const result = renewSubscription(id, {
         planId: planToApply.id,
@@ -868,12 +868,15 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       const s = students.find(st => st.id === id);
       if (!s) return;
       
+      const planForDates = renewPlanId === 'keep_existing'
+        ? plans.find(p => p.id === s.planId)
+        : plans.find(p => p.id === renewPlanId);
       const period = renewalPeriodForStudent(s, {
         paidOn: renewPaidOn,
         durationMonths: renewDuration,
         choice: renewChoice,
         freshStart: renewFreshStart,
-        cycle: cycleCfg,
+        cycle: cycleForPlan(planForDates),
       });
       const startDateStr = period.start;
       const expiryDateStr = period.end;
@@ -1924,7 +1927,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                       durationMonths: renewDuration,
                       choice: renewChoice,
                       freshStart: renewFreshStart,
-                      cycle: cycleCfg,
+                      cycle: cycleForPlan(plans.find(p => p.id === renewPlanId), { aligned: !!renewAlign }),
                       alignTo: renewAlign?.to,
                     });
                     const longGap = isMoreThanOneMonthLate(selectedStudent.expiryDate, renewPaidOn);

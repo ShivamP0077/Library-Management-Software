@@ -8,8 +8,8 @@ import { calculatePricing } from '../../utils/pricingCalculator';
 import { handleSplitAmountChange, handleAddSplitComponent, handleRemoveSplitComponent, validateSplitPayment } from '../../utils/splitPaymentUtils';
 import { paymentReferenceError } from '../../utils/paymentReference';
 import { ReferenceField } from '../ReferenceField';
-import { calculateSubscriptionExpiry, validatePaidOn } from '../../utils/dateUtils';
-import { cycleConfig, firstAdmissionCharge, addDays } from '../../utils/billingCycle';
+import { periodEndDate, validatePaidOn } from '../../utils/dateUtils';
+import { effectiveCycleConfig, firstAdmissionCharge, addDays } from '../../utils/billingCycle';
 import { saveDocumentBlobNow, deleteDocumentBlob, getDocumentBlob } from '../../utils/idbStorage';
 import { api } from '../../utils/api';
 import { uploadAttachmentFile, makeAttachmentKey } from '../../utils/attachmentUpload';
@@ -466,11 +466,16 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
 
     const todayFormatted = joiningDate || todayStr;
     const anchorDay = Number(String(todayFormatted).slice(8, 10)) || undefined;
-    let calculatedExpiry = calculateSubscriptionExpiry(todayFormatted, durationMonths || 1, anchorDay);
+    const admissionPlan = plans.find(p => p.id === planId);
+    const admissionCycle = effectiveCycleConfig(settings, admissionPlan);
+    // Plans with no duration type keep the previous month-based expiry. Pro-rate still follows the library cycle.
+    let calculatedExpiry = admissionPlan?.billingCycle?.mode
+      ? periodEndDate(todayFormatted, durationMonths || 1, { anchorDay, cycle: admissionCycle })
+      : periodEndDate(todayFormatted, durationMonths || 1, { anchorDay });
     let proRatedPayload = null;
     if (proRateApplied) {
       const unit = Number(suggestedBase) / Math.max(1, Number(durationMonths) || 1);
-      const pr = firstAdmissionCharge(unit, todayFormatted, cycleConfig(settings));
+      const pr = firstAdmissionCharge(unit, todayFormatted, admissionCycle);
       calculatedExpiry = pr.to;
       proRatedPayload = { ...pr, fullFee: Number(suggestedBase) };
     }
@@ -928,14 +933,15 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                     <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>Overrides apply to this admission only</span>
                   </div>
                   {(() => {
-                    const cfg = cycleConfig(settings);
-                    if (cfg.mode === 'ANNIVERSARY' || !plans.find(p => p.id === planId) || Number(durationMonths) !== 1) return null;
+                    const selected = plans.find(p => p.id === planId);
+                    const cfg = effectiveCycleConfig(settings, selected);
+                    if (cfg.mode === 'ANNIVERSARY' || !selected || Number(durationMonths) !== 1) return null;
                     const unit = Number(suggestedBase) / Math.max(1, Number(durationMonths) || 1);
                     const pr = firstAdmissionCharge(unit, joiningDate || todayStr, cfg);
                     if (!pr.prorated) return null;
                     return (
                       <div data-testid="prorate-box" style={{ fontSize: '12px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '8px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                        <span>Library cycle: first payment ₹{pr.amount.toLocaleString()} for {pr.days} of {pr.totalDays} days (to {pr.to}). Then full fee.</span>
+                        <span>{selected.billingCycle?.mode ? 'This plan' : 'Library cycle'}: first payment ₹{pr.amount.toLocaleString()} for {pr.days} of {pr.totalDays} days (to {pr.to}). Then full fee.</span>
                         {proRateApplied ? (
                           <button type="button" className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => setBaseAmount(Number(suggestedBase))}>Use full fee</button>
                         ) : (

@@ -27,6 +27,13 @@ export const anniversaryDue = (joinDate, n) => addMonthsAnchored(joinDate, n);
 
 export const CYCLE_MODES = ['ANNIVERSARY', 'CALENDAR_MONTH', 'N_DAYS', 'YEARLY'];
 
+export const CYCLE_MODE_LABELS = {
+  ANNIVERSARY: 'Anniversary',
+  CALENDAR_MONTH: 'Calendar month',
+  N_DAYS: 'Every N days',
+  YEARLY: 'Yearly',
+};
+
 /** Library cycle settings from the settings object (with safe defaults). */
 export function cycleConfig(settings = {}) {
   const mode = CYCLE_MODES.includes(settings.billingCycleMode) ? settings.billingCycleMode : 'ANNIVERSARY';
@@ -36,6 +43,40 @@ export function cycleConfig(settings = {}) {
     cycleDays: Math.max(1, Math.round(Number(settings.cycleDays) || 30)),
     cycleAnchorDate: /^\d{4}-\d{2}-\d{2}$/.test(settings.cycleAnchorDate || '') ? settings.cycleAnchorDate : null,
   };
+}
+
+/** Fields worth storing on a plan for one mode (same defaults as library settings). */
+export function normalizePlanBillingCycle(input) {
+  if (!input || !CYCLE_MODES.includes(input.mode)) return null;
+  const cfg = cycleConfig({
+    billingCycleMode: input.mode,
+    calendarBillingDay: input.calendarBillingDay,
+    cycleDays: input.cycleDays,
+    cycleAnchorDate: input.cycleAnchorDate,
+  });
+  const stored = { mode: cfg.mode };
+  if (cfg.mode === 'CALENDAR_MONTH') stored.calendarBillingDay = cfg.calendarBillingDay;
+  if (cfg.mode === 'N_DAYS') {
+    stored.cycleDays = cfg.cycleDays;
+    if (cfg.cycleAnchorDate) stored.cycleAnchorDate = cfg.cycleAnchorDate;
+  }
+  if (cfg.mode === 'YEARLY' && cfg.cycleAnchorDate) stored.cycleAnchorDate = cfg.cycleAnchorDate;
+  return stored;
+}
+
+/**
+ * Cycle used for a student on this plan. A saved plan.billingCycle wins.
+ * Plans with no mode keep the library default.
+ */
+export function effectiveCycleConfig(settings = {}, plan = null) {
+  const raw = plan?.billingCycle;
+  if (!raw || !CYCLE_MODES.includes(raw.mode)) return cycleConfig(settings);
+  return cycleConfig({
+    billingCycleMode: raw.mode,
+    calendarBillingDay: raw.calendarBillingDay != null && raw.calendarBillingDay !== '' ? raw.calendarBillingDay : settings.calendarBillingDay,
+    cycleDays: raw.cycleDays != null && raw.cycleDays !== '' ? raw.cycleDays : settings.cycleDays,
+    cycleAnchorDate: raw.cycleAnchorDate || settings.cycleAnchorDate,
+  });
 }
 
 /** The library cycle that contains `date`: { start, end, totalDays }. ANNIVERSARY returns the student's own month. */

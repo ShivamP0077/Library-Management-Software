@@ -4,13 +4,15 @@ import { X, Users, AlertCircle, Check } from 'lucide-react';
 import { NumericInput } from '../NumericInput';
 import toast from 'react-hot-toast';
 import { calculatePricing } from '../../utils/pricingCalculator';
+import { periodEndDate } from '../../utils/dateUtils';
+import { effectiveCycleConfig } from '../../utils/billingCycle';
 import { paymentReferenceError } from '../../utils/paymentReference';
 import { ReferenceField } from '../ReferenceField';
 import { getCanonicalSeatTypes } from '../../utils/seatTypeUtils';
 
 export const BulkStudentModal = ({ isOpen, onClose }) => {
   const {
-    settings, branches, sections, plans, shifts, seatTypes, seats,
+    settings, branches, sections, plans, shifts, seatTypes, seats, todayStr,
     addBulkStudents, getSeatOccupancyStatus, getCurrentActiveAdmissions, getAvailableEligibleSeats
   } = useLibrary();
 
@@ -230,6 +232,14 @@ export const BulkStudentModal = ({ isOpen, onClose }) => {
 
       const plan = plans.find(p => p.id === assignedSlot.planId);
       const pricing = calculatePricing({ plan, durationMonths: 1 });
+      const usePlanCycle = !!plan?.billingCycle?.mode;
+      const startDate = usePlanCycle ? todayStr : new Date();
+      const expiryDate = usePlanCycle
+        ? periodEndDate(todayStr, 1, {
+          anchorDay: Number(String(todayStr).slice(8, 10)) || undefined,
+          cycle: effectiveCycleConfig(settings, plan),
+        })
+        : (() => { const d = new Date(); d.setMonth(d.getMonth() + 1); return d; })();
 
       batch.push({
         name: `Bulk Student ${i+1}`,
@@ -249,8 +259,8 @@ export const BulkStudentModal = ({ isOpen, onClose }) => {
         netTotal: pricing.netTotal,
         paymentMethod,
         referenceNo,
-        startDate: new Date(),
-        expiryDate: (() => { const d = new Date(); d.setMonth(d.getMonth() + 1); return d; })()
+        startDate,
+        expiryDate,
       });
     }
 

@@ -4,6 +4,11 @@ import { Bell, AlertTriangle, CheckCircle2, RefreshCw, Paperclip, Plus, X } from
 import { api } from '../utils/api';
 import { openNotificationLink } from '../utils/notificationLinks';
 import { DocPreview } from './DocPreview';
+import { useLibrary } from '../context/LibraryContext';
+import { todayIST } from '../utils/dateUtils';
+import {
+  dismissalStorageKey, normalizeDismissals, partitionActions, restoreItem, skipItem, snoozeItem,
+} from '../utils/actionDismissals';
 
 const SEV = { critical: { bg: '#fee2e2', fg: '#991b1b' }, important: { bg: '#fef9c3', fg: '#854d0e' }, info: { bg: '#eff6ff', fg: '#1e40af' } };
 const FILTERS = [
@@ -133,7 +138,7 @@ const NoticeForm = ({ onDone }) => {
   );
 };
 
-export const NotificationItem = ({ n, setActiveTab, onChanged, compact = false }) => {
+export const NotificationItem = ({ n, setActiveTab, onChanged, compact = false, onLater, onSkip, onRestore }) => {
   const sev = SEV[n.severity] || SEV.info;
   const act = async (fn, msg) => { try { await fn(); if (msg) toast.success(msg); onChanged(); changed(); } catch (e) { toast.error(e.message || 'Failed'); } };
   const open = async () => {
@@ -160,6 +165,13 @@ export const NotificationItem = ({ n, setActiveTab, onChanged, compact = false }
         <div style={{ fontSize: 12, color: 'var(--text-muted, #9ca3af)', marginTop: 4 }}>
           {n.category} • {when(n.at || n.createdAt)}{n.status === 'resolved' && ` • resolved by ${n.resolvedBy || '—'}${n.resolution ? `: ${n.resolution}` : ''}`}
         </div>
+        {compact && (onLater || onSkip || onRestore) && (
+          <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+            {onLater && <button type="button" className="btn btn-ghost btn-sm" onClick={() => onLater(n)}>Later</button>}
+            {onSkip && <button type="button" className="btn btn-ghost btn-sm" onClick={() => onSkip(n)}>Skip</button>}
+            {onRestore && <button type="button" className="btn btn-ghost btn-sm" onClick={() => onRestore(n)}>Restore</button>}
+          </div>
+        )}
         {!compact && (
           <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
             {noticeFiles.map(a => <button key={a.id} className="btn btn-secondary btn-sm" onClick={() => download(a.id)}><Paperclip size={14} /> {a.name}</button>)}
@@ -217,17 +229,75 @@ export const NotificationsCenter = ({ setActiveTab }) => {
 
 /** Compact Action Required card for the Dashboard. */
 export const ActionRequiredCard = ({ setActiveTab }) => {
+  const { settings } = useLibrary();
+  const libraryId = settings?.libraryId;
   const [list, setList] = useState(null);
-  const load = useCallback(() => { api.notifications('?actionRequired=true&limit=5').then(setList).catch(() => setList([])); }, []);
+  const [dismissals, setDismissals] = useState({ snoozes: [], skips: [] });
+  const [showHidden, setShowHidden] = useState(false);
+  const load = useCallback(() => { api.notifications('?actionRequired=true&limit=40').then(setList).catch(() => setList([])); }, []);
   useEffect(() => { load(); window.addEventListener('notifications:changed', load); return () => window.removeEventListener('notifications:changed', load); }, [load]);
-  if (!list || list.length === 0) return null;
+  useEffect(() => {
+    let cancelled = false;
+    const today = todayIST();
+    const readLocal = () => {
+      try { return normalizeDismissals(JSON.parse(localStorage.getItem(dismissalStorageKey(libraryId)) || '{}'), today); }
+      catch { return { snoozes: [], skips: [] }; }
+    };
+    api.actionDismissals()
+      .then(remote => {
+        const next = normalizeDismissals(remote, today);
+        try { localStorage.setItem(dismissalStorageKey(libraryId), JSON.stringify(next)); } catch { /* ignore quota */ }
+        if (!cancelled) setDismissals(next);
+      })
+      .catch(() => { if (!cancelled) setDismissals(readLocal()); });
+    return () => { cancelled = true; };
+  }, [libraryId]);
+  const persist = (next) => {
+    const today = todayIST();
+    const saved = normalizeDismissals(next, today);
+    setDismissals(saved);
+    try { localStorage.setItem(dismissalStorageKey(libraryId), JSON.stringify(saved)); } catch { /* UI still updated */ }
+    api.saveActionDismissals(saved).catch(() => { /* localStorage already has the choice */ });
+  };
+  if (!list) return null;
+  const today = todayIST();
+  const { shown, hidden } = partitionActions(list, dismissals, today);
+  const visible = shown.slice(0, 5);
+  if (visible.length === 0 && hidden.length === 0) return null;
   return (
     <div className="glass-panel" id="action-required-card" style={{ padding: 16, display: 'grid', gap: 10, minWidth: 0 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <strong style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#991b1b' }}><AlertTriangle size={18} /> Action Required ({list.length}{list.length === 5 ? '+' : ''})</strong>
-        <button className="btn btn-secondary btn-sm" onClick={() => setActiveTab('notifications')}>View all</button>
+        <strong style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#991b1b' }}><AlertTriangle size={18} /> Action Required ({visible.length}{shown.length > 5 ? '+' : ''})</strong>
+        <span style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {hidden.length > 0 && (
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowHidden(v => !v)}>
+              {showHidden ? 'Hide hidden' : `Show hidden (${hidden.length})`}
+            </button>
+          )}
+          <button className="btn btn-secondary btn-sm" onClick={() => setActiveTab('notifications')}>View all</button>
+        </span>
       </div>
-      {list.map(n => <NotificationItem key={n.id} n={n} compact setActiveTab={setActiveTab} onChanged={load} />)}
+      {visible.map(n => (
+        <NotificationItem
+          key={n.id}
+          n={n}
+          compact
+          setActiveTab={setActiveTab}
+          onChanged={load}
+          onLater={() => persist(snoozeItem(dismissals, n, today))}
+          onSkip={() => persist(skipItem(dismissals, n, today))}
+        />
+      ))}
+      {showHidden && hidden.map(n => (
+        <NotificationItem
+          key={`hidden-${n.id}`}
+          n={n}
+          compact
+          setActiveTab={setActiveTab}
+          onChanged={load}
+          onRestore={() => persist(restoreItem(dismissals, n, today))}
+        />
+      ))}
     </div>
   );
 };

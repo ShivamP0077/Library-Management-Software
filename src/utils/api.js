@@ -139,6 +139,8 @@ export const api = {
   auditLogs: (q = '') => apiRequest(`/audit-logs${q}`),
   // Notifications
   notifications: (q = '') => apiRequest(`/notifications${q}`),
+  actionDismissals: () => apiRequest('/dashboard/action-dismissals'),
+  saveActionDismissals: (body) => apiRequest('/dashboard/action-dismissals', { method: 'PUT', body }),
   notificationCounts: () => apiRequest('/notifications/unread-count'),
   markNotificationRead: (id, unread = false) => apiRequest(`/notifications/${encodeURIComponent(id)}/read`, { method: 'POST', body: { unread } }),
   markAllNotificationsRead: () => apiRequest('/notifications/read-all', { method: 'POST' }),

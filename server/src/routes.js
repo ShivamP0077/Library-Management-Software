@@ -12,6 +12,7 @@ import { createStudentRouter, recordStudentDiff, recordArchiveDiff, checkCapacit
 import { audit, AuditLog } from './audit.js';
 import { enforceAmountEdits, amountSettingsChanged, isOwnerRole } from './amountPermission.js';
 import { createNotificationRouter } from './notifications.js';
+import { createActionDismissalRouter } from './actionDismissals.js';
 import { createInsightsRouter } from './insights.js';
 import { createSupportRouter, createSupportAdminRouter } from './support.js';
 import { createPartnerAdminRouter, createPartnerPortalRouter } from './partners.js';
@@ -499,7 +500,10 @@ tenant.put('/settings', requireRole('client_admin', 'superadmin', 'staff'), wrap
     if (!isOwnerRole(req.user)) return res.status(403).json({ error: 'Only the owner can change who may edit payment amounts.', code: 'owner_only' });
     await audit(req, 'settings.amount_edit_permission', { tenantId: req.tenantId, detail: { managerCanEditAmount: req.body?.managerCanEditAmount ?? null, staffCanEditAmount: req.body?.staffCanEditAmount ?? null } });
   }
-  const s = await Settings.findOneAndReplace({ tenantId: req.tenantId }, { ...stripMeta(req.body), tenantId: req.tenantId, libraryId: req.tenantId }, { upsert: true, new: true, lean: true });
+  // actionDismissals (dashboard Skip / Later) is owned by /dashboard/action-dismissals: a settings save never overwrites it.
+  const { actionDismissals: _ignored, ...settingsBody } = stripMeta(req.body) || {};
+  const keep = before?.actionDismissals ? { actionDismissals: before.actionDismissals } : {};
+  const s = await Settings.findOneAndReplace({ tenantId: req.tenantId }, { ...settingsBody, ...keep, tenantId: req.tenantId, libraryId: req.tenantId }, { upsert: true, new: true, lean: true });
   res.json(clean(s));
 }));
 
@@ -568,6 +572,7 @@ tenant.use(createSeatRouter());
 tenant.use(createFinanceRouter());
 tenant.use(createStudentRouter());
 tenant.use(createNotificationRouter());
+tenant.use(createActionDismissalRouter());
 tenant.use(createReminderRouter());
 tenant.use(createTemplateRouter());
 tenant.use(createSupportRouter());

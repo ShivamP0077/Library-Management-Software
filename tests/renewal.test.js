@@ -4,7 +4,7 @@ import {
   applyRenewalToStudent, calculateRenewalStartDate, isMoreThanOneMonthLate,
   periodEndDate, renewalPeriodForStudent, validatePaidOn,
 } from '../src/utils/dateUtils.js';
-import { addMonthsAnchored } from '../src/utils/billingCycle.js';
+import { addMonthsAnchored, effectiveCycleConfig } from '../src/utils/billingCycle.js';
 
 const nov = { expiryDate: '2026-11-30', joinedDate: '2026-11-01', billingAnchorDay: 1 };
 
@@ -117,4 +117,20 @@ test('bulk renew uses the same dates as a single renew', () => {
     [renewalPeriodForStudent(nov, opts).start, renewalPeriodForStudent(nov, opts).end],
     ['2026-12-01', '2026-12-31'],
   );
+});
+
+test('a plan duration type is used for renewal and admission even when the library mode differs', () => {
+  const library = { billingCycleMode: 'ANNIVERSARY' };
+  const plan = { billingCycle: { mode: 'N_DAYS', cycleDays: 10, cycleAnchorDate: '2026-01-01' } };
+  const cycle = effectiveCycleConfig(library, plan);
+  const student = { expiryDate: '2026-11-30', joinedDate: '2026-11-01', billingAnchorDay: 1 };
+  const renewed = renewalPeriodForStudent(student, { paidOn: '2026-12-01', durationMonths: 1, cycle });
+  assert.deepEqual([renewed.start, renewed.end], ['2026-12-01', '2026-12-10']);
+  const libraryOnly = renewalPeriodForStudent(student, {
+    paidOn: '2026-12-01', durationMonths: 1, cycle: effectiveCycleConfig(library, {}),
+  });
+  assert.equal(libraryOnly.end, '2026-12-31');
+  const admitted = periodEndDate('2026-06-10', 1, { cycle });
+  assert.equal(admitted, '2026-06-19');
+  assert.equal(periodEndDate('2026-06-10', 1, { anchorDay: 10 }), '2026-07-09');
 });

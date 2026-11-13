@@ -71,6 +71,34 @@ test('expired library: allowlist only, staff locked, super admin not locked', as
   assert.ok(sa.body.some(s => s.id === 'KEEP1'));
 });
 
+test('locked library cannot replace a non-empty collection with an empty array', async () => {
+  const oldEnd = new Date(Date.now() - 5 * 864e5);
+  await Library.updateOne({ libraryId: 'lib-a' }, { $set: { planId: 'basic', subscription: {
+    planId: 'basic', interval: 'month', status: 'expired', price: 500,
+    currentPeriodStart: new Date(Date.now() - 35 * 864e5), currentPeriodEnd: oldEnd, startedAt: new Date(Date.now() - 35 * 864e5),
+  } } });
+  const created = await call('POST', '/api/shifts', { token: ctx.tokens.a, body: { id: 'shift-keep', name: 'Morning' } });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const wipe = await call('PUT', '/api/shifts', { token: ctx.tokens.a, body: [] });
+  assert.equal(wipe.status, 409, JSON.stringify(wipe.body));
+  assert.equal(wipe.body.code, 'LOCKED_EMPTY_REPLACE');
+  assert.match(wipe.body.error, /empty/i);
+  const still = await call('GET', '/api/shifts', { token: ctx.tokens.a });
+  assert.equal(still.status, 200);
+  assert.ok(still.body.some(s => s.id === 'shift-keep'));
+  const keep = await call('PUT', '/api/shifts', { token: ctx.tokens.a, body: [{ id: 'shift-keep', name: 'Morning' }] });
+  assert.equal(keep.status, 200, JSON.stringify(keep.body));
+
+  const seatTypes = await call('GET', '/api/seatTypes', { token: ctx.tokens.a });
+  if (Array.isArray(seatTypes.body) && seatTypes.body.length === 0) {
+    assert.equal((await call('PUT', '/api/seatTypes', { token: ctx.tokens.a, body: [] })).status, 200);
+  }
+
+  assert.equal((await call('POST', '/api/seatTypes', { token: ctx.tokens.b, body: { id: 'st-temp', name: 'Temp' } })).status, 201);
+  assert.equal((await call('PUT', '/api/seatTypes', { token: ctx.tokens.b, body: [] })).status, 200);
+  assert.deepEqual((await call('GET', '/api/seatTypes', { token: ctx.tokens.b })).body, []);
+});
+
 test('wallet renewal from expired starts now, keeps data, and unlocks', async () => {
   const oldEnd = new Date(Date.now() - 5 * 864e5);
   await creditWallet({ tenantId: 'lib-a', amountMinor: 50000, bucket: 'cash', reason: 'renew', source: 'test', idempotencyKey: key() });

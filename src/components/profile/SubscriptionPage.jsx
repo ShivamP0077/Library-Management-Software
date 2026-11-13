@@ -20,7 +20,7 @@ const pillClass = (status) => {
   return 'os-pill os-pill-open';
 };
 
-export function SubscriptionPage({ onBack, onPaid, canPay = true }) {
+export function SubscriptionPage({ onBack, onPaid, canPay = true, locked = false }) {
   const [summary, setSummary] = useState(null);
   const [history, setHistory] = useState(null);
   const [plans, setPlans] = useState([]);
@@ -58,9 +58,18 @@ export function SubscriptionPage({ onBack, onPaid, canPay = true }) {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (!canPay) {
+      setLoading(false);
+      setSummary(null);
+      setHistory(null);
+      return undefined;
+    }
+    load();
+  }, [canPay]);
 
   useEffect(() => {
+    if (!canPay) return undefined;
     if (sessionStorage.getItem('libos_checkout_pending') !== '1') return undefined;
     sessionStorage.removeItem('libos_checkout_pending');
     let cancel = false;
@@ -124,10 +133,16 @@ export function SubscriptionPage({ onBack, onPaid, canPay = true }) {
         <button type="button" className="os-back" onClick={onBack} aria-label="Back"><ArrowLeft size={18} /></button>
         <h2>Subscription</h2>
       </div>
-      {error && <div className="os-error" role="alert">{error}</div>}
-      {loading && <div className="os-card os-card-pad os-note">Loading your plan…</div>}
-      {!loading && !summary && !error && <div className="os-card os-card-pad os-note">No subscription on this library yet.</div>}
-      {!loading && summary && (
+      {!canPay && locked && (
+        <div className="os-card os-card-pad">Your library's plan has expired. Ask the owner to renew.</div>
+      )}
+      {!canPay && !locked && (
+        <div className="os-card os-card-pad os-note">Only the library owner can renew or upgrade. You can still contact support from the profile menu.</div>
+      )}
+      {canPay && error && <div className="os-error" role="alert">{error}</div>}
+      {canPay && loading && <div className="os-card os-card-pad os-note">Loading your plan…</div>}
+      {canPay && !loading && !summary && !error && <div className="os-card os-card-pad os-note">No subscription on this library yet.</div>}
+      {canPay && !loading && summary && (
         <section className="os-card os-card-pad">
           <div className="os-plan-head">
             <div>
@@ -194,8 +209,7 @@ export function SubscriptionPage({ onBack, onPaid, canPay = true }) {
           </div>
         </section>
       )}
-      {!canPay && <div className="os-card os-card-pad os-note">Only the library owner can renew or upgrade. You can still contact support from the profile menu.</div>}
-      <section>
+      {canPay && <section>
         <h3 style={{ fontSize: 15, margin: '4px 0 8px' }}>History</h3>
         {loading && <div className="os-note">Loading history…</div>}
         {!loading && history && history.length === 0 && <div className="os-card os-card-pad os-note">No subscription history yet.</div>}
@@ -215,7 +229,7 @@ export function SubscriptionPage({ onBack, onPaid, canPay = true }) {
             ))}
           </div>
         )}
-      </section>
+      </section>}
     </div>
   );
 }

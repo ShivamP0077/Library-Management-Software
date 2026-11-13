@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { withAbsoluteUrl } from '../../utils/enquiry';
 import QRCode from 'qrcode';
 import { Copy, Download, Printer, RefreshCw, Share2 } from 'lucide-react';
 import { api } from '../../utils/api';
@@ -61,7 +62,7 @@ export function EnquiryQrCard() {
     setError('');
     setBusy(true);
     api.enquiryLink()
-      .then((data) => setLink(data))
+      .then((data) => setLink(withAbsoluteUrl(data)))
       .catch((err) => setError(err.status === 403 ? 'Only the library owner can manage the enquiry QR.' : (err.message || 'Could not load the enquiry link.')))
       .finally(() => setBusy(false));
   };
@@ -104,7 +105,7 @@ export function EnquiryQrCard() {
     setError('');
     try {
       const data = await api.regenerateEnquiryLink();
-      setLink(data);
+      setLink(withAbsoluteUrl(data));
       setNotice('New link ready. The previous QR no longer works.');
     } catch (err) {
       setError(err.message || 'Could not regenerate the link.');

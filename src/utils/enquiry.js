@@ -59,3 +59,9 @@ export function badgeCount(value) {
   if (n <= 0) return '';
   return n > 99 ? '99+' : String(n);
 }
+
+/** The server returns a relative /enquiry/<token> when FRONTEND_URL is unset; the QR needs a full link. */
+export function withAbsoluteUrl(link, origin = (typeof window !== 'undefined' ? window.location.origin : '')) {
+  if (!link || !link.url || /^https?:\/\//i.test(link.url) || !origin) return link;
+  return { ...link, url: `${origin.replace(/\/+$/, '')}${link.url.startsWith('/') ? '' : '/'}${link.url}` };
+}

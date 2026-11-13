@@ -233,7 +233,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   } = useLibrary();
   const { user, subscriptionAccess } = useAuth() || {};
   const enquiryWaiting = useWaitingEnquiryCount(isLibraryLocked(subscriptionAccess, user));
-  const enquiryBadge = badgeCount(enquiryWaiting);
+  const waitingBadge = badgeCount(waitingList.length + (Number(enquiryWaiting) || 0));
   const canEditAmount = clientCanEditAmount({ lockedStaffId, currentStaff, settings });
   const cycleCfg = cycleConfig(settings);
 
@@ -242,7 +242,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   const [shiftFilter, setShiftFilter] = useState('All');
   const [activeDrawerTab, setActiveDrawerTab] = useState('history');
   const profilePhoto = useStudentPhoto(selectedStudent);
-  const [viewMode, setViewMode] = useState('active'); // active | waiting | enquiries 
+  const [viewMode, setViewMode] = useState('active'); // active | waiting 
   const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
   const [isExcelViewOpen, setIsExcelViewOpen] = useState(false);
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
@@ -914,11 +914,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
           <button className={`btn ${viewMode === 'active' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setViewMode('active')} style={{ padding: '6px 16px' }}>Active Students</button>
           <button className={`btn ${viewMode === 'waiting' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setViewMode('waiting')} style={{ padding: '6px 16px', display: 'flex', alignItems: 'center', gap: '6px' }}>
             Waiting List
-            {waitingList.length > 0 && <span style={{ background: viewMode === 'waiting' ? '#fff' : 'var(--brand-primary)', color: viewMode === 'waiting' ? 'var(--brand-primary)' : '#fff', borderRadius: '12px', padding: '2px 6px', fontSize: '10px', fontWeight: 700 }}>{waitingList.length}</span>}
-          </button>
-          <button className={`btn ${viewMode === 'enquiries' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setViewMode('enquiries')} style={{ padding: '6px 16px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            Waiting list
-            {enquiryBadge && <span style={{ background: viewMode === 'enquiries' ? '#fff' : 'var(--brand-primary)', color: viewMode === 'enquiries' ? 'var(--brand-primary)' : '#fff', borderRadius: '12px', padding: '2px 6px', fontSize: '10px', fontWeight: 700 }}>{enquiryBadge}</span>}
+            {waitingBadge && <span style={{ background: viewMode === 'waiting' ? '#fff' : 'var(--brand-primary)', color: viewMode === 'waiting' ? 'var(--brand-primary)' : '#fff', borderRadius: '12px', padding: '2px 6px', fontSize: '10px', fontWeight: 700 }}>{waitingBadge}</span>}
           </button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
@@ -1117,12 +1113,10 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       )}
 
 
-      {viewMode === 'enquiries' && (
-        <WaitingList onAdmit={(payload) => onOpenNewStudent?.(payload)} />
-      )}
-
-      {/* Waiting List View */}
+      {/* Waiting List View: QR enquiries, then the seat waiting list */}
       {viewMode === 'waiting' && (
+        <>
+        <WaitingList onAdmit={(payload) => onOpenNewStudent?.(payload)} />
         <div className="premium-card" style={{ padding: '16px' }}>
            <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
              <Clock size={20} /> Waiting List & Vacancy Matcher
@@ -1256,6 +1250,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
               </table>
            )}
         </div>
+        </>
       )}
 
 

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import toast from 'react-hot-toast';
 import { isSubscriptionLockError } from '../utils/subscriptionLock';
-import { api, createSyncQueue, SYNCED_COLLECTIONS } from '../utils/api';
+import { api, createSyncQueue, LOCKED_CONFIG_COLLECTIONS, SYNCED_COLLECTIONS } from '../utils/api';
 import { getDefaultPermissionsForRole, syncLegacyPermissions } from '../utils/staffPermissions';
 import { isShiftInPlan, resolveCanonicalShift, getCanonicalShifts, normalizeShiftName, shiftsOverlap } from '../utils/shiftUtils';
 import { areSeatTypesEquivalent } from '../utils/seatTypeUtils';
@@ -761,16 +761,46 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       shifts: setShifts, plans: setPlans, staffMembers: setStaffMembers, students: setStudents,
       archivedStudents: setArchivedStudents, expenses: setExpenses, payments: setPayments, waitingList: setWaitingList
     };
+    sync.block([]);
     if (remote.settings) { sync.markSynced('settings', remote.settings); setSettings(remote.settings); }
+    else sync.markLoaded('settings');
     SYNCED_COLLECTIONS.forEach(c => {
       const items = remote[c] || [];
-      if (c === 'staffMembers' && items.length === 0) return; // never leave the app without a staff user
+      // Keep the signed-in staff user when the server list is empty, but still allow later saves.
+      if (c === 'staffMembers' && items.length === 0) { sync.markLoaded(c); return; }
       sync.markSynced(c, items);
       setters[c](items);
     });
   };
 
   applyRemoteStateRef.current = applyRemoteState;
+
+  // Plan is locked: GET /state is 402. Load only the config the server still serves,
+  // mark those keys synced, and only then enable sync. Anything not loaded (students,
+  // payments, seats, …) must not be pushed — the queue ignores unloaded and blocked keys.
+  const loadLockedSnapshot = async (isCurrent = () => true) => {
+    const sync = syncRef.current;
+    if (!sync) return;
+    sync.block(SYNCED_COLLECTIONS.filter(col => !LOCKED_CONFIG_COLLECTIONS.includes(col)));
+    const setters = {
+      branches: setBranches, sections: setSections, shifts: setShifts, seatTypes: setSeatTypes, plans: setPlans,
+    };
+    await Promise.all([
+      api.getSettings().then((doc) => {
+        if (!isCurrent() || !doc || typeof doc !== 'object') return;
+        sync.markSynced('settings', doc);
+        setSettings(doc);
+      }).catch(() => {}),
+      ...LOCKED_CONFIG_COLLECTIONS.map(col => api.getCollection(col).then((items) => {
+        if (!isCurrent() || !Array.isArray(items)) return;
+        sync.markSynced(col, items);
+        setters[col](items);
+      }).catch(() => {})),
+    ]);
+    if (!isCurrent() || readOnly) return;
+    sync.enable();
+  };
+
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Data-only refresh: re-fetches the backend snapshot (no page reload, filters preserved).
@@ -789,6 +819,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       return true;
     } catch (e) {
       if (isSubscriptionLockError(e)) {
+        await loadLockedSnapshot();
         setBackendStatus('locked');
         return 'locked';
       }
@@ -823,6 +854,11 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
           setStaffMembers(INITIAL_STAFF);
           sync.enable();
         } else if (!readOnly) {
+          // Remote snapshot is empty, so this browser may upload its cache.
+          // The locked path never reaches here: GET /state is 402 and loadLockedSnapshot runs instead.
+          sync.block([]);
+          sync.markLoaded('settings');
+          SYNCED_COLLECTIONS.forEach(k => sync.markLoaded(k));
           sync.enable();
           const local = latestStateRef.current;
           const seededSettings = { ...local.settings, libraryId: remote.libraryId || local.settings.libraryId };
@@ -836,8 +872,8 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       } catch (e) {
         if (cancelled) return;
         if (isSubscriptionLockError(e)) {
-          setBackendStatus('locked');
-          if (!readOnly) sync.enable();
+          await loadLockedSnapshot(() => !cancelled);
+          if (!cancelled) setBackendStatus('locked');
           return;
         }
         setBackendStatus('offline');
@@ -852,7 +888,10 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         sync.enable();
       } catch (e) {
         if (cancelled) return;
-        if (isSubscriptionLockError(e)) setBackendStatus('locked');
+        if (isSubscriptionLockError(e)) {
+          await loadLockedSnapshot(() => !cancelled);
+          if (!cancelled) setBackendStatus('locked');
+        }
       }
     };
     window.addEventListener('libos:reload-library', reload);

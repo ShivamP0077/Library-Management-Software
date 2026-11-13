@@ -6,9 +6,8 @@ import { refreshWaitingEnquiryCount } from './useWaitingEnquiryCount';
 import { EnquiryQrCard } from './EnquiryQrCard';
 
 /**
- * Admit marks the enquiry admitted as soon as the New Admission modal opens.
- * NewStudentModal does not report a successful save back to this list, so the
- * PATCH is not delayed until the student record is stored.
+ * Admit opens New Admission with this enquiry's details. The enquiry stays
+ * "waiting" until the admission is saved and onAdmitted marks it admitted.
  */
 export function WaitingList({ onAdmit }) {
   const [items, setItems] = useState([]);
@@ -24,24 +23,20 @@ export function WaitingList({ onAdmit }) {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    const onChanged = () => load();
+    window.addEventListener('libos:enquiries-changed', onChanged);
+    return () => window.removeEventListener('libos:enquiries-changed', onChanged);
+  }, []);
 
-  const admit = async (item) => {
-    setError('');
-    try {
-      onAdmit?.({
-        name: item.name,
-        phone: normalizeIndianMobile(item.mobile),
-        email: item.email || '',
-        enquiryId: item.id,
-      });
-      await api.updateEnquiry(item.id, 'admitted');
-      setItems(prev => prev.filter(row => row.id !== item.id));
-      refreshWaitingEnquiryCount();
-      window.dispatchEvent(new CustomEvent('libos:enquiries-changed'));
-    } catch (err) {
-      setError(err.message || 'Could not mark this enquiry as admitted.');
-    }
+  const admit = (item) => {
+    onAdmit?.({
+      name: item.name,
+      phone: normalizeIndianMobile(item.mobile),
+      email: item.email || '',
+      enquiryId: item.id,
+    });
   };
 
   const remove = async (item) => {
@@ -61,8 +56,8 @@ export function WaitingList({ onAdmit }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <div>
-          <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Waiting list</h3>
-          <p style={{ margin: '4px 0 0', color: 'var(--text-secondary)', fontSize: 13 }}>Enquiries from the QR form, newest first.</p>
+          <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>New enquiries (QR)</h3>
+          <p style={{ margin: '4px 0 0', color: 'var(--text-secondary)', fontSize: 13 }}>Enquiries from the QR form, newest first. They stay here until the admission is saved.</p>
         </div>
         <button type="button" className="btn btn-secondary" onClick={() => setQrOpen(true)}><QrCode size={16} /> Enquiry QR</button>
       </div>

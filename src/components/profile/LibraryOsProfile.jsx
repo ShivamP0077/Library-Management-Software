@@ -11,6 +11,7 @@ import { MySoftwarePlanModal } from '../../auth/MySoftwarePlanModal';
 import { useLibrary } from '../../context/LibraryContext';
 import { SupportCenter } from '../SupportCenter';
 import { applyTheme, readTheme } from '../../utils/theme';
+import { isLibraryLocked } from '../../utils/subscriptionLock';
 import { SubscriptionPage } from './SubscriptionPage';
 import './profile.css';
 
@@ -47,13 +48,14 @@ function Subpage({ title, onBack, children }) {
 }
 
 export function LibraryOsProfile({ screen = 'home', onScreenChange, onClose, onPaid }) {
-  const { user, library, logout } = useAuth();
+  const { user, library, logout, subscriptionAccess } = useAuth();
   const { settings, branches, activeBranchId, setActiveBranchId } = useLibrary();
   const [dark, setDark] = useState(() => readTheme() === 'dark');
   const [langOpen, setLangOpen] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
   const [walletOpen, setWalletOpen] = useState(false);
   const canPay = user?.role === 'client_admin' || user?.role === 'superadmin';
+  const planLocked = isLibraryLocked(subscriptionAccess, user);
   const name = user?.name || 'Owner';
   const initial = (name || user?.email || 'M').trim().charAt(0).toUpperCase();
   const libraryName = library?.name || settings?.name || 'Library';
@@ -132,7 +134,7 @@ export function LibraryOsProfile({ screen = 'home', onScreenChange, onClose, onP
 
   let body = home;
   if (screen === 'subscription') {
-    body = <SubscriptionPage onBack={() => go('home')} onPaid={onPaid} canPay={canPay} />;
+    body = <SubscriptionPage onBack={() => go('home')} onPaid={onPaid} canPay={canPay} locked={planLocked} />;
   } else if (screen === 'contact') {
     body = (
       <Subpage title="Contact Us" onBack={() => go('home')}>

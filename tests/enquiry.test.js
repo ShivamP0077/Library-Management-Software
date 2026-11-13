@@ -32,3 +32,9 @@ test('time ago buckets and waiting-list badge', () => {
   assert.equal(badgeCount(3), '3');
   assert.equal(badgeCount(120), '99+');
 });
+
+test('withAbsoluteUrl prefixes a relative enquiry link and keeps absolute ones', async () => {
+  const { withAbsoluteUrl } = await import('../src/utils/enquiry.js');
+  assert.equal(withAbsoluteUrl({ url: '/enquiry/abc' }, 'https://app.example.com/').url, 'https://app.example.com/enquiry/abc');
+  assert.equal(withAbsoluteUrl({ url: 'https://x.y/enquiry/abc' }, 'https://app.example.com').url, 'https://x.y/enquiry/abc');
+});

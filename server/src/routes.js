@@ -660,6 +660,20 @@ tenant.delete('/:col/:key', colParam, wrap(async (req, res) => {
 tenant.put('/:col', colParam, wrap(async (req, res) => {
   if (!Array.isArray(req.body)) return res.status(400).json({ error: 'Body must be an array' });
   const col = req.params.col;
+  // A locked library can still PUT config collections. Never let an empty local cache wipe saved rows.
+  if (req.body.length === 0 && req.user?.role !== 'superadmin') {
+    const lib = await refreshSubscriptionStatus(req.tenantId);
+    const access = accessFor(lib, { role: req.user?.role });
+    if (!access.ok) {
+      const existing = await req.Model.countDocuments({ tenantId: req.tenantId });
+      if (existing > 0) {
+        return res.status(409).json({
+          error: `This library is locked. Refusing to replace ${col} with an empty list because it still has saved records.`,
+          code: 'LOCKED_EMPTY_REPLACE',
+        });
+      }
+    }
+  }
   const prevArchived = col === 'archivedStudents' ? await req.Model.find({ tenantId: req.tenantId }).lean() : null;
   if (col === 'seats') await validateSeatSync(req.tenantId, req.body.map(stripMeta));
   let newPayments = null;

@@ -30,7 +30,8 @@ import { setCacheScope, clearCacheScope } from './utils/tenantCache';
 import { LoginScreen } from './auth/LoginScreen';
 import { SuperAdminDashboard } from './auth/SuperAdminDashboard';
 import { PartnerPortal } from './auth/PartnerPortal';
-import { setTenantContext } from './utils/api';
+import { api, setTenantContext } from './utils/api';
+import { refreshWaitingEnquiryCount } from './components/enquiry/useWaitingEnquiryCount';
 import { WhatsAppHub } from './components/WhatsAppHub';
 import { WhatsAppBanner } from './components/WhatsAppBanner';
 import { LibraryOsProfile } from './components/profile/LibraryOsProfile';
@@ -47,6 +48,7 @@ export const AppContent = () => {
   const { settings, hasPermission, currentStaff } = useLibrary();
   const { user, subscriptionAccess, refreshSession } = useAuth();
   const locked = isLibraryLocked(subscriptionAccess, user);
+  const canRenew = user?.role === 'client_admin' || user?.role === 'superadmin';
   const KNOWN_TABS = ['dashboard', 'students', 'seats', 'payments', 'expenses', 'reports', 'settings', 'whatsapp', 'archives', 'notifications', 'support', 'profile'];
   const [activeTab, setActiveTab] = useState(() => { const t = TAB_FROM_HASH(); return KNOWN_TABS.includes(t) ? t : 'dashboard'; });
   const [profileScreen, setProfileScreen] = useState('home');
@@ -116,6 +118,11 @@ export const AppContent = () => {
     window.dispatchEvent(new CustomEvent('libos:reload-library'));
   };
   const sectionBlocked = locked && !isSectionAllowedWhenLocked(activeTab);
+  const admitEnquiry = async (enquiryId) => {
+    await api.updateEnquiry(enquiryId, 'admitted');
+    refreshWaitingEnquiryCount();
+    window.dispatchEvent(new CustomEvent('libos:enquiries-changed'));
+  };
 
   return (
     <div className="app-container">
@@ -150,6 +157,7 @@ export const AppContent = () => {
             {sectionBlocked ? (
               <LockScreen
                 message={subscriptionAccess?.message}
+                canRenew={canRenew}
                 onRenew={() => openProfile('subscription')}
                 onContact={() => openProfile('contact')}
               />
@@ -174,6 +182,7 @@ export const AppContent = () => {
                 {activeTab === 'dashboard' && locked && (
                   <LockedDashboard
                     message={subscriptionAccess?.message}
+                    canRenew={canRenew}
                     onRenew={() => openProfile('subscription')}
                     onContact={() => openProfile('contact')}
                   />
@@ -268,6 +277,7 @@ export const AppContent = () => {
           }}
           onPrintReceipt={handlePrintReceipt}
           waitlistPayload={waitlistPayload}
+          onAdmitted={admitEnquiry}
         />
 
         <PrintReceiptModal

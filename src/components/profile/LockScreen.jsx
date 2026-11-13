@@ -3,21 +3,21 @@ import { Lock, Phone } from 'lucide-react';
 import { api } from '../../utils/api';
 import './profile.css';
 
-export function LockScreen({ message, onRenew, onContact }) {
+export function LockScreen({ message, onRenew, onContact, canRenew = true }) {
   return (
     <div className="os-lock">
       <div className="os-lock-icon" aria-hidden="true"><Lock size={32} /></div>
       <h3>Your plan has expired</h3>
       <p>{message || 'Your My Library OS plan has expired. Renew to continue.'}</p>
       <div className="os-lock-actions">
-        <button type="button" className="btn btn-primary" onClick={onRenew}>Renew now</button>
+        {canRenew && <button type="button" className="btn btn-primary" onClick={onRenew}>Renew now</button>}
         <button type="button" className="btn btn-secondary" onClick={onContact}><Phone size={16} /> Contact us</button>
       </div>
     </div>
   );
 }
 
-export function LockedDashboard({ message, onRenew, onContact }) {
+export function LockedDashboard({ message, onRenew, onContact, canRenew = true }) {
   const [counts, setCounts] = useState(null);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -37,7 +37,7 @@ export function LockedDashboard({ message, onRenew, onContact }) {
       <div className="os-banner" role="status">
         <div>{message || 'Your plan has expired. Renew to unlock your library.'}</div>
         <div className="os-lock-actions" style={{ justifyContent: 'flex-start', marginTop: 10 }}>
-          <button type="button" className="btn btn-primary btn-sm" onClick={onRenew}>Renew now</button>
+          {canRenew && <button type="button" className="btn btn-primary btn-sm" onClick={onRenew}>Renew now</button>}
           <button type="button" className="btn btn-secondary btn-sm" onClick={onContact}>Contact us</button>
         </div>
       </div>

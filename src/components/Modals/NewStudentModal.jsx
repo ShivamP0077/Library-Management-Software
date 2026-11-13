@@ -25,7 +25,7 @@ import { getCanonicalShifts, isShiftInPlan } from '../../utils/shiftUtils';
 import { clientCanEditAmount } from '../../utils/amountPermission';
 import { getCanonicalSeatTypes, areSeatTypesEquivalent } from '../../utils/seatTypeUtils';
 
-export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPayload }) => {
+export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPayload, onAdmitted }) => {
   const { 
     settings, branches, sections, plans, shifts, seatTypes, addStudent, students, archivedStudents, 
     todayStr, getAvailableEligibleSeats, canAdmitStudent, addToWaitingList, getMatchingPlans, getUnsyncedShifts, getUnsyncedPlans,
@@ -515,6 +515,13 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
     if (res && res.student) {
       // Claim the already-uploaded files for this student so a student-scoped fetch can verify ownership.
       await Promise.all(docFiles.map((f) => api.updateDocumentMeta(f.storageKey, { studentId: res.student.id }).catch(() => {})));
+      if (waitlistPayload?.enquiryId && onAdmitted) {
+        try {
+          await onAdmitted(waitlistPayload.enquiryId);
+        } catch (err) {
+          toast.error(err?.message || 'Admission saved, but the enquiry is still on the waiting list.');
+        }
+      }
       toast.success('Student admission completed successfully!');
       if (onPrintReceipt && res.receipt) {
         onPrintReceipt(res.receipt);

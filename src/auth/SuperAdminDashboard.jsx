@@ -10,6 +10,7 @@ import { SupportDesk } from './SupportDesk';
 import { PlansAdmin } from './PlansAdmin';
 import { PaymentsAdmin } from './PaymentsAdmin';
 import { SystemWhatsAppAdmin } from './SystemWhatsAppAdmin';
+import { SaModal } from './SaModal';
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—');
 
@@ -29,6 +30,7 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
   const [cityEdit, setCityEdit] = useState(null);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ name: '', adminEmail: '', adminName: '' });
+  const [createOpen, setCreateOpen] = useState(false);
   const [inviteFor, setInviteFor] = useState(null);
   const [inviteEmail, setInviteEmail] = useState('');
   // Issue #16: permanent delete with the library name typed back.
@@ -69,6 +71,7 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
       const r = await api.adminCreateLibrary({ name: form.name, adminEmail: form.adminEmail || undefined, adminName: form.adminName || undefined });
       toast.success(`Created ${r.library.name}${r.admin ? ` — ${r.admin.email} can now sign in with Google` : ''}`);
       setForm({ name: '', adminEmail: '', adminName: '' });
+      setCreateOpen(false);
       load();
     } catch (err) { toast.error(err.message); }
   };
@@ -137,6 +140,11 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
           </p>
         )}
 
+        {view === 'business' && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button type="button" className="btn btn-primary" onClick={() => setCreateOpen(true)}><Plus size={14} /> New library</button>
+          </div>
+        )}
         {view === 'business' && (
         <div className="premium-card sa-table-card" style={{ padding: 0 }}>
           <div className="table-container">
@@ -208,21 +216,26 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
           </form>
         )}
 
-        <form className="premium-card" style={{ padding: 16, display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }} onSubmit={createLibrary}>
-          <div className="form-group" style={{ flex: 1, minWidth: 200, marginBottom: 0 }}>
-            <label className="form-label">New library name</label>
-            <input className="form-input" required value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
-          </div>
-          <div className="form-group" style={{ flex: 1, minWidth: 200, marginBottom: 0 }}>
-            <label className="form-label">Client admin email (Google)</label>
-            <input className="form-input" type="email" value={form.adminEmail} onChange={e => setForm(f => ({ ...f, adminEmail: e.target.value }))} />
-          </div>
-          <div className="form-group" style={{ flex: 1, minWidth: 160, marginBottom: 0 }}>
-            <label className="form-label">Admin name</label>
-            <input className="form-input" value={form.adminName} onChange={e => setForm(f => ({ ...f, adminName: e.target.value }))} />
-          </div>
-          <button className="btn btn-primary" type="submit"><Plus size={14} /> <span>Create library</span></button>
-        </form>
+        <SaModal open={createOpen} title="New library" onClose={() => setCreateOpen(false)} maxWidth={520}>
+          <form style={{ display: 'flex', flexDirection: 'column', gap: 12 }} onSubmit={createLibrary}>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">New library name</label>
+              <input className="form-input" required value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+            </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">Client admin email (Google)</label>
+              <input className="form-input" type="email" value={form.adminEmail} onChange={e => setForm(f => ({ ...f, adminEmail: e.target.value }))} />
+            </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">Admin name</label>
+              <input className="form-input" value={form.adminName} onChange={e => setForm(f => ({ ...f, adminName: e.target.value }))} />
+            </div>
+            <div className="modal-footer" style={{ margin: '0 -24px -24px', padding: 16 }}>
+              <button className="btn btn-secondary" type="button" onClick={() => setCreateOpen(false)}>Cancel</button>
+              <button className="btn btn-primary" type="submit"><Plus size={14} /> <span>Create library</span></button>
+            </div>
+          </form>
+        </SaModal>
       </main>
       <Toaster position="bottom-right" />
     </div>

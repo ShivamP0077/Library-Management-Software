@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import { api } from '../utils/api';
+import { SaModal } from './SaModal';
 
 const EMPTY = { name: '', description: '', priceMonthly: '', priceYearly: '', studentLimit: '', staffLimit: '', branchLimit: '', trialDays: '', features: '', public: true, active: true };
 const fmtLimit = (n) => (n ? n.toLocaleString() : 'Unlimited');
@@ -43,7 +44,7 @@ export function PlansAdmin({ libraries = [], onChanged }) {
       <div className="premium-card" style={{ padding: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
           <h3 style={{ margin: 0, fontSize: 16 }}>Software plans</h3>
-          <button className="btn btn-primary btn-sm" onClick={() => startEdit(null)}>New plan</button>
+          <button className="btn btn-primary btn-sm" onClick={() => startEdit(null)}>+ New plan</button>
         </div>
         {plans.length === 0 && <p style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>No plans yet. Libraries without a plan have no plan limits.</p>}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
@@ -68,9 +69,8 @@ export function PlansAdmin({ libraries = [], onChanged }) {
         </div>
       </div>
 
-      {open && (
-        <form className="premium-card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }} onSubmit={save} aria-label="Plan form">
-          <h3 style={{ margin: 0, fontSize: 15 }}>{editing ? `Edit ${form.name}` : 'New plan'}</h3>
+      <SaModal open={open} title={editing ? `Edit ${form.name || 'plan'}` : 'New plan'} onClose={() => setOpen(false)} maxWidth={720}>
+        <form style={{ display: 'flex', flexDirection: 'column', gap: 12 }} onSubmit={save} aria-label="Plan form">
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
             {field('name', 'Name *', 'text', { required: true })}
             {field('priceMonthly', 'Price per month (₹)')}
@@ -90,7 +90,7 @@ export function PlansAdmin({ libraries = [], onChanged }) {
             <button type="submit" className="btn btn-primary">Save plan</button>
           </div>
         </form>
-      )}
+      </SaModal>
 
       <div className="premium-card" style={{ padding: 16 }}>
         <h3 style={{ margin: '0 0 12px', fontSize: 16 }}>Library plans</h3>

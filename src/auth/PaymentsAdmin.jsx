@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import { api } from '../utils/api';
+import { SaModal } from './SaModal';
 
 const empty = {
   activeProvider: 'none',
@@ -21,7 +22,9 @@ export function PaymentsAdmin() {
   const [campaigns, setCampaigns] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [offerForm, setOfferForm] = useState({ name: '', code: '', discountType: 'percentage', discountValue: 10, perTenantLimit: 1, usageLimit: '', planIds: '', startsAt: '', endsAt: '', stackable: false });
+  const [offerOpen, setOfferOpen] = useState(false);
   const [campaignForm, setCampaignForm] = useState({ name: '', rewardMinor: 0, rewardBucket: 'bonus' });
+  const [campaignOpen, setCampaignOpen] = useState(false);
 
   const load = async () => {
     try {
@@ -116,6 +119,7 @@ export function PaymentsAdmin() {
     try {
       await api.adminCreateOffer({ ...offerForm, discountValue: Math.round(Number(offerForm.discountValue) * (offerForm.discountType === 'fixed' ? 100 : 1)), code: offerForm.code.toUpperCase(), usageLimit: offerForm.usageLimit ? Number(offerForm.usageLimit) : null, planIds: String(offerForm.planIds || '').split(',').map(s => s.trim()).filter(Boolean), startsAt: offerForm.startsAt || null, endsAt: offerForm.endsAt || null });
       setOfferForm({ name: '', code: '', discountType: 'percentage', discountValue: 10, perTenantLimit: 1, usageLimit: '', planIds: '', startsAt: '', endsAt: '', stackable: false });
+      setOfferOpen(false);
       setOffers(await api.adminOffers());
       toast.success('Offer created');
     } catch (err) { toast.error(err.message); }
@@ -128,6 +132,7 @@ export function PaymentsAdmin() {
     try {
       await api.adminCreateReferralCampaign({ ...campaignForm, rewardMinor: Number(campaignForm.rewardMinor) });
       setCampaignForm({ name: '', rewardMinor: 0, rewardBucket: 'bonus' });
+      setCampaignOpen(false);
       setCampaigns(await api.adminReferralCampaigns());
       toast.success('Referral campaign created');
     } catch (err) { toast.error(err.message); }
@@ -286,33 +291,49 @@ export function PaymentsAdmin() {
         </div>)}
       </div>
       <div className="premium-card" style={{ padding: 16 }}>
-        <h3 style={{ margin: '0 0 8px', fontSize: 16 }}>Offers</h3>
-        <form onSubmit={createOffer} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end', marginBottom: 10 }}>
-          <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Name<input className="form-input" value={offerForm.name} onChange={e => setOfferForm({ ...offerForm, name: e.target.value })} required /></label>
-          <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Code<input className="form-input" value={offerForm.code} onChange={e => setOfferForm({ ...offerForm, code: e.target.value.toUpperCase() })} required /></label>
-          <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Type<select className="form-input" value={offerForm.discountType} onChange={e => setOfferForm({ ...offerForm, discountType: e.target.value })}><option value="percentage">%</option><option value="fixed">₹ fixed</option></select></label>
-          <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Value<input className="form-input" value={offerForm.discountValue} onChange={e => setOfferForm({ ...offerForm, discountValue: e.target.value })} required /></label>
-          <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Total uses<input className="form-input" inputMode="numeric" value={offerForm.usageLimit} onChange={e => setOfferForm({ ...offerForm, usageLimit: e.target.value })} placeholder="Unlimited" /></label>
-          <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Per-library uses<input className="form-input" inputMode="numeric" value={offerForm.perTenantLimit} onChange={e => setOfferForm({ ...offerForm, perTenantLimit: e.target.value })} /></label>
-          <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Plans (IDs, comma separated)<input className="form-input" value={offerForm.planIds} onChange={e => setOfferForm({ ...offerForm, planIds: e.target.value })} placeholder="All plans" /></label>
-          <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Starts<input className="form-input" type="date" value={offerForm.startsAt} onChange={e => setOfferForm({ ...offerForm, startsAt: e.target.value })} /></label>
-          <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Ends<input className="form-input" type="date" value={offerForm.endsAt} onChange={e => setOfferForm({ ...offerForm, endsAt: e.target.value })} /></label>
-          <button className="btn btn-secondary" disabled={busy}>Create offer</button>
-        </form>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <h3 style={{ margin: 0, fontSize: 16 }}>Offers</h3>
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => setOfferOpen(true)}>+ New offer</button>
+        </div>
+        <SaModal open={offerOpen} title="New offer" onClose={() => setOfferOpen(false)}>
+          <form onSubmit={createOffer} style={{ display: 'grid', gap: 10 }}>
+            <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Name<input className="form-input" value={offerForm.name} onChange={e => setOfferForm({ ...offerForm, name: e.target.value })} required /></label>
+            <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Code<input className="form-input" value={offerForm.code} onChange={e => setOfferForm({ ...offerForm, code: e.target.value.toUpperCase() })} required /></label>
+            <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Type<select className="form-input" value={offerForm.discountType} onChange={e => setOfferForm({ ...offerForm, discountType: e.target.value })}><option value="percentage">%</option><option value="fixed">₹ fixed</option></select></label>
+            <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Value<input className="form-input" value={offerForm.discountValue} onChange={e => setOfferForm({ ...offerForm, discountValue: e.target.value })} required /></label>
+            <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Total uses<input className="form-input" inputMode="numeric" value={offerForm.usageLimit} onChange={e => setOfferForm({ ...offerForm, usageLimit: e.target.value })} placeholder="Unlimited" /></label>
+            <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Per-library uses<input className="form-input" inputMode="numeric" value={offerForm.perTenantLimit} onChange={e => setOfferForm({ ...offerForm, perTenantLimit: e.target.value })} /></label>
+            <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Plans (IDs, comma separated)<input className="form-input" value={offerForm.planIds} onChange={e => setOfferForm({ ...offerForm, planIds: e.target.value })} placeholder="All plans" /></label>
+            <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Starts<input className="form-input" type="date" value={offerForm.startsAt} onChange={e => setOfferForm({ ...offerForm, startsAt: e.target.value })} /></label>
+            <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Ends<input className="form-input" type="date" value={offerForm.endsAt} onChange={e => setOfferForm({ ...offerForm, endsAt: e.target.value })} /></label>
+            <label style={{ display: 'flex', gap: 6, fontSize: 13 }}><input type="checkbox" checked={offerForm.stackable} onChange={e => setOfferForm({ ...offerForm, stackable: e.target.checked })} /> Allow stacking with another offer where permitted</label>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button type="button" className="btn btn-secondary" onClick={() => setOfferOpen(false)}>Cancel</button>
+              <button className="btn btn-primary" disabled={busy}>Create offer</button>
+            </div>
+          </form>
+        </SaModal>
         {(offers || []).map(o => <div key={o.offerId} style={{ fontSize: 13, borderTop: '1px solid var(--border-light, #e5e7eb)', padding: '8px 0' }}><div><strong>{o.code}</strong> · {o.name} · {o.discountType === 'percentage' ? `${o.discountValue}%` : `₹${(Number(o.discountValue || 0) / 100).toFixed(2)}`} · used {o.usedCount || 0}{o.usageLimit ? `/${o.usageLimit}` : ''}</div><div>{!o.active ? 'Inactive' : o.archived ? 'Archived' : 'Available'} · {o.stackable ? 'stackable' : 'single offer'}{(o.planIds || []).length ? ` · plans: ${o.planIds.join(', ')}` : ' · all plans'}</div><div>{o.startsAt ? `Starts ${new Date(o.startsAt).toLocaleDateString()} · ` : ''}{o.endsAt ? `Ends ${new Date(o.endsAt).toLocaleDateString()}` : 'No end date'}</div><div className="modal-actions" style={{ marginTop: 8 }}><button type="button" className="btn btn-ghost btn-sm" onClick={async () => { try { await api.adminUpdateOffer(o.offerId, { active: !o.active }); setOffers(await api.adminOffers()); } catch (e) { toast.error(e.message); } }}>{o.active ? 'Disable' : 'Enable'}</button><button type="button" className="btn btn-ghost btn-sm" onClick={async () => { try { await api.adminUpdateOffer(o.offerId, { archived: !o.archived }); setOffers(await api.adminOffers()); } catch (e) { toast.error(e.message); } }}>{o.archived ? 'Unarchive' : 'Archive'}</button></div></div>)}
         {offers.length === 0 && <div style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>No offers yet.</div>}
-        <label style={{ display: 'flex', gap: 6, marginTop: 10, fontSize: 13 }}><input type="checkbox" checked={offerForm.stackable} onChange={e => setOfferForm({ ...offerForm, stackable: e.target.checked })} /> Allow stacking with another offer where permitted</label>
       </div>
 
       <div className="premium-card" style={{ padding: 16 }}>
-        <h3 style={{ margin: '0 0 8px', fontSize: 16 }}>Referral campaign</h3>
-        <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '0 0 10px' }}>Rewards qualify only after the first genuine paid subscription, including fully wallet-funded. Trials and 100% promos do not qualify unless enabled.</p>
-        <form onSubmit={createCampaign} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end', marginBottom: 10 }}>
-          <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Name<input className="form-input" value={campaignForm.name} onChange={e => setCampaignForm({ ...campaignForm, name: e.target.value })} required /></label>
-          <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Reward minor units<input className="form-input" value={campaignForm.rewardMinor} onChange={e => setCampaignForm({ ...campaignForm, rewardMinor: e.target.value })} /></label>
-          <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Bucket<select className="form-input" value={campaignForm.rewardBucket} onChange={e => setCampaignForm({ ...campaignForm, rewardBucket: e.target.value })}><option value="bonus">Bonus</option><option value="cash">Cash</option></select></label>
-          <button className="btn btn-secondary" disabled={busy}>Create campaign</button>
-        </form>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+          <h3 style={{ margin: 0, fontSize: 16 }}>Referral campaign</h3>
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => setCampaignOpen(true)}>+ New campaign</button>
+        </div>
+        <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '8px 0 10px' }}>Rewards qualify only after the first genuine paid subscription, including fully wallet-funded. Trials and 100% promos do not qualify unless enabled.</p>
+        <SaModal open={campaignOpen} title="New referral campaign" onClose={() => setCampaignOpen(false)}>
+          <form onSubmit={createCampaign} style={{ display: 'grid', gap: 10 }}>
+            <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Name<input className="form-input" value={campaignForm.name} onChange={e => setCampaignForm({ ...campaignForm, name: e.target.value })} required /></label>
+            <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Reward minor units<input className="form-input" value={campaignForm.rewardMinor} onChange={e => setCampaignForm({ ...campaignForm, rewardMinor: e.target.value })} /></label>
+            <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Bucket<select className="form-input" value={campaignForm.rewardBucket} onChange={e => setCampaignForm({ ...campaignForm, rewardBucket: e.target.value })}><option value="bonus">Bonus</option><option value="cash">Cash</option></select></label>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button type="button" className="btn btn-secondary" onClick={() => setCampaignOpen(false)}>Cancel</button>
+              <button className="btn btn-primary" disabled={busy}>Create campaign</button>
+            </div>
+          </form>
+        </SaModal>
         {campaigns.map(c => <div key={c.campaignId} style={{ fontSize: 13, borderTop: '1px solid var(--border-light, #e5e7eb)', padding: '6px 0' }}>{c.name} · reward {c.rewardMinor} {c.rewardBucket} · {c.active ? 'active' : 'inactive'}</div>)}
         {campaigns.length === 0 && <div style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>No campaign configured.</div>}
       </div>

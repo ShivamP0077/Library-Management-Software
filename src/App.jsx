@@ -20,7 +20,6 @@ import { MySoftwarePlanModal } from './auth/MySoftwarePlanModal';
 import { initHistory, navTab, TAB_FROM_HASH } from './utils/appHistory';
 import { useBackClose } from './utils/useBackClose';
 import { NotificationsCenter } from './components/NotificationsCenter';
-import { SupportCenter } from './components/SupportCenter';
 import { PreviousStudentRecords } from './components/PreviousStudentRecords';
 import { SetupWizard } from './components/SetupWizard';
 import { useLibrary } from './context/LibraryContext';
@@ -38,6 +37,21 @@ import { LibraryOsProfile } from './components/profile/LibraryOsProfile';
 import { LockScreen, LockedDashboard } from './components/profile/LockScreen';
 import { isLibraryLocked, isSectionAllowedWhenLocked } from './utils/subscriptionLock';
 
+function hashHasTicket() {
+  try {
+    const hash = window.location.hash || '';
+    if (new URLSearchParams(hash.slice(1)).get('ticket')) return true;
+    return /(?:^|[?&#])ticket=/.test(hash);
+  } catch {
+    return false;
+  }
+}
+
+function openSupportInProfile(setActiveTab, setProfileScreen) {
+  setProfileScreen('contact');
+  setActiveTab('profile');
+}
+
 const pageVariants = {
   initial: { opacity: 0 },
   animate: { opacity: 1 },
@@ -50,11 +64,25 @@ export const AppContent = () => {
   const locked = isLibraryLocked(subscriptionAccess, user);
   const canRenew = user?.role === 'client_admin' || user?.role === 'superadmin';
   const KNOWN_TABS = ['dashboard', 'students', 'seats', 'payments', 'expenses', 'reports', 'settings', 'whatsapp', 'archives', 'notifications', 'support', 'profile'];
-  const [activeTab, setActiveTab] = useState(() => { const t = TAB_FROM_HASH(); return KNOWN_TABS.includes(t) ? t : 'dashboard'; });
-  const [profileScreen, setProfileScreen] = useState('home');
-  // Issue #1: browser Back/Forward move between screens.
-  React.useEffect(() => initHistory(activeTab, (t) => { if (KNOWN_TABS.includes(t)) setActiveTab(t); }), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [activeTab, setActiveTab] = useState(() => {
+    const t = TAB_FROM_HASH();
+    if (t === 'support' || hashHasTicket()) return 'profile';
+    return KNOWN_TABS.includes(t) ? t : 'dashboard';
+  });
+  const [profileScreen, setProfileScreen] = useState(() => {
+    const t = TAB_FROM_HASH();
+    return (t === 'support' || hashHasTicket()) ? 'contact' : 'home';
+  });
+  // Issue #1: browser Back/Forward move between screens. Old #/support links open Contact Us.
+  React.useEffect(() => initHistory(activeTab, (t) => {
+    if (t === 'support') { openSupportInProfile(setActiveTab, setProfileScreen); return; }
+    if (KNOWN_TABS.includes(t)) setActiveTab(t);
+  }), []); // eslint-disable-line react-hooks/exhaustive-deps
   React.useEffect(() => { navTab(activeTab); }, [activeTab]);
+  React.useEffect(() => {
+    if (activeTab !== 'support') return;
+    openSupportInProfile(setActiveTab, setProfileScreen);
+  }, [activeTab]);
   React.useEffect(() => {
     if (sessionStorage.getItem('libos_checkout_pending') === '1') {
       setActiveTab('profile');
@@ -73,7 +101,8 @@ export const AppContent = () => {
     const onNav = (e) => {
       const { tab, sub, screen } = e.detail || {};
       if (tab === 'whatsapp' && sub) setWhatsappPage(sub);
-      if (tab === 'profile') setProfileScreen(screen || 'home');
+      if (tab === 'support') { openSupportInProfile(setActiveTab, setProfileScreen); return; }
+      if (tab === 'profile') setProfileScreen(screen === 'support' ? 'contact' : (screen || 'home'));
       if (tab) setActiveTab(tab);
     };
     window.addEventListener('libos:navigate', onNav);
@@ -177,7 +206,6 @@ export const AppContent = () => {
             ) : (
               <>
                 {activeTab === 'notifications' && <NotificationsCenter setActiveTab={setActiveTab} />}
-                {activeTab === 'support' && <SupportCenter />}
 
                 {activeTab === 'dashboard' && locked && (
                   <LockedDashboard

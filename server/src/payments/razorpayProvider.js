@@ -1,6 +1,6 @@
 // Razorpay provider — Payment Links for checkout, Subscriptions for AutoPay, HMAC webhooks.
 import crypto from 'crypto';
-import { SoftwareInvoice, newInvoiceId } from './invoices.js';
+import { SoftwareInvoice, newInvoiceId, findUsableOpenInvoice } from './invoices.js';
 import { settleInvoice } from './settlement.js';
 import { Library } from '../models.js';
 
@@ -69,9 +69,10 @@ export function createRazorpayProvider({ keyId, keySecret, webhookSecret = '', m
     async createCheckout({ library, plan, interval, amount, returnUrl, invoiceId: requestedInvoiceId }) {
       const amtPaise = Math.round(Number(amount) * 100);
       if (!amtPaise || amtPaise < 100) throw Object.assign(new Error('Amount too small'), { status: 400 });
-      const existing = requestedInvoiceId ? await SoftwareInvoice.findOne({ invoiceId: requestedInvoiceId, tenantId: library.libraryId, provider: 'razorpay', status: 'open' }).exec() : null;
-      if (requestedInvoiceId && !existing) throw Object.assign(new Error('Saved checkout invoice was not found for this library'), { status: 409, code: 'invoice_conflict' });
-      const invoiceId = requestedInvoiceId || newInvoiceId();
+      // A brand-new invoice often has no provider yet. A missing, void, paid,
+      // or other-library id is ignored and a new checkout is started.
+      const existing = await findUsableOpenInvoice({ invoiceId: requestedInvoiceId, tenantId: library.libraryId, provider: 'razorpay' });
+      const invoiceId = existing ? existing.invoiceId : newInvoiceId();
       const currency = existing?.currency || 'INR';
       if (existing) {
         await SoftwareInvoice.updateOne({ invoiceId }, { $set: { amount: Number(amount), provider: 'razorpay', dueAt: new Date(), gatewayMinor: amtPaise,

@@ -4,9 +4,9 @@ import { Wand2, UserPlus, IndianRupee } from 'lucide-react';
 import { Reveal, SectionHeading } from './ui.jsx';
 
 const steps = [
-  { icon: Wand2, title: 'Set up your library', body: 'A guided setup wizard captures your branches, seat layout, shifts and fee plans. Invite staff and choose what each person can access.' },
-  { icon: UserPlus, title: 'Admit students & assign seats', body: 'Add students one by one or in bulk, attach their documents, pick a shift and drop them onto a free seat on the map.' },
-  { icon: IndianRupee, title: 'Collect fees & watch the numbers', body: 'Record payments in any mix of cash, UPI and card, print receipts, log expenses and check your monthly P&L.' },
+  { icon: Wand2, title: 'Set up your library', body: 'Add your seats, shifts and fee plans, then invite the people who work the desk.' },
+  { icon: UserPlus, title: 'Admit students & assign seats', body: 'Add a student, choose a shift and place them on an open seat.' },
+  { icon: IndianRupee, title: 'Collect fees & watch the numbers', body: 'Take the fee, hand over the receipt and check how the month is going.' },
 ];
 
 export default function HowItWorks() {
@@ -17,7 +17,7 @@ export default function HowItWorks() {
   return (
     <section id="how" className="relative bg-paper py-24 text-ink-950 sm:py-32">
       <div className="container-x">
-        <SectionHeading eyebrow="How it works" title="Up and running in three steps" sub="No installs and no hardware — My Library OS runs in the browser on the computer or phone you already have." />
+        <SectionHeading eyebrow="How it works" title="Up and running in three steps" sub="From an empty library to a working front desk." />
         <div ref={ref} className="relative mt-16">
           <div className="absolute left-[16.66%] right-[16.66%] top-7 hidden h-px bg-stone-300 md:block">
             <m.div style={{ width }} className="h-full bg-gradient-to-r from-gold-500 to-gold-400" />

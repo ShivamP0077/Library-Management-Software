@@ -4,14 +4,12 @@ import { Plus } from 'lucide-react';
 import { SectionHeading } from './ui.jsx';
 
 const faqs = [
-  ['Who is My Library OS for?', 'Owners and managers of reading libraries, study rooms and self-study halls where students rent a seat for a shift or a full day, usually on a monthly plan.'],
-  ['Do I need to install anything?', 'No. My Library OS is a web app — open it in a modern browser and sign in. There is no hardware or software to install.'],
-  ['How does sign-in work?', 'You sign in with your Google account. Your email address is linked to your role — super admin or library admin — so there are no separate passwords to manage.'],
-  ['Can I manage more than one branch?', 'Yes. You can set up multiple branches, and a super admin gets a combined overview of seats, occupancy and revenue across all of them.'],
-  ['Can other libraries see my data?', 'No. Each client library’s records are kept separate on the server, and library admins can only access their own library.'],
-  ['Can a student pay part in cash and part by UPI?', 'Yes. A single payment can be split across cash, UPI and card, and a printable receipt is generated for it.'],
-  ['Can my staff use it without seeing everything?', 'Yes. Staff permissions let you decide which sections each team member can open and what they can change.'],
   ['How do I get started?', 'Start a free trial from this page, or book a demo and we’ll walk you through setting up your seats, shifts and fee plans.'],
+  ['Do I need to install anything?', 'No. My Library OS is a web app — open it in a modern browser and sign in. There is no hardware or software to install.'],
+  ['Can a student pay part in cash and part by UPI?', 'Yes. A single payment can be split across cash, UPI and card, and a printable receipt is generated for it.'],
+  ['Can I cancel?', 'Yes. There is no lock-in. If you don’t renew, your plan simply ends and your data stays safe — renew any time to continue where you left off.'],
+  ['How does sign-in work?', 'You sign in with your Google account. Your email address is linked to your role — super admin or library admin — so there are no separate passwords to manage.'],
+  ['Can other libraries see my data?', 'No. Each client library’s records are kept separate on the server, and library admins can only access their own library.'],
 ];
 
 function Item({ q, a, open, onToggle, id }) {

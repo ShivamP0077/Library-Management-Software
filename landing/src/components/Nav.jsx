@@ -6,7 +6,6 @@ const links = [
   ['Features', '#features'],
   ['Product', '#product'],
   ['How it works', '#how'],
-  ['Multi-branch', '#branches'],
   ['Pricing', '#pricing'],
   ['FAQ', '#faq'],
 ];

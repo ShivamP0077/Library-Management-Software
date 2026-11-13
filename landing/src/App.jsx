@@ -1,10 +1,8 @@
 import Nav from './components/Nav.jsx';
 import Hero from './components/Hero.jsx';
-import Problem from './components/Problem.jsx';
 import Features from './components/Features.jsx';
 import Showcase from './components/Showcase.jsx';
 import HowItWorks from './components/HowItWorks.jsx';
-import Branches from './components/Branches.jsx';
 import Pricing from './components/Pricing.jsx';
 import FAQ from './components/FAQ.jsx';
 import Footer, { FinalCTA } from './components/Footer.jsx';
@@ -18,11 +16,9 @@ export default function App() {
       <Nav />
       <main id="main">
         <Hero />
-        <Problem />
         <Features />
         <Showcase />
         <HowItWorks />
-        <Branches />
         <Pricing />
         <FAQ />
         <FinalCTA />

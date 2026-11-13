@@ -54,13 +54,14 @@ const ReceiptBody = ({ receipt, settings, branch, photo, copyLabel, view }) => {
             PAYMENT MODE: <strong style={{color: '#15803d'}}>SPLIT</strong>
             {receipt.breakdown.map((b, i) => (
               <div key={i} style={{ fontSize: '0.625rem', color: '#666', marginTop: '2px', paddingLeft: '8px' }}>
-                ↳ {b.method}: ₹{b.amount}
+                ↳ {b.method}: ₹{b.amount}{b.referenceNo ? ` · Ref: ${b.referenceNo}` : ''}
               </div>
             ))}
           </div>
         ) : (
           <div>PAYMENT MODE: <strong>{receipt.method || '—'}</strong></div>
         )}
+        {v.referenceLine && receipt.method !== 'Split' && <div>REFERENCE: <strong>{v.referenceLine.replace(/^Ref:\s*/, '')}</strong></div>}
         </div>
       </div>
 

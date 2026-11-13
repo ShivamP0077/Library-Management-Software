@@ -1,7 +1,7 @@
 // Issue #9: server-side plan price for payment amount checks.
 // Uses the same approved algorithms as the UI (calendar-day pro-rate, round final only).
 import { getPlanBasePrice } from '../../src/utils/pricingCalculator.js';
-import { firstAdmissionCharge, upgradeCharge, cycleConfig } from '../../src/utils/billingCycle.js';
+import { firstAdmissionCharge, upgradeCharge, effectiveCycleConfig } from '../../src/utils/billingCycle.js';
 
 const n = (v) => Number(v ?? 0);
 
@@ -53,10 +53,10 @@ export function expectedPayment(payment, { plan = null, settings = {} } = {}) {
   }
 
   if (payment.proRated && payment.priceKind !== 'renewal') {
-    // Recompute from join date + library settings (never trust client proRated.amount alone).
+    // Recompute from join date + the plan's duration type, else library settings.
     const join = payment.proRated.from || payment.startDate || payment.date;
     if (join) {
-      const recomputed = firstAdmissionCharge(planFee(plan, 1) ?? fee, join, cycleConfig(settings));
+      const recomputed = firstAdmissionCharge(planFee(plan, 1) ?? fee, join, effectiveCycleConfig(settings, plan));
       fee = recomputed.amount;
       discount = 0; // pro-rated first month has no separate duration discount
     } else if (payment.proRated.amount != null) {

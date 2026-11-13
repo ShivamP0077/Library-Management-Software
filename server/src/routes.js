@@ -7,11 +7,12 @@ import { signToken, requireAuth, requireRole, tenantScope } from './auth.js';
 import { createLibrary, createUser, computeMetrics, hashPassword, validatePassword } from './services.js';
 import { verifyGoogleIdToken, googleEnabled, googleConfig, buildAuthUrl, exchangeCode } from './google.js';
 import { createWhatsappRouter, createWhatsappWebhookRouter } from './whatsapp.js';
-import { createFinanceRouter, validatePaymentBatch, normalizeStudentPaymentDates, applyPaidOn } from './finance.js';
+import { createFinanceRouter, validatePaymentBatch, normalizeStudentPaymentDates, applyPaidOn, applyPaymentReference } from './finance.js';
 import { createStudentRouter, recordStudentDiff, recordArchiveDiff, checkCapacity } from './students.js';
 import { audit, AuditLog } from './audit.js';
 import { enforceAmountEdits, amountSettingsChanged, isOwnerRole } from './amountPermission.js';
 import { createNotificationRouter } from './notifications.js';
+import { createActionDismissalRouter } from './actionDismissals.js';
 import { createInsightsRouter } from './insights.js';
 import { createSupportRouter, createSupportAdminRouter } from './support.js';
 import { createPartnerAdminRouter, createPartnerPortalRouter } from './partners.js';
@@ -36,6 +37,7 @@ import { requireActiveSubscription, requireFeature, refreshSubscriptionStatus, a
 import { createPublicEnquiryRouter, createTenantEnquiryRouter } from './enquiry.js';
 import { createPlanAdminRouter, SoftwarePlan, checkBranchLimit, checkStaffLimit } from './plans.js';
 import { createPaymentsAdminRouter } from './paymentsAdmin.js';
+import { createSystemWhatsappRouter } from './systemWhatsapp.js';
 import { createBillingAdminRouter } from './billingConfig.js';
 import { refreshPaymentProvider } from './paymentConfig.js';
 import { DeletionJob } from './deletionJob.js';
@@ -302,6 +304,7 @@ admin.use(createPartnerAdminRouter());
 admin.use(createSupportAdminRouter());
 admin.use(createPlanAdminRouter());
 admin.use(createPaymentsAdminRouter()); // Issue #19
+admin.use(createSystemWhatsappRouter()); // system WhatsApp sender (libos-system)
 admin.use(createBillingAdminRouter()); // Issue #19 explicit tax/currency policy
 admin.use(createSoftwarePlanAdminRouter()); // Issue #19 offers + referral campaigns
 
@@ -510,7 +513,10 @@ tenant.put('/settings', requireRole('client_admin', 'superadmin', 'staff'), wrap
     if (!isOwnerRole(req.user)) return res.status(403).json({ error: 'Only the owner can change who may edit payment amounts.', code: 'owner_only' });
     await audit(req, 'settings.amount_edit_permission', { tenantId: req.tenantId, detail: { managerCanEditAmount: req.body?.managerCanEditAmount ?? null, staffCanEditAmount: req.body?.staffCanEditAmount ?? null } });
   }
-  const s = await Settings.findOneAndReplace({ tenantId: req.tenantId }, { ...stripMeta(req.body), tenantId: req.tenantId, libraryId: req.tenantId }, { upsert: true, new: true, lean: true });
+  // actionDismissals (dashboard Skip / Later) is owned by /dashboard/action-dismissals: a settings save never overwrites it.
+  const { actionDismissals: _ignored, ...settingsBody } = stripMeta(req.body) || {};
+  const keep = before?.actionDismissals ? { actionDismissals: before.actionDismissals } : {};
+  const s = await Settings.findOneAndReplace({ tenantId: req.tenantId }, { ...settingsBody, ...keep, tenantId: req.tenantId, libraryId: req.tenantId }, { upsert: true, new: true, lean: true });
   res.json(clean(s));
 }));
 
@@ -580,6 +586,7 @@ tenant.use(createSeatRouter());
 tenant.use(createFinanceRouter());
 tenant.use(createStudentRouter());
 tenant.use(createNotificationRouter());
+tenant.use(createActionDismissalRouter());
 tenant.use(createReminderRouter());
 tenant.use(createTemplateRouter());
 tenant.use(createSupportRouter());
@@ -633,6 +640,7 @@ tenant.put('/:col/:key', colParam, wrap(async (req, res) => {
   const patch = stripMeta(req.body);
   if (req.params.col === 'payments') {
     const prev = await req.Model.findOne({ tenantId: req.tenantId, _key: req.params.key }).lean();
+    applyPaymentReference(patch, { required: !prev });
     const mergedPay = { ...(prev ? clean(prev) : {}), ...patch, receiptNo: prev?.receiptNo ?? req.params.key };
     if (prev) validatePaymentBatch([mergedPay], new Map([[req.params.key, prev]]));
     else validatePaymentBatch([mergedPay]);
@@ -709,6 +717,7 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
     if (!_key || seen.has(_key)) return;
     if (col === 'payments') {
       const prevPay = prevPayByKey.get(String(_key));
+      applyPaymentReference(body, { required: !prevPay });
       if (!prevPay || prevPay.paidOn !== body.paidOn) applyPaidOn(body);
     }
     if (col === 'students') normalizeStudentPaymentDates(body, req.studentDiff?.previous?.get(String(_key)));

@@ -4,11 +4,15 @@ import { X, Users, AlertCircle, Check } from 'lucide-react';
 import { NumericInput } from '../NumericInput';
 import toast from 'react-hot-toast';
 import { calculatePricing } from '../../utils/pricingCalculator';
+import { periodEndDate } from '../../utils/dateUtils';
+import { effectiveCycleConfig } from '../../utils/billingCycle';
+import { paymentReferenceError } from '../../utils/paymentReference';
+import { ReferenceField } from '../ReferenceField';
 import { getCanonicalSeatTypes } from '../../utils/seatTypeUtils';
 
 export const BulkStudentModal = ({ isOpen, onClose }) => {
   const {
-    settings, branches, sections, plans, shifts, seatTypes, seats,
+    settings, branches, sections, plans, shifts, seatTypes, seats, todayStr,
     addBulkStudents, getSeatOccupancyStatus, getCurrentActiveAdmissions, getAvailableEligibleSeats
   } = useLibrary();
 
@@ -20,6 +24,7 @@ export const BulkStudentModal = ({ isOpen, onClose }) => {
   const [selectedSeatType, setSelectedSeatType] = useState('all');
   const [addToWaitlist, setAddToWaitlist] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('');
+  const [referenceNo, setReferenceNo] = useState('');
 
   // Pre-calculate distinct physical slots
   const distributionPool = useMemo(() => {
@@ -162,6 +167,11 @@ export const BulkStudentModal = ({ isOpen, onClose }) => {
       toast.error("Please select a payment method.");
       return;
     }
+    const referenceErr = paymentReferenceError({ method: paymentMethod, referenceNo });
+    if (referenceErr) {
+      toast.error(referenceErr);
+      return;
+    }
 
     if (canAdmitNow === 0 && !addToWaitlist) {
       toast.error("Capacity is 0 and Waiting List is disabled.");
@@ -222,6 +232,14 @@ export const BulkStudentModal = ({ isOpen, onClose }) => {
 
       const plan = plans.find(p => p.id === assignedSlot.planId);
       const pricing = calculatePricing({ plan, durationMonths: 1 });
+      const usePlanCycle = !!plan?.billingCycle?.mode;
+      const startDate = usePlanCycle ? todayStr : new Date();
+      const expiryDate = usePlanCycle
+        ? periodEndDate(todayStr, 1, {
+          anchorDay: Number(String(todayStr).slice(8, 10)) || undefined,
+          cycle: effectiveCycleConfig(settings, plan),
+        })
+        : (() => { const d = new Date(); d.setMonth(d.getMonth() + 1); return d; })();
 
       batch.push({
         name: `Bulk Student ${i+1}`,
@@ -240,8 +258,9 @@ export const BulkStudentModal = ({ isOpen, onClose }) => {
         fine: 0,
         netTotal: pricing.netTotal,
         paymentMethod,
-        startDate: new Date(),
-        expiryDate: (() => { const d = new Date(); d.setMonth(d.getMonth() + 1); return d; })()
+        referenceNo,
+        startDate,
+        expiryDate,
       });
     }
 
@@ -415,7 +434,12 @@ export const BulkStudentModal = ({ isOpen, onClose }) => {
                   <option value="Cash">Cash</option>
                   <option value="Card">Debit / Credit Card</option>
                   <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="Net Banking">Net banking</option>
+                  <option value="Cheque">Cheque</option>
                 </select>
+                <div style={{ marginTop: '8px' }}>
+                  <ReferenceField mode={paymentMethod} value={referenceNo} onChange={setReferenceNo} />
+                </div>
               </div>
 
               {remaining > 0 && (

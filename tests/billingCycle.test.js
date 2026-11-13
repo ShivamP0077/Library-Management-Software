@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cycleFor, firstAdmissionCharge, upgradeCharge, anniversaryDue, bridgeCharge, daysInclusive, cycleConfig, proRate } from '../src/utils/billingCycle.js';
+import { cycleFor, firstAdmissionCharge, upgradeCharge, anniversaryDue, bridgeCharge, daysInclusive, cycleConfig, effectiveCycleConfig, normalizePlanBillingCycle, proRate } from '../src/utils/billingCycle.js';
 
 const MONTH = { mode: 'CALENDAR_MONTH', calendarBillingDay: 1 };
 
@@ -72,4 +72,23 @@ test('config defaults and day counting', () => {
   assert.equal(cycleConfig({}).mode, 'ANNIVERSARY');
   assert.equal(cycleConfig({ billingCycleMode: 'N_DAYS', cycleDays: '0' }).cycleDays, 30);
   assert.equal(daysInclusive('2026-06-20', '2026-06-30'), 11);
+});
+
+test('plan duration type overrides the library cycle and keeps the library default when absent', () => {
+  const library = { billingCycleMode: 'ANNIVERSARY', cycleDays: 30 };
+  assert.equal(effectiveCycleConfig(library, {}).mode, 'ANNIVERSARY');
+  assert.equal(effectiveCycleConfig(library, { name: 'Old plan' }).mode, 'ANNIVERSARY');
+  const plan = { billingCycle: { mode: 'N_DAYS', cycleDays: 10, cycleAnchorDate: '2026-06-01' } };
+  const cfg = effectiveCycleConfig(library, plan);
+  assert.equal(cfg.mode, 'N_DAYS');
+  assert.equal(cfg.cycleDays, 10);
+  const partial = effectiveCycleConfig(
+    { billingCycleMode: 'CALENDAR_MONTH', cycleDays: 21, calendarBillingDay: 5 },
+    { billingCycle: { mode: 'N_DAYS' } },
+  );
+  assert.equal(partial.mode, 'N_DAYS');
+  assert.equal(partial.cycleDays, 21);
+  const stored = normalizePlanBillingCycle({ mode: 'CALENDAR_MONTH', calendarBillingDay: 40 });
+  assert.deepEqual(stored, { mode: 'CALENDAR_MONTH', calendarBillingDay: 28 });
+  assert.equal(normalizePlanBillingCycle({ mode: 'WEEKLY' }), null);
 });

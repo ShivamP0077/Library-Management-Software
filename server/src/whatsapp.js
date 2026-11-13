@@ -2,7 +2,8 @@ import express from 'express';
 import mongoose from 'mongoose';
 import { Library, models } from './models.js';
 import crypto from 'crypto';
-import { createEvolutionClient, evolutionConfigured, instanceNameFor, normalizePhone, webhookTokenFor } from './evolution.js';
+import { createEvolutionClient, evolutionConfigured, instanceNameFor, normalizePhone, webhookTokenFor, SYSTEM_INSTANCE } from './evolution.js';
+import { receiptReferenceText } from '../../src/utils/paymentReference.js';
 
 /* ---------------------------------------------------------------- Models */
 export const MESSAGE_TYPES = ['otp', 'admission_receipt', 'renewal_receipt', 'fee_reminder', 'expiry_reminder', 'test', 'fee_receipt', 'renewal_reminder', 'seat_info', 'custom'];
@@ -18,6 +19,8 @@ export const WhatsappConfig = mongoose.models.WhatsappConfig || mongoose.model('
   receipts: { type: Boolean, default: DEFAULT_TOGGLES.receipts },
   feeReminders: { type: Boolean, default: DEFAULT_TOGGLES.feeReminders },
   expiryReminders: { type: Boolean, default: DEFAULT_TOGGLES.expiryReminders },
+  // No default: missing means "follow the admission & renewal receipts toggle".
+  paymentReceipts: Boolean,
   connectedNumber: String,
   // Reminder timing (spec §6): set via PUT /reminders/settings
   reminderSettings: { expiryDaysBefore: Number, expiryFixedDay: Number, feeEveryDays: Number, feeMaxReminders: Number, rules: { type: mongoose.Schema.Types.Mixed, default: undefined } },
@@ -52,7 +55,21 @@ export const WhatsappMessage = mongoose.models.WhatsappMessage || mongoose.model
 
 /** Statuses that mean the message already went out (never re-sent, never overwritten). */
 const DONE = ['queued', 'sent', 'delivered', 'read'];
-const TOGGLE_FOR_TYPE = { otp: 'otp', admission_receipt: 'receipts', renewal_receipt: 'receipts', fee_reminder: 'feeReminders', expiry_reminder: 'expiryReminders', test: null, fee_receipt: null, renewal_reminder: null, seat_info: null, custom: null };
+const TOGGLE_FOR_TYPE = { otp: 'otp', admission_receipt: 'paymentReceipts', renewal_receipt: 'paymentReceipts', fee_reminder: 'feeReminders', expiry_reminder: 'expiryReminders', test: null, fee_receipt: null, renewal_reminder: null, seat_info: null, custom: null };
+
+/**
+ * Whether admission and renewal payment receipts go out on WhatsApp.
+ * A saved true/false wins. If the library has never set it, follow "Admission & renewal receipts".
+ */
+export function paymentReceiptsEnabled(cfg) {
+  if (cfg && typeof cfg.paymentReceipts === 'boolean') return cfg.paymentReceipts;
+  if (cfg && typeof cfg.receipts === 'boolean') return cfg.receipts;
+  return DEFAULT_TOGGLES.receipts;
+}
+
+export function publicWhatsappSettings(cfg = {}) {
+  return { ...DEFAULT_TOGGLES, ...pickToggles(cfg), paymentReceiptsEffective: paymentReceiptsEnabled(cfg) };
+}
 
 /* ---------------------------------------------------------------- Permissions */
 /**
@@ -83,8 +100,9 @@ export async function sendWhatsappMessage({ libraryId, type, to, text, dedupeKey
   if (!dedupeKey) throw Object.assign(new Error('dedupeKey is required'), { status: 400 });
   const cfg = { ...DEFAULT_TOGGLES, ...((await Config.findOne({ libraryId }).lean()) || {}) };
   const toggle = manual ? null : TOGGLE_FOR_TYPE[type]; // hand-sent messages only honor the master switch
+  const toggleOff = toggle === 'paymentReceipts' ? !paymentReceiptsEnabled(cfg) : Boolean(toggle && !cfg[toggle]);
   const number = normalizePhone(to);
-  const reason = !cfg.enabled || (toggle && !cfg[toggle]) ? 'disabled' : !consent ? 'no_consent' : !number ? 'invalid_number' : null;
+  const reason = !cfg.enabled || toggleOff ? 'disabled' : !consent ? 'no_consent' : !number ? 'invalid_number' : null;
   const who = { ...(studentId != null ? { studentId: String(studentId) } : {}), ...(studentName ? { studentName } : {}) };
   if (reason) { await logSkipped({ libraryId, type, to, dedupeKey, reason, text, ...who }, Message); return { status: 'skipped', reason }; }
 
@@ -210,6 +228,8 @@ export function buildReceiptText(payment, student) {
     `Amount: ${money(payment.netTotal ?? payment.amount)}`,
   ];
   if (paid) lines.push(`Paid on ${paid}`);
+  const refLine = receiptReferenceText(payment);
+  if (refLine) lines.push(refLine);
   if (start || end) lines.push(`Period: ${start || '—'} to ${end || '—'}`);
   else if (student?.expiryDate || student?.endDate) lines.push(`Valid till: ${student.expiryDate || student.endDate}`);
   return lines.join('\n');
@@ -219,19 +239,15 @@ export function buildReceiptText(payment, student) {
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const mapState = (s) => (s === 'open' ? 'connected' : s === 'connecting' ? 'connecting' : 'disconnected');
 const jidToNumber = (jid) => (jid ? `+${String(jid).split('@')[0].split(':')[0]}` : null);
+const QR_TTL_MS = 3 * 60 * 1000;
 
-export function createWhatsappRouter({ client = createEvolutionClient(), isConfigured = () => evolutionConfigured(), wakeDelaysMs = [3000, 6000, 10000], statusTtlMs = 10000 } = {}) {
-  const r = express.Router();
-  // Issue #18: coalesce concurrent status calls per library and serve a short cached answer.
+/**
+ * Shared Evolution session helpers (status cache, QR connect, logout).
+ * Used by each library instance and by the system sender (`libos-system`).
+ */
+export function createInstanceController({ client, wakeDelaysMs = [3000, 6000, 10000], statusTtlMs = 10000 } = {}) {
   const statusCache = new Map();
   const statusInflight = new Map();
-  const guard = wrap(async (req, res, next) => {
-    if (!(await canManageWhatsapp(req.user, req.libraryId))) return res.status(403).json({ error: 'You do not have permission to manage WhatsApp' });
-    if (!isConfigured()) return res.status(503).json({ error: 'WhatsApp integration is not configured on the server' });
-    req.instance = instanceNameFor(req.libraryId);
-    next();
-  });
-  r.use(guard);
 
   /** Status/connect wake the (free-plan) Evolution service and retry while it answers 429/5xx. */
   async function withWake(name, fn) {
@@ -256,6 +272,7 @@ export function createWhatsappRouter({ client = createEvolutionClient(), isConfi
     const state = mapState(raw);
     return { state, number: state === 'connected' ? jidToNumber(inst.ownerJid || inst.owner) : null, profileName: state === 'connected' ? (inst.profileName || null) : null };
   }
+
   async function status(name, { fresh = false } = {}) {
     const hit = statusCache.get(name);
     if (!fresh && hit && Date.now() - hit.at < statusTtlMs) return hit.value;
@@ -267,39 +284,63 @@ export function createWhatsappRouter({ client = createEvolutionClient(), isConfi
     return p;
   }
 
+  /** Create the instance when missing and return a QR, or the live status when already connected. */
+  async function connect(name, { afterCreate } = {}) {
+    statusCache.delete(name);
+    let created = null;
+    if (!(await withWake(name, () => client.findInstance(name)))) created = await client.createInstance(name);
+    if (afterCreate) await afterCreate();
+    const s = await status(name, { fresh: true });
+    if (s.state === 'connected') return s;
+    const c = await withWake(name, () => client.connect(name));
+    statusCache.delete(name);
+    const qr = c?.base64 || created?.qrcode?.base64 || null;
+    return { state: 'connecting', qr, pairingCode: c?.pairingCode || null, qrExpiresAt: qr ? new Date(Date.now() + QR_TTL_MS).toISOString() : null, retryAfterMs: 40000 };
+  }
+
+  async function disconnect(name) {
+    statusCache.delete(name);
+    try { await client.logout(name); } catch (e) { if (e.status !== 404) throw e; }
+    return { state: 'disconnected' };
+  }
+
+  return { status, connect, disconnect };
+}
+
+export function createWhatsappRouter({ client = createEvolutionClient(), isConfigured = () => evolutionConfigured(), wakeDelaysMs = [3000, 6000, 10000], statusTtlMs = 10000 } = {}) {
+  const r = express.Router();
+  const sessions = createInstanceController({ client, wakeDelaysMs, statusTtlMs });
+  const guard = wrap(async (req, res, next) => {
+    if (!(await canManageWhatsapp(req.user, req.libraryId))) return res.status(403).json({ error: 'You do not have permission to manage WhatsApp' });
+    if (!isConfigured()) return res.status(503).json({ error: 'WhatsApp integration is not configured on the server' });
+    req.instance = instanceNameFor(req.libraryId);
+    next();
+  });
+  r.use(guard);
+
   r.get('/status', wrap(async (req, res) => {
-    const s = await status(req.instance, { fresh: req.query.fresh === 'true' });
+    const s = await sessions.status(req.instance, { fresh: req.query.fresh === 'true' });
     const cfg = (await WhatsappConfig.findOne({ libraryId: req.libraryId }).lean()) || {};
     if (s.number && cfg.connectedNumber !== s.number) await WhatsappConfig.updateOne({ libraryId: req.libraryId }, { $set: { connectedNumber: s.number } }, { upsert: true });
-    res.json({ ...s, instance: req.instance, settings: { ...DEFAULT_TOGGLES, ...pickToggles(cfg) } });
+    res.json({ ...s, instance: req.instance, settings: publicWhatsappSettings(cfg) });
   }));
 
   // Creates the library's instance if needed and returns a fresh QR code.
   r.post('/connect', wrap(async (req, res) => {
-    statusCache.delete(req.instance);
-    let created = null;
-    if (!(await withWake(req.instance, () => client.findInstance(req.instance)))) created = await client.createInstance(req.instance);
-    await registerWebhook(client, req.instance, webhookBaseUrl(req));
-    const s = await status(req.instance, { fresh: true });
-    if (s.state === 'connected') return res.json(s);
-    const c = await withWake(req.instance, () => client.connect(req.instance));
-    statusCache.delete(req.instance);
-    const qr = c?.base64 || created?.qrcode?.base64 || null;
-    const qrTtlMs = 3 * 60 * 1000;
-    res.json({ state: 'connecting', qr, pairingCode: c?.pairingCode || null, qrExpiresAt: qr ? new Date(Date.now() + qrTtlMs).toISOString() : null, retryAfterMs: 40000 });
+    const out = await sessions.connect(req.instance, { afterCreate: () => registerWebhook(client, req.instance, webhookBaseUrl(req)) });
+    res.json(out);
   }));
 
   r.post('/logout', wrap(async (req, res) => {
-    statusCache.delete(req.instance);
-    try { await client.logout(req.instance); } catch (e) { if (e.status !== 404) throw e; }
+    const out = await sessions.disconnect(req.instance);
     await WhatsappConfig.updateOne({ libraryId: req.libraryId }, { $unset: { connectedNumber: 1 } });
-    res.json({ state: 'disconnected' });
+    res.json(out);
   }));
 
   r.put('/settings', wrap(async (req, res) => {
     const set = pickToggles(req.body || {});
     const cfg = await WhatsappConfig.findOneAndUpdate({ libraryId: req.libraryId }, { $set: { ...set, updatedBy: req.user.email } }, { upsert: true, new: true, lean: true });
-    res.json({ ...DEFAULT_TOGGLES, ...pickToggles(cfg) });
+    res.json(publicWhatsappSettings(cfg));
   }));
 
   // Send the receipt for an existing payment to the student's phone (admission/renewal receipts).
@@ -427,11 +468,14 @@ const RANK = { queued: 0, skipped: 0, failed: 1, sent: 2, delivered: 3, read: 4 
 
 /** Apply one MESSAGES_UPDATE item. Status only moves forward (read never goes back to delivered). */
 export async function applyStatusUpdate(instance, item, Message = WhatsappMessage) {
+  if (instance === SYSTEM_INSTANCE) return false; // system sender has no library message log
   const id = item?.keyId || item?.key?.id || item?.messageId || item?.id;
   const status = mapAckStatus(item?.status ?? item?.update?.status);
   if (!id || !status) return false;
   const m = await Message.findOne({ providerMessageId: String(id) }).lean();
-  if (!m || instanceNameFor(m.libraryId) !== instance) return false; // tenant check: the update must come from the library's own instance
+  let own = null;
+  try { own = m ? instanceNameFor(m.libraryId) : null; } catch { return false; }
+  if (!m || own !== instance) return false; // tenant check: the update must come from the library's own instance
   if (status === 'failed' ? RANK[m.status] >= RANK.delivered : RANK[status] <= RANK[m.status]) return false;
   const set = { status };
   if (status === 'delivered') set.deliveredAt = new Date();
@@ -450,6 +494,7 @@ export function createWhatsappWebhookRouter({ Message = WhatsappMessage } = {}) 
     const expected = webhookTokenFor(req.params.instance);
     if (!expected) return res.status(503).json({ error: 'WhatsApp integration is not configured on the server' });
     if (!safeEqual(req.query.token || req.get('x-webhook-token'), expected)) return res.status(401).json({ error: 'Invalid webhook token' });
+    if (req.params.instance === SYSTEM_INSTANCE) return res.json({ ok: true, ignored: true });
     const ev = String(req.body?.event || '').toLowerCase().replace(/_/g, '.');
     if (ev && ev !== 'messages.update') return res.json({ ok: true, ignored: true });
     const data = req.body?.data;
@@ -462,6 +507,6 @@ export function createWhatsappWebhookRouter({ Message = WhatsappMessage } = {}) 
 
 function pickToggles(o) {
   const out = {};
-  for (const k of Object.keys(DEFAULT_TOGGLES)) if (typeof o[k] === 'boolean') out[k] = o[k];
+  for (const k of [...Object.keys(DEFAULT_TOGGLES), 'paymentReceipts']) if (typeof o?.[k] === 'boolean') out[k] = o[k];
   return out;
 }

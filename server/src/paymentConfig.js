@@ -1,7 +1,7 @@
 // Issue #19: Super Admin payment-provider configuration (Razorpay first, PayPal option).
 import mongoose from 'mongoose';
 import { encryptSecret, decryptSecret, maskSecret } from './cryptoSecrets.js';
-import { setPaymentProvider } from './billing.js';
+import { setPaymentProvider, paymentProvider } from './billing.js';
 import { createRazorpayProvider } from './payments/razorpayProvider.js';
 import { createPaypalProvider } from './payments/paypalProvider.js';
 

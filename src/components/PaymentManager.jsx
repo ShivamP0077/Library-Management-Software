@@ -3,6 +3,7 @@ import { useLibrary } from '../context/LibraryContext';
 import { CreditCard, Printer, Search, DollarSign, Calendar, UserCheck, Filter, X } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { isVoidedPayment } from '../utils/paymentVoid';
+import { receiptReferenceText } from '../utils/paymentReference';
 
 const DetailRow = ({ label, value }) => (
   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', fontSize: '13px' }}>
@@ -170,6 +171,8 @@ export const PaymentManager = ({ onPrintReceipt }) => {
               <option value="Cash">Cash</option>
               <option value="Card">Debit / Credit Card</option>
               <option value="Bank Transfer">Bank Transfer</option>
+              <option value="Net Banking">Net banking</option>
+              <option value="Cheque">Cheque</option>
               <option value="Split">Split Payment</option>
             </select>
           </div>
@@ -312,13 +315,16 @@ export const PaymentManager = ({ onPrintReceipt }) => {
                                 color: b.method === methodFilter ? '#15803d' : 'var(--text-tertiary)'
                               }}
                             >
-                              {b.method}: ₹{b.amount}
+                              {b.method}: ₹{b.amount}{b.referenceNo ? ` · Ref: ${b.referenceNo}` : ''}
                             </span>
                           ))}
                         </span>
                       ) : (
-                        <span style={{ background: '#f3f4f6', padding: '4px 8px', borderRadius: '4px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '12px' }}>
-                          {pay.method}
+                        <span className="cell-inline">
+                          <span style={{ background: '#f3f4f6', padding: '4px 8px', borderRadius: '4px', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '12px' }}>
+                            {pay.method}
+                          </span>
+                          {pay.referenceNo && <span className="cell-meta">Ref: {pay.referenceNo}</span>}
                         </span>
                       )}
                     </td>
@@ -396,13 +402,16 @@ export const PaymentManager = ({ onPrintReceipt }) => {
                       <div>Split</div>
                       {viewPayment.breakdown.map((b, idx) => (
                         <div key={idx} style={{ fontSize: '12px', fontWeight: 400, color: 'var(--text-secondary)' }}>
-                          {b.method}: ₹{b.amount}
+                          {b.method}: ₹{b.amount}{b.referenceNo ? ` · Ref: ${b.referenceNo}` : ''}
                         </div>
                       ))}
                     </div>
                   ) : viewPayment.method
                 }
               />
+              {receiptReferenceText(viewPayment) && viewPayment.method !== 'Split' && (
+                <DetailRow label="Reference / UTR number" value={viewPayment.referenceNo} />
+              )}
               <DetailRow label="Date" value={viewPayment.date} />
               <DetailRow
                 label="Amount"

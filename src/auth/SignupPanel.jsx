@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../utils/api';
 import { SignupPlanPicker } from './SignupPlanPicker';
 
-export function SignupPanel({ plans = [], googleSignup = false, paymentsConfigured = false, googlePendingToken = '', onDone, onBack }) {
+export function SignupPanel({ plans = [], googleSignup = false, mobileSignupAvailable = false, paymentsConfigured = false, googlePendingToken = '', onDone, onBack }) {
   const [step, setStep] = useState(googlePendingToken ? 2 : 1); // 1 verify, 2 details, 3 payment
   const [channel, setChannel] = useState('email'); // email | mobile
   const [email, setEmail] = useState('');
@@ -31,6 +31,10 @@ export function SignupPanel({ plans = [], googleSignup = false, paymentsConfigur
   }, [planId, touchedInterval]);
 
   useEffect(() => {
+    if (!mobileSignupAvailable && channel === 'mobile') setChannel('email');
+  }, [mobileSignupAvailable, channel]);
+
+  useEffect(() => {
     if (googlePendingToken) {
       setPendingToken(googlePendingToken);
       setStep(2);
@@ -42,7 +46,7 @@ export function SignupPanel({ plans = [], googleSignup = false, paymentsConfigur
   const sendCode = (e) => {
     e.preventDefault();
     run(async () => {
-      const r = channel === 'mobile'
+      const r = channel === 'mobile' && mobileSignupAvailable
         ? await api.signupStartMobile(mobile.trim())
         : await api.signupStart(email.trim());
       setInfo(r.message || 'Code sent.');
@@ -79,7 +83,7 @@ export function SignupPanel({ plans = [], googleSignup = false, paymentsConfigur
           interval,
         });
       } else {
-        if (channel === 'mobile') {
+        if (channel === 'mobile' && mobileSignupAvailable) {
           result = await api.signupCompleteMobile({
             mobile: mobile.trim(), email: email.trim() || undefined, code: code.trim(), name: name.trim(),
             city: city.trim() || undefined, referralCode: referralCode.trim() || undefined,
@@ -122,15 +126,20 @@ export function SignupPanel({ plans = [], googleSignup = false, paymentsConfigur
       <h2 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 6px' }}>Create your library account</h2>
       {step === 1 && (
         <form onSubmit={sendCode}>
-          <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 12px' }}>Verify your email or mobile to create your owner account.</p>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-            <button type="button" className={`btn ${channel === 'email' ? 'btn-primary' : 'btn-secondary'} btn-sm`} onClick={() => setChannel('email')}>Email</button>
-            <button type="button" className={`btn ${channel === 'mobile' ? 'btn-primary' : 'btn-secondary'} btn-sm`} onClick={() => setChannel('mobile')}>Mobile</button>
-          </div>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 12px' }}>{mobileSignupAvailable ? 'Verify your email or mobile to create your owner account.' : 'Verify your email to create your owner account.'}</p>
+          {mobileSignupAvailable && (
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              <button type="button" className={`btn ${channel === 'email' ? 'btn-primary' : 'btn-secondary'} btn-sm`} onClick={() => setChannel('email')}>Email</button>
+              <button type="button" className={`btn ${channel === 'mobile' ? 'btn-primary' : 'btn-secondary'} btn-sm`} onClick={() => setChannel('mobile')}>Mobile</button>
+            </div>
+          )}
           <div className="form-group">
-            <label className="form-label" htmlFor="signup-email">{channel === 'mobile' ? 'Mobile number' : 'Email'}</label>
-            {channel === 'mobile' ? (
-              <input id="signup-mobile" className="form-input" type="tel" inputMode="tel" autoComplete="tel" value={mobile} onChange={e => setMobile(e.target.value)} required />
+            <label className="form-label" htmlFor="signup-email">{channel === 'mobile' && mobileSignupAvailable ? 'Mobile number' : 'Email'}</label>
+            {channel === 'mobile' && mobileSignupAvailable ? (
+              <>
+                <input id="signup-mobile" className="form-input" type="tel" inputMode="tel" autoComplete="tel" value={mobile} onChange={e => setMobile(e.target.value)} required />
+                <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '8px 0 0' }}>We'll send a 6-digit code on WhatsApp.</p>
+              </>
             ) : (
               <input id="signup-email" className="form-input" type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} required />
             )}
@@ -160,7 +169,7 @@ export function SignupPanel({ plans = [], googleSignup = false, paymentsConfigur
                 <label className="form-label" htmlFor="signup-code">6-digit code</label>
                 <input id="signup-code" className="form-input" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={e => setCode(e.target.value.replace(/\D/g, ''))} required />
               </div>
-              {channel === 'mobile' && (
+              {channel === 'mobile' && mobileSignupAvailable && (
                 <div className="form-group">
                   <label className="form-label" htmlFor="signup-email-optional">Email (optional)</label>
                   <input id="signup-email-optional" className="form-input" type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} />
@@ -204,7 +213,7 @@ export function SignupPanel({ plans = [], googleSignup = false, paymentsConfigur
           )}
           {error && <div role="alert" style={{ color: '#dc2626', fontSize: 13, marginBottom: 12 }}>{error}</div>}
           <button className="btn btn-primary" type="submit" disabled={busy} style={{ width: '100%', justifyContent: 'center', minHeight: 46, borderRadius: 10, fontWeight: 700 }}>{busy ? 'Creating…' : 'Create library'}</button>
-          {!viaGoogle && <button type="button" className="btn btn-ghost" onClick={() => { setStep(1); setCode(''); }} style={{ width: '100%', justifyContent: 'center', fontSize: 13, marginTop: 6 }}>Use a different {channel === 'mobile' ? 'mobile' : 'email'}</button>}
+          {!viaGoogle && <button type="button" className="btn btn-ghost" onClick={() => { setStep(1); setCode(''); }} style={{ width: '100%', justifyContent: 'center', fontSize: 13, marginTop: 6 }}>Use a different {channel === 'mobile' && mobileSignupAvailable ? 'mobile' : 'email'}</button>}
         </form>
       )}
       {step === 3 && (

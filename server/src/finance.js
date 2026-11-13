@@ -7,6 +7,7 @@ import mongoose from 'mongoose';
 import express from 'express';
 import tenantGuard, { applyBulkWriteGuard } from './tenantGuard.js';
 import { models } from './models.js';
+import { normalizePaymentReferences, referenceError, trimReference } from '../../src/utils/paymentReference.js';
 
 export const roundRupees = (v) => Math.round(Number(v) + Number.EPSILON);
 
@@ -70,12 +71,23 @@ export function normalizeStudentPaymentDates(student, previous, today = todayIn(
     const id = p?.receiptNo || p?.id;
     if (id && prevPays.has(id)) continue;
     applyPaidOn(p, { today });
+    applyPaymentReference(p, { required: true });
   }
   return student;
 }
 
+/** Trim referenceNo. Required only for a new non-cash payment (and each non-cash split part). */
+export function applyPaymentReference(p, { required = false } = {}) {
+  try { normalizePaymentReferences(p, { required }); }
+  catch (e) {
+    if (e?.referenceError) throw new ValidationError(e.referenceError);
+    throw e;
+  }
+  return p;
+}
+
 /** Server-side payment rules: no negatives, no overpayment, split rows sum exactly. */
-export function validatePayment(p, { checkPaidOn = true } = {}) {
+export function validatePayment(p, { checkPaidOn = true, checkReference = false } = {}) {
   if (!p) return;
   if (checkPaidOn) applyPaidOn(p);
   const num = (v) => Number(v ?? 0);
@@ -102,6 +114,7 @@ export function validatePayment(p, { checkPaidOn = true } = {}) {
     if (rows.some(r => Number(r.amount) > total)) throw new ValidationError('A split amount cannot exceed the total');
     if (sum !== total) throw new ValidationError(`Split amounts (₹${sum}) must add up exactly to the total (₹${total})`);
   }
+  applyPaymentReference(p, { required: checkReference });
 }
 
 /** Validates only new/changed payments so legacy rows never block saving. */
@@ -110,7 +123,7 @@ export function validatePaymentBatch(items, previous = new Map()) {
     const prev = previous.get(String(p.receiptNo ?? p.id));
     const sameMoney = prev && ['amount', 'discount', 'fine', 'netTotal', 'method', 'paidOn', 'date'].every(k => prev[k] === p[k]) && JSON.stringify(prev.breakdown || null) === JSON.stringify(p.breakdown || null);
     if (sameMoney) continue;
-    validatePayment(p, { checkPaidOn: !prev || prev.paidOn !== p.paidOn || !prev.paidOn });
+    validatePayment(p, { checkPaidOn: !prev || prev.paidOn !== p.paidOn || !prev.paidOn, checkReference: !prev });
   }
 }
 
@@ -147,7 +160,7 @@ const instanceSchema = new mongoose.Schema({
   category: String, description: String, branchId: String,
   dueDate: { type: String, required: true },
   amount: { type: Number, required: true, min: 0 },
-  payments: [{ amount: Number, date: String, mode: String, note: String, by: String, at: Date }],
+  payments: [{ amount: Number, date: String, mode: String, note: String, referenceNo: String, by: String, at: Date }],
   paidAmount: { type: Number, default: 0 },
   paymentDate: String,
   attachments: [{ name: String, storageKey: String }],
@@ -380,11 +393,16 @@ export function createFinanceRouter() {
     if (!(amount > 0) || !Number.isInteger(amount)) throw new ValidationError('Payment must be a positive whole amount');
     const date = req.body?.date || todayIn();
     if (!DATE.test(date)) throw new ValidationError('date must be YYYY-MM-DD');
+    const mode = req.body?.mode || 'Cash';
+    const referenceNo = trimReference(req.body?.referenceNo);
+    // Expense payments (money going out): the reference is optional, only trimmed and length-checked.
+    const refErr = referenceError(mode, referenceNo, { required: false });
+    if (refErr) throw new ValidationError(refErr);
     const cur = await ExpenseInstance.findOne(f).lean();
     if (!cur) return res.status(404).json({ error: 'Not found' });
     if ((cur.paidAmount || 0) + amount > cur.amount) throw new ValidationError(`Payment exceeds the remaining ₹${cur.amount - (cur.paidAmount || 0)}`);
     const i = await ExpenseInstance.findOneAndUpdate({ ...f, paidAmount: cur.paidAmount || 0 },
-      { $inc: { paidAmount: amount }, $set: { paymentDate: date }, $push: { payments: { amount, date, mode: req.body?.mode || 'Cash', note: req.body?.note || '', by: req.user.email, at: new Date() }, history: { at: new Date(), by: req.user.email, action: 'payment', detail: `₹${amount}` } } },
+      { $inc: { paidAmount: amount }, $set: { paymentDate: date }, $push: { payments: { amount, date, mode, note: req.body?.note || '', ...(referenceNo ? { referenceNo } : {}), by: req.user.email, at: new Date() }, history: { at: new Date(), by: req.user.email, action: 'payment', detail: `₹${amount}` } } },
       { new: true, lean: true });
     if (!i) return res.status(409).json({ error: 'This bill was updated by someone else. Refresh and try again.' });
     res.json(pubInstance(i));

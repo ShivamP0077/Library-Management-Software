@@ -274,6 +274,7 @@ export function LoginScreen({ onContinueOffline }) {
             plans={signup.plans || []}
             googleSignup={Boolean(signup.googleSignup)}
             paymentsConfigured={Boolean(signup.paymentsConfigured)}
+            mobileSignupAvailable={Boolean(signup.mobileSignupAvailable ?? signup.mobileSignup)}
             googlePendingToken={googleSignupPending || ''}
             onBack={() => { clearGoogleSignupPending?.(); backToLogin(); }}
             onDone={(result) => { clearGoogleSignupPending?.(); completeLogin(result); }}

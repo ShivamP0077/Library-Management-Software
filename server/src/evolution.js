@@ -9,11 +9,16 @@ export class EvolutionError extends Error {
 
 export const evolutionConfigured = (env = process.env) => Boolean(env.EVOLUTION_API_URL && env.EVOLUTION_API_KEY);
 
-/** One Evolution instance per library: deterministic, URL-safe, derived from libraryId. */
+/** Evolution instance used by My Library OS itself (sign-up codes). Never a library. */
+export const SYSTEM_INSTANCE = 'libos-system';
+
+/** One Evolution instance per library: deterministic, URL-safe, derived from libraryId. Never the system instance. */
 export const instanceNameFor = (libraryId) => {
   const slug = String(libraryId || '').toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
   if (!slug) throw new EvolutionError('Invalid libraryId', 400);
-  return `libos-${slug}`;
+  const name = `libos-${slug}`;
+  if (name === SYSTEM_INSTANCE) throw new EvolutionError('That library id is reserved', 400);
+  return name;
 };
 
 /** Per-instance webhook secret derived from EVOLUTION_API_KEY (no extra env var needed). */

@@ -140,7 +140,7 @@ export function handleRemoveSplitComponent(rows, removeIndex, totalPayable) {
   return filtered;
 }
 
-export function validateSplitPayment(rows, totalPayable, supportedMethods = ['UPI', 'Cash', 'Card', 'Bank Transfer']) {
+export function validateSplitPayment(rows, totalPayable, supportedMethods = ['UPI', 'Cash', 'Card', 'Bank Transfer', 'Net Banking', 'Cheque']) {
   if (!rows || rows.length < 2) {
     return { valid: false, error: "Split payment requires at least 2 payment components." };
   }

@@ -6,8 +6,10 @@ import { NumericInput } from '../NumericInput';
 import toast from 'react-hot-toast';
 import { calculatePricing } from '../../utils/pricingCalculator';
 import { handleSplitAmountChange, handleAddSplitComponent, handleRemoveSplitComponent, validateSplitPayment } from '../../utils/splitPaymentUtils';
-import { calculateSubscriptionExpiry, validatePaidOn } from '../../utils/dateUtils';
-import { cycleConfig, firstAdmissionCharge, addDays } from '../../utils/billingCycle';
+import { paymentReferenceError } from '../../utils/paymentReference';
+import { ReferenceField } from '../ReferenceField';
+import { periodEndDate, validatePaidOn } from '../../utils/dateUtils';
+import { effectiveCycleConfig, firstAdmissionCharge, addDays } from '../../utils/billingCycle';
 import { saveDocumentBlobNow, deleteDocumentBlob, getDocumentBlob } from '../../utils/idbStorage';
 import { api } from '../../utils/api';
 import { uploadAttachmentFile, makeAttachmentKey } from '../../utils/attachmentUpload';
@@ -155,6 +157,7 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
   const [discountValue, setDiscountValue] = useState(0);
   const [fine, setFine] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState('');
+  const [referenceNo, setReferenceNo] = useState('');
   const [splitBreakdown, setSplitBreakdown] = useState([{ method: '', amount: '' }]);
   const [paidOn, setPaidOn] = useState(todayStr);
   const [joiningDate, setJoiningDate] = useState(todayStr);
@@ -244,6 +247,7 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
         setPlanId('');
         setShiftId('');
         setPaymentMethod('');
+        setReferenceNo('');
         setSplitBreakdown([{ method: '', amount: '' }]);
         setPaidOn(todayStr);
         setJoiningDate(todayStr);
@@ -416,6 +420,12 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
         errs.splitAmount = splitCheck.error;
       }
     }
+    const referenceErr = paymentReferenceError({
+      method: paymentMethod,
+      referenceNo,
+      breakdown: paymentMethod === 'Split' ? splitBreakdown : undefined,
+    });
+    if (referenceErr) errs.referenceNo = referenceErr;
 
     // Document requirement validation
     if (effectiveDocRequirement === 'Required' && !docFileAttached && !submitDocLater) {
@@ -457,11 +467,16 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
 
     const todayFormatted = joiningDate || todayStr;
     const anchorDay = Number(String(todayFormatted).slice(8, 10)) || undefined;
-    let calculatedExpiry = calculateSubscriptionExpiry(todayFormatted, durationMonths || 1, anchorDay);
+    const admissionPlan = plans.find(p => p.id === planId);
+    const admissionCycle = effectiveCycleConfig(settings, admissionPlan);
+    // Plans with no duration type keep the previous month-based expiry. Pro-rate still follows the library cycle.
+    let calculatedExpiry = admissionPlan?.billingCycle?.mode
+      ? periodEndDate(todayFormatted, durationMonths || 1, { anchorDay, cycle: admissionCycle })
+      : periodEndDate(todayFormatted, durationMonths || 1, { anchorDay });
     let proRatedPayload = null;
     if (proRateApplied) {
       const unit = Number(suggestedBase) / Math.max(1, Number(durationMonths) || 1);
-      const pr = firstAdmissionCharge(unit, todayFormatted, cycleConfig(settings));
+      const pr = firstAdmissionCharge(unit, todayFormatted, admissionCycle);
       calculatedExpiry = pr.to;
       proRatedPayload = { ...pr, fullFee: Number(suggestedBase) };
     }
@@ -503,6 +518,7 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
       discount: calculatedDiscount,
       fine: Number(fine),
       paymentMethod,
+      referenceNo,
       breakdown: paymentMethod === 'Split' ? splitBreakdown : undefined,
       internalNotes,
       documents: docRecords,
@@ -926,14 +942,15 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                     <span style={{ fontSize: '10px', color: 'var(--text-tertiary)' }}>Overrides apply to this admission only</span>
                   </div>
                   {(() => {
-                    const cfg = cycleConfig(settings);
-                    if (cfg.mode === 'ANNIVERSARY' || !plans.find(p => p.id === planId) || Number(durationMonths) !== 1) return null;
+                    const selected = plans.find(p => p.id === planId);
+                    const cfg = effectiveCycleConfig(settings, selected);
+                    if (cfg.mode === 'ANNIVERSARY' || !selected || Number(durationMonths) !== 1) return null;
                     const unit = Number(suggestedBase) / Math.max(1, Number(durationMonths) || 1);
                     const pr = firstAdmissionCharge(unit, joiningDate || todayStr, cfg);
                     if (!pr.prorated) return null;
                     return (
                       <div data-testid="prorate-box" style={{ fontSize: '12px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '8px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                        <span>Library cycle: first payment ₹{pr.amount.toLocaleString()} for {pr.days} of {pr.totalDays} days (to {pr.to}). Then full fee.</span>
+                        <span>{selected.billingCycle?.mode ? 'This plan' : 'Library cycle'}: first payment ₹{pr.amount.toLocaleString()} for {pr.days} of {pr.totalDays} days (to {pr.to}). Then full fee.</span>
                         {proRateApplied ? (
                           <button type="button" className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '12px' }} onClick={() => setBaseAmount(Number(suggestedBase))}>Use full fee</button>
                         ) : (
@@ -1025,10 +1042,13 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                       <option value="Cash">Cash</option>
                       <option value="Card">Debit / Credit Card</option>
                       <option value="Bank Transfer">Bank Transfer</option>
+                      <option value="Net Banking">Net banking</option>
+                      <option value="Cheque">Cheque</option>
                       <option value="Split">Split Payment</option>
                     </select>
                     {errors.paymentMethod && <div className="form-error" style={{ color: 'red', fontSize: '11px', marginTop: '4px' }}>{errors.paymentMethod}</div>}
                   </div>
+                  <ReferenceField mode={paymentMethod} value={referenceNo} onChange={setReferenceNo} error={errors.referenceNo} />
 
                   {paymentMethod === 'Split' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
@@ -1048,8 +1068,10 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                             <option value="UPI">UPI / QR Code</option>
                             <option value="Cash">Cash</option>
                             <option value="Card">Debit / Credit Card</option>
-                            <option value="Bank Transfer">Bank Transfer</option>
-                          </select>
+                              <option value="Bank Transfer">Bank Transfer</option>
+                              <option value="Net Banking">Net banking</option>
+                              <option value="Cheque">Cheque</option>
+                            </select>
                           <NumericInput
                             className="form-input"
                             value={item.amount}
@@ -1068,6 +1090,17 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                           >
                             <X size={16} />
                           </button>
+                          <ReferenceField
+                            compact
+                            mode={item.method}
+                            value={item.referenceNo}
+                            error={errors.referenceNo}
+                            onChange={(value) => {
+                              const newB = [...splitBreakdown];
+                              newB[idx] = { ...newB[idx], referenceNo: value };
+                              setSplitBreakdown(newB);
+                            }}
+                          />
                         </div>
                       ))}
                       <button

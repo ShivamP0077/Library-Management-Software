@@ -1,5 +1,18 @@
 // Minimal dependency-free text PDF writer for confirmations and receipts.
 // It is intentionally simple (Helvetica, A4, wrapped lines) but emits a valid PDF.
+import { receiptReferenceText } from '../../src/utils/paymentReference.js';
+
+/** Lines for a student fee-receipt PDF. Includes "Ref: …" when a UTR was stored. */
+export function feeReceiptPdfLines(payment) {
+  const lines = [
+    `Receipt: ${payment?.receiptNo || payment?.id || ''}`,
+    `Mode: ${payment?.method || ''}`,
+    `Amount: ${payment?.netTotal ?? payment?.amount ?? ''}`,
+  ];
+  const ref = receiptReferenceText(payment);
+  if (ref) lines.push(ref);
+  return lines;
+}
 const PAGE_W = 595;
 const PAGE_H = 842;
 const LEFT = 48;

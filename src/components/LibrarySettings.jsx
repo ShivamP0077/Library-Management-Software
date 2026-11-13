@@ -18,6 +18,8 @@ import {
   createEmptyPermissions, getDefaultPermissionsForRole, countAllowedActions 
 } from '../utils/staffPermissions';
 import { getCanonicalSeatTypes } from '../utils/seatTypeUtils';
+import { cycleConfig, effectiveCycleConfig, normalizePlanBillingCycle, CYCLE_MODE_LABELS } from '../utils/billingCycle';
+import { PlanDurationFields } from './PlanDurationFields';
 import toast from 'react-hot-toast';
 import { EnquiryQrCard } from './enquiry/EnquiryQrCard';
 
@@ -68,6 +70,8 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
       setPlanName(`${targetName} Plan`);
       setPlanShiftIds([settingsAction.recordId]);
       setPlanSeatTypeId(seatTypes[0]?.id || '');
+      setPlanCycle(cycleConfig(settings));
+      setPlanCycleCustom(true);
       setEditingPlanId(null);
       setActiveTab('plans');
       setViewLevel('module-view');
@@ -84,6 +88,9 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
         setPlanPricing(plan.durationPricing && plan.durationPricing.length > 0 ? plan.durationPricing : [
           { durationMonths: 1, basePrice: plan.price || 1500, discountType: 'None', discountValue: 0 }
         ]);
+        const savedCycle = plan.billingCycle?.mode ? effectiveCycleConfig(settings, plan) : cycleConfig(settings);
+        setPlanCycle(savedCycle);
+        setPlanCycleCustom(!!plan.billingCycle?.mode);
         setActiveTab('plans');
         setViewLevel('module-view');
         setIsPlanModalOpen(true);
@@ -169,6 +176,8 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
   const [planPricing, setPlanPricing] = useState([
     { durationMonths: 1, basePrice: 1500, discountType: 'None', discountValue: 0 }
   ]);
+  const [planCycle, setPlanCycle] = useState(() => cycleConfig(settings));
+  const [planCycleCustom, setPlanCycleCustom] = useState(true);
 
   // Centered Modals & Entity Editing State
   const [isSectionModalOpen, setIsSectionModalOpen] = useState(false);
@@ -347,6 +356,8 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
     setPlanPricing([
       { durationMonths: 1, basePrice: 1500, discountType: 'None', discountValue: 0 }
     ]);
+    setPlanCycle(cycleConfig(settings));
+    setPlanCycleCustom(true);
     setIsPlanModalOpen(true);
   };
 
@@ -359,6 +370,9 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
     setPlanPricing(p.durationPricing && p.durationPricing.length > 0 ? p.durationPricing : [
       { durationMonths: 1, basePrice: p.price || 1500, discountType: 'None', discountValue: 0 }
     ]);
+    const savedCycle = p.billingCycle?.mode ? effectiveCycleConfig(settings, p) : cycleConfig(settings);
+    setPlanCycle(savedCycle);
+    setPlanCycleCustom(!!p.billingCycle?.mode);
     setIsPlanModalOpen(true);
   };
 
@@ -367,6 +381,9 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
     if (!planName.trim()) return toast.error('Plan name is required.');
     if (!planSeatTypeId) return toast.error('Please assign a Seat Type to this plan.');
     if (planShiftIds.length === 0) return toast.error('Assign at least one shift to this plan.');
+    const billingCycle = (editingPlanId ? planCycleCustom : true)
+      ? normalizePlanBillingCycle(planCycle)
+      : null;
 
     if (editingPlanId) {
       setPlans(prev => prev.map(p => p.id === editingPlanId ? {
@@ -375,7 +392,8 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
         seatTypeId: planSeatTypeId,
         sectionId: planSectionId || undefined,
         shiftIds: planShiftIds,
-        durationPricing: planPricing
+        durationPricing: planPricing,
+        ...(billingCycle ? { billingCycle } : {}),
       } : p));
       setEditingPlanId(null);
       toast.success('Fee Plan updated.');
@@ -387,6 +405,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
         sectionId: planSectionId || scope.resolvedSectionId || undefined,
         shiftIds: planShiftIds,
         durationPricing: planPricing,
+        ...(billingCycle ? { billingCycle } : {}),
         branchId: selectedBranchId !== 'all' ? selectedBranchId : (scope.resolvedBranchId || undefined),
         libraryId: settings.libraryId,
         active: true
@@ -1011,6 +1030,10 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
 
                   <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
                     <strong>Shifts:</strong> {applicableShifts.map(s => s.name).join(', ') || <span style={{ color: '#ef4444' }}>None assigned</span>}
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    <strong>Duration:</strong> {CYCLE_MODE_LABELS[effectiveCycleConfig(settings, p).mode] || 'Anniversary'}
+                    {p.billingCycle?.mode ? '' : ' (library default)'}
                   </div>
 
                   <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -2474,6 +2497,11 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                     })}
                   </div>
                 </div>
+
+                <PlanDurationFields
+                  value={planCycle}
+                  onChange={(next) => { setPlanCycle(next); setPlanCycleCustom(true); }}
+                />
 
                 {/* Duration Pricing Editor */}
                 <div>

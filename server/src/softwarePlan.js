@@ -68,7 +68,18 @@ export async function quotePlanChange({ tenantId, planId, interval, offerCode, w
   let baseMinor = targetPriceMinor;
   let effectiveAt = null;
 
-  if (existing && ['active', 'trialing', 'past_due'].includes(existing.status)) {
+  // Upgrade rule: while the current period is still open, a more expensive plan is
+  // prorated for the remaining days and the period end stays put (existing rule).
+  // A cheaper plan is scheduled at period end. When the period has lapsed (expired,
+  // cancelled, awaiting payment, or the end date is already past), renewing the same
+  // plan or moving to another plan charges a full period that starts at payment time.
+  // Early renewal of an open period continues from the current expiry (not the day after).
+  const periodEndDate = existing?.currentPeriodEnd ? new Date(existing.currentPeriodEnd) : null;
+  const trialEndDate = existing?.trialEndsAt ? new Date(existing.trialEndsAt) : null;
+  const openUntil = existing?.status === 'trialing' ? (trialEndDate || periodEndDate) : periodEndDate;
+  const periodOpen = Boolean(existing && ['active', 'trialing', 'past_due'].includes(existing.status) && (!openUntil || openUntil > now));
+
+  if (periodOpen) {
     if (existing.planId === plan.planId && (existing.interval || 'month') === iv) {
       changeType = 'renewal';
       baseMinor = targetPriceMinor;
@@ -97,7 +108,18 @@ export async function quotePlanChange({ tenantId, planId, interval, offerCode, w
         effectiveAt = now;
       }
     }
+  } else if (existing?.planId) {
+    const same = existing.planId === plan.planId && (existing.interval || 'month') === iv;
+    changeType = same ? 'renewal' : 'new';
+    baseMinor = targetPriceMinor;
+    effectiveAt = now;
   }
+
+  const historyType = changeType === 'upgrade' ? 'upgrade'
+    : changeType === 'downgrade' ? 'downgrade'
+    : changeType === 'renewal'
+      ? (openUntil && openUntil > now ? 'early_renew' : 'renew')
+      : (existing?.planId && existing.planId !== plan.planId ? 'upgrade' : 'new');
 
   const offerResult = changeType === 'downgrade' || changeType === 'none'
     ? { offer: null, discountMinor: 0 }
@@ -116,6 +138,7 @@ export async function quotePlanChange({ tenantId, planId, interval, offerCode, w
     plans,
     interval: iv,
     changeType,
+    historyType,
     currentPlanId: existing?.planId || null,
     currentInterval: existing?.interval || null,
     currentPeriodEnd: existing?.currentPeriodEnd || null,
@@ -172,6 +195,92 @@ async function createProviderCheckout({ provider, library, plan, interval, amoun
     returnUrl: returnUrl || `${process.env.FRONTEND_URL || ''}/#software_plan`,
     cancelUrl: cancelUrl || `${process.env.FRONTEND_URL || ''}/#software_plan`,
   });
+}
+
+export async function checkoutSoftwarePlan(req, res) {
+  const idempotencyKey = String(req.get('Idempotency-Key') || req.body?.idempotencyKey || '').trim();
+  if (!idempotencyKey) return res.status(400).json({ error: 'Idempotency-Key header is required', code: 'idempotency_key_required' });
+  const existing = await SoftwareInvoice.findOne({ tenantId: req.tenantId, idempotencyKey });
+  if (existing) return res.json({ ok: true, invoice: existing, checkout: existing.raw?.checkout || null, replay: true });
+
+  const quote = await quotePlanChange({ tenantId: req.tenantId, ...req.body });
+  const lib = await getLibrary(req.tenantId);
+  if (quote.changeType === 'none') return res.json({ ok: true, changeType: 'none', quote, invoice: null });
+  if (quote.changeType === 'downgrade') {
+    await Library.updateOne({ libraryId: req.tenantId }, { $set: {
+      'subscription.pendingPlanId': quote.plan.planId,
+      'subscription.pendingInterval': quote.interval,
+      'subscription.pendingEffectiveAt': quote.effectiveAt,
+    } });
+    await audit(req, 'software_plan.downgrade_scheduled', { detail: { planId: quote.plan.planId, effectiveAt: quote.effectiveAt } });
+    return res.json({ ok: true, changeType: 'downgrade', quote, invoice: null, effectiveAt: quote.effectiveAt });
+  }
+  if (!quote.ready) return res.status(409).json({ error: 'Billing tax and currency must be configured by the Super Admin first', code: 'billing_not_configured' });
+
+  let hold = null;
+  if (quote.walletAppliedMinor > 0) {
+    try {
+      hold = await holdWallet({ tenantId: req.tenantId, amountMinor: quote.walletAppliedMinor, purpose: `software plan ${quote.plan.planId}` });
+    } catch (e) {
+      return res.status(e.status || 409).json({ error: e.message, code: e.code || 'wallet_hold_failed' });
+    }
+  }
+  const invoiceId = newInvoiceId();
+  let invoice;
+  try {
+    invoice = await SoftwareInvoice.create({
+      invoiceId, tenantId: req.tenantId, kind: quote.changeType === 'upgrade' ? 'upgrade' : 'subscription',
+      changeType: quote.changeType, historyType: quote.historyType, planId: quote.plan.planId, interval: quote.interval,
+      amount: quote.totalMinor / 100, totalMinor: quote.totalMinor, baseMinor: quote.baseMinor,
+      discountMinor: quote.discountMinor, taxableMinor: quote.taxableMinor, taxMinor: quote.taxMinor,
+      taxIncluded: quote.taxIncluded, taxRate: quote.taxRatePct, walletMinor: quote.walletAppliedMinor,
+      gatewayMinor: quote.gatewayDueMinor, currency: quote.currency, status: 'open', dueAt: new Date(),
+      holdId: hold?.holdId, offerId: quote.offer?.offerId, idempotencyKey,
+    });
+  } catch (e) {
+    if (hold) await releaseWalletHold(hold.holdId, { reason: 'Duplicate checkout' });
+    if (e?.code === 11000) {
+      const dup = await SoftwareInvoice.findOne({ tenantId: req.tenantId, idempotencyKey });
+      return res.json({ ok: true, invoice: dup, checkout: dup?.raw?.checkout || null, replay: true });
+    }
+    throw e;
+  }
+  if (hold) await WalletHold.updateOne({ holdId: hold.holdId }, { $set: { invoiceId } });
+  if (quote.offer?.offerId) {
+    try {
+      await reserveOffer({ offerId: quote.offer.offerId, tenantId: req.tenantId, invoiceId, discountMinor: quote.discountMinor });
+    } catch (e) {
+      await failInvoice(invoiceId, { reason: e.message });
+      await SoftwareInvoice.updateOne({ invoiceId, status: 'open' }, { $set: { status: 'void' } });
+      return res.status(e.status || 409).json({ error: e.message, code: e.code || 'offer_invalid', invoiceId });
+    }
+  }
+
+  if (quote.gatewayDueMinor === 0) {
+    const settled = await settleInvoice(invoiceId, { providerRef: `wallet:${hold?.holdId || invoiceId}`, gatewayMinor: 0, source: 'wallet' });
+    await audit(req, 'software_plan.wallet_payment', { detail: { invoiceId, totalMinor: quote.totalMinor, walletMinor: quote.walletAppliedMinor } });
+    return res.status(201).json({ ok: true, invoice: settled.invoice, checkout: null, walletOnly: true, quote });
+  }
+
+  const provider = paymentProvider();
+  if (!provider) {
+    await failInvoice(invoiceId, { reason: 'Payment provider not configured' });
+    return res.status(503).json({ error: 'Payments are not set up yet. Ask the Super Admin to configure Razorpay or PayPal.', code: 'payments_not_configured', invoiceId });
+  }
+  try {
+    const checkout = await createProviderCheckout({
+      provider, library: lib, plan: quote.plan, interval: quote.interval,
+      amountMinor: quote.gatewayDueMinor, invoiceId,
+      returnUrl: req.body?.returnUrl, cancelUrl: req.body?.cancelUrl,
+    });
+    await SoftwareInvoice.updateOne({ invoiceId }, { $set: { provider: provider.name, providerRef: checkout.reference, providerOrderRef: checkout.reference, 'raw.checkout': checkout } });
+    invoice = await SoftwareInvoice.findOne({ invoiceId });
+    await audit(req, 'software_plan.checkout_started', { detail: { invoiceId, provider: provider.name, gatewayMinor: quote.gatewayDueMinor, walletMinor: quote.walletAppliedMinor } });
+    res.status(201).json({ ok: true, invoice, checkout: { ...checkout, amountMinor: quote.gatewayDueMinor }, quote });
+  } catch (e) {
+    await failInvoice(invoiceId, { reason: e.message });
+    throw e;
+  }
 }
 
 export function createSoftwarePlanRouter() {
@@ -258,92 +367,7 @@ export function createSoftwarePlanRouter() {
     res.status(result.ok ? 200 : 502).json(result);
   }));
 
-  r.post('/checkout', wrap(async (req, res) => {
-    const idempotencyKey = String(req.get('Idempotency-Key') || req.body?.idempotencyKey || '').trim();
-    if (!idempotencyKey) return res.status(400).json({ error: 'Idempotency-Key header is required', code: 'idempotency_key_required' });
-    const existing = await SoftwareInvoice.findOne({ tenantId: req.tenantId, idempotencyKey });
-    if (existing) return res.json({ ok: true, invoice: existing, checkout: existing.raw?.checkout || null, replay: true });
-
-    const quote = await quotePlanChange({ tenantId: req.tenantId, ...req.body });
-    const lib = await getLibrary(req.tenantId);
-    if (quote.changeType === 'none') return res.json({ ok: true, changeType: 'none', quote, invoice: null });
-    if (quote.changeType === 'downgrade') {
-      await Library.updateOne({ libraryId: req.tenantId }, { $set: {
-        'subscription.pendingPlanId': quote.plan.planId,
-        'subscription.pendingInterval': quote.interval,
-        'subscription.pendingEffectiveAt': quote.effectiveAt,
-      } });
-      await audit(req, 'software_plan.downgrade_scheduled', { detail: { planId: quote.plan.planId, effectiveAt: quote.effectiveAt } });
-      return res.json({ ok: true, changeType: 'downgrade', quote, invoice: null, effectiveAt: quote.effectiveAt });
-    }
-    if (!quote.ready) return res.status(409).json({ error: 'Billing tax and currency must be configured by the Super Admin first', code: 'billing_not_configured' });
-
-    let hold = null;
-    if (quote.walletAppliedMinor > 0) {
-      try {
-        hold = await holdWallet({ tenantId: req.tenantId, amountMinor: quote.walletAppliedMinor, purpose: `software plan ${quote.plan.planId}` });
-      } catch (e) {
-        return res.status(e.status || 409).json({ error: e.message, code: e.code || 'wallet_hold_failed' });
-      }
-    }
-    const invoiceId = newInvoiceId();
-    let invoice;
-    try {
-      invoice = await SoftwareInvoice.create({
-        invoiceId, tenantId: req.tenantId, kind: quote.changeType === 'upgrade' ? 'upgrade' : 'subscription',
-        changeType: quote.changeType, planId: quote.plan.planId, interval: quote.interval,
-        amount: quote.totalMinor / 100, totalMinor: quote.totalMinor, baseMinor: quote.baseMinor,
-        discountMinor: quote.discountMinor, taxableMinor: quote.taxableMinor, taxMinor: quote.taxMinor,
-        taxIncluded: quote.taxIncluded, taxRate: quote.taxRatePct, walletMinor: quote.walletAppliedMinor,
-        gatewayMinor: quote.gatewayDueMinor, currency: quote.currency, status: 'open', dueAt: new Date(),
-        holdId: hold?.holdId, changeType: quote.changeType, offerId: quote.offer?.offerId, idempotencyKey,
-      });
-    } catch (e) {
-      if (hold) await releaseWalletHold(hold.holdId, { reason: 'Duplicate checkout' });
-      if (e?.code === 11000) {
-        const dup = await SoftwareInvoice.findOne({ tenantId: req.tenantId, idempotencyKey });
-        return res.json({ ok: true, invoice: dup, checkout: dup?.raw?.checkout || null, replay: true });
-      }
-      throw e;
-    }
-    if (hold) await WalletHold.updateOne({ holdId: hold.holdId }, { $set: { invoiceId } });
-    if (quote.offer?.offerId) {
-      try {
-        await reserveOffer({ offerId: quote.offer.offerId, tenantId: req.tenantId, invoiceId, discountMinor: quote.discountMinor });
-      } catch (e) {
-        // Capacity lost to a concurrent checkout: void this invoice and release the wallet hold.
-        await failInvoice(invoiceId, { reason: e.message });
-        await SoftwareInvoice.updateOne({ invoiceId, status: 'open' }, { $set: { status: 'void' } });
-        return res.status(e.status || 409).json({ error: e.message, code: e.code || 'offer_invalid', invoiceId });
-      }
-    }
-
-    if (quote.gatewayDueMinor === 0) {
-      const settled = await settleInvoice(invoiceId, { providerRef: `wallet:${hold?.holdId || invoiceId}`, gatewayMinor: 0, source: 'wallet' });
-      await audit(req, 'software_plan.wallet_payment', { detail: { invoiceId, totalMinor: quote.totalMinor, walletMinor: quote.walletAppliedMinor } });
-      return res.status(201).json({ ok: true, invoice: settled.invoice, checkout: null, walletOnly: true, quote });
-    }
-
-    const provider = paymentProvider();
-    if (!provider) {
-      await failInvoice(invoiceId, { reason: 'Payment provider not configured' });
-      return res.status(503).json({ error: 'Payments are not set up yet. Ask the Super Admin to configure Razorpay or PayPal.', code: 'payments_not_configured', invoiceId });
-    }
-    try {
-      const checkout = await createProviderCheckout({
-        provider, library: lib, plan: quote.plan, interval: quote.interval,
-        amountMinor: quote.gatewayDueMinor, invoiceId,
-        returnUrl: req.body?.returnUrl, cancelUrl: req.body?.cancelUrl,
-      });
-      await SoftwareInvoice.updateOne({ invoiceId }, { $set: { provider: provider.name, providerRef: checkout.reference, providerOrderRef: checkout.reference, 'raw.checkout': checkout } });
-      invoice = await SoftwareInvoice.findOne({ invoiceId });
-      await audit(req, 'software_plan.checkout_started', { detail: { invoiceId, provider: provider.name, gatewayMinor: quote.gatewayDueMinor, walletMinor: quote.walletAppliedMinor } });
-      res.status(201).json({ ok: true, invoice, checkout: { ...checkout, amountMinor: quote.gatewayDueMinor }, quote });
-    } catch (e) {
-      await failInvoice(invoiceId, { reason: e.message });
-      throw e;
-    }
-  }));
+  r.post('/checkout', wrap(checkoutSoftwarePlan));
 
   r.get('/wallet', wrap(async (req, res) => res.json(await walletSnapshot(req.tenantId))));
   r.get('/wallet/history', wrap(async (req, res) => res.json(await walletHistory(req.tenantId, req.query.limit))));

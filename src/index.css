@@ -114,7 +114,7 @@ body {
   box-shadow: var(--shadow-md);
 }
 .btn-secondary {
-  background: #ffffff;
+  background: var(--bg-surface);
   border-color: var(--border-strong);
   color: var(--text-primary);
   box-shadow: var(--shadow-sm);
@@ -584,3 +584,26 @@ body {
 .lib-workspace .app-container {
   height: 100%;
 }
+
+/* Dark mode: token swap only. Profile toggle writes data-theme on <html>. */
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-main: #0c0a09;
+  --bg-surface: #1c1917;
+  --bg-surface-hover: #292524;
+  --bg-glass: rgba(28, 25, 23, 0.86);
+  --border-light: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --border-focus: rgba(255, 255, 255, 0.3);
+  --text-primary: #fafaf9;
+  --text-secondary: #d6d3d1;
+  --text-tertiary: #a8a29e;
+  --brand-primary: #fafaf9;
+  --brand-primary-hover: #e7e5e4;
+  --brand-accent: #fbbf24;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 8px 16px rgba(0, 0, 0, 0.35);
+}
+html[data-theme="dark"] body { background: var(--bg-main); color: var(--text-primary); }
+html[data-theme="dark"] .btn-primary { color: #1c1917; }
+html[data-theme="dark"] #session-bar { background: #1c1917 !important; color: #fafaf9 !important; }

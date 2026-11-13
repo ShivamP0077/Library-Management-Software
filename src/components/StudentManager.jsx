@@ -32,6 +32,11 @@ import { clientCanEditAmount } from '../utils/amountPermission';
 import { cycleConfig, effectiveCycleConfig, cycleFor, addDays, bridgeCharge, upgradeCharge } from '../utils/billingCycle';
 import { isAdmissionVoid } from '../utils/admissionVoid.js';
 import { areSeatTypesEquivalent } from '../utils/seatTypeUtils';
+import { WaitingList } from './enquiry/WaitingList';
+import { useWaitingEnquiryCount } from './enquiry/useWaitingEnquiryCount';
+import { badgeCount } from '../utils/enquiry';
+import { useAuth } from '../auth/AuthContext';
+import { isLibraryLocked } from '../utils/subscriptionLock';
 
 /**
  * Accessible kebab/context menu. Rendered in a portal with fixed positioning so
@@ -228,6 +233,9 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     currentStaff, waitingList, removeFromWaitingList, updateWaitingListStatus, hasPermission, updateStudentDetails,
     lockedStaffId, getMatchingPlans, todayStr, readOnly: isReadOnly
   } = useLibrary();
+  const { user, subscriptionAccess } = useAuth() || {};
+  const enquiryWaiting = useWaitingEnquiryCount(isLibraryLocked(subscriptionAccess, user));
+  const waitingBadge = badgeCount(waitingList.length + (Number(enquiryWaiting) || 0));
   const canEditAmount = clientCanEditAmount({ lockedStaffId, currentStaff, settings });
   const cycleCfg = cycleConfig(settings);
   const cycleForPlan = (plan, { aligned = false } = {}) => (aligned ? cycleCfg : effectiveCycleConfig(settings, plan));
@@ -938,7 +946,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
           <button className={`btn ${viewMode === 'active' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setViewMode('active')} style={{ padding: '6px 16px' }}>Active Students</button>
           <button className={`btn ${viewMode === 'waiting' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setViewMode('waiting')} style={{ padding: '6px 16px', display: 'flex', alignItems: 'center', gap: '6px' }}>
             Waiting List
-            {waitingList.length > 0 && <span style={{ background: viewMode === 'waiting' ? '#fff' : 'var(--brand-primary)', color: viewMode === 'waiting' ? 'var(--brand-primary)' : '#fff', borderRadius: '12px', padding: '2px 6px', fontSize: '10px', fontWeight: 700 }}>{waitingList.length}</span>}
+            {waitingBadge && <span style={{ background: viewMode === 'waiting' ? '#fff' : 'var(--brand-primary)', color: viewMode === 'waiting' ? 'var(--brand-primary)' : '#fff', borderRadius: '12px', padding: '2px 6px', fontSize: '10px', fontWeight: 700 }}>{waitingBadge}</span>}
           </button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
@@ -1137,8 +1145,10 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       )}
 
 
-      {/* Waiting List View */}
+      {/* Waiting List View: QR enquiries, then the seat waiting list */}
       {viewMode === 'waiting' && (
+        <>
+        <WaitingList onAdmit={(payload) => onOpenNewStudent?.(payload)} />
         <div className="premium-card" style={{ padding: '16px' }}>
            <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
              <Clock size={20} /> Waiting List & Vacancy Matcher
@@ -1272,6 +1282,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
               </table>
            )}
         </div>
+        </>
       )}
 
 

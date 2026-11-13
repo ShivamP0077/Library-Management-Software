@@ -48,6 +48,7 @@ const schema = new mongoose.Schema({
   },
   providerEventId: String,
   changeType: String,
+  historyType: { type: String, default: null }, // trial|new|renew|early_renew|upgrade (trial is not an invoice)
   dueAt: Date,
   periodStart: Date,
   periodEnd: Date,

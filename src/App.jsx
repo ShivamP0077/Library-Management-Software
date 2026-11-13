@@ -12,7 +12,7 @@ import { NewStudentModal } from './components/Modals/NewStudentModal';
 import { PrintReceiptModal } from './components/Modals/PrintReceiptModal';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast, { Toaster } from 'react-hot-toast';
-import { ShieldAlert, ArrowLeft, LogOut, Eye, WifiOff, Cloud, KeyRound, CreditCard, UserRound, Sparkles } from 'lucide-react';
+import { ShieldAlert, ArrowLeft, LogOut, Eye, WifiOff, Cloud, KeyRound, UserRound, Sparkles, CircleUser } from 'lucide-react';
 import { ChangePasswordModal } from './auth/ChangePasswordModal';
 import { MySubscriptionModal } from './auth/MySubscriptionModal';
 import { MyProfileModal } from './auth/MyProfileModal';
@@ -30,9 +30,13 @@ import { setCacheScope, clearCacheScope } from './utils/tenantCache';
 import { LoginScreen } from './auth/LoginScreen';
 import { SuperAdminDashboard } from './auth/SuperAdminDashboard';
 import { PartnerPortal } from './auth/PartnerPortal';
-import { setTenantContext } from './utils/api';
+import { api, setTenantContext } from './utils/api';
+import { refreshWaitingEnquiryCount } from './components/enquiry/useWaitingEnquiryCount';
 import { WhatsAppHub } from './components/WhatsAppHub';
 import { WhatsAppBanner } from './components/WhatsAppBanner';
+import { LibraryOsProfile } from './components/profile/LibraryOsProfile';
+import { LockScreen, LockedDashboard } from './components/profile/LockScreen';
+import { isLibraryLocked, isSectionAllowedWhenLocked } from './utils/subscriptionLock';
 
 const pageVariants = {
   initial: { opacity: 0 },
@@ -42,11 +46,21 @@ const pageVariants = {
 
 export const AppContent = () => {
   const { settings, hasPermission, currentStaff } = useLibrary();
-  const KNOWN_TABS = ['dashboard', 'students', 'seats', 'payments', 'expenses', 'reports', 'settings', 'whatsapp', 'archives', 'notifications', 'support'];
+  const { user, subscriptionAccess, refreshSession } = useAuth();
+  const locked = isLibraryLocked(subscriptionAccess, user);
+  const canRenew = user?.role === 'client_admin' || user?.role === 'superadmin';
+  const KNOWN_TABS = ['dashboard', 'students', 'seats', 'payments', 'expenses', 'reports', 'settings', 'whatsapp', 'archives', 'notifications', 'support', 'profile'];
   const [activeTab, setActiveTab] = useState(() => { const t = TAB_FROM_HASH(); return KNOWN_TABS.includes(t) ? t : 'dashboard'; });
+  const [profileScreen, setProfileScreen] = useState('home');
   // Issue #1: browser Back/Forward move between screens.
   React.useEffect(() => initHistory(activeTab, (t) => { if (KNOWN_TABS.includes(t)) setActiveTab(t); }), []); // eslint-disable-line react-hooks/exhaustive-deps
   React.useEffect(() => { navTab(activeTab); }, [activeTab]);
+  React.useEffect(() => {
+    if (sessionStorage.getItem('libos_checkout_pending') === '1') {
+      setActiveTab('profile');
+      setProfileScreen('subscription');
+    }
+  }, []);
   React.useEffect(() => {
     const onStart = () => toast('You are on the first screen. Use Sign out to leave.', { id: 'back-at-start' });
     window.addEventListener('libos:back-at-start', onStart);
@@ -56,7 +70,12 @@ export const AppContent = () => {
   const canManageWhatsapp = !currentStaff || currentStaff.role === 'Admin' || currentStaff.role === 'Manager' || hasPermission('settings', 'manage') || hasPermission('settings', 'edit');
   // Deep links from anywhere (banner Reconnect, Settings shortcuts): navigateTo(tab, sub)
   React.useEffect(() => {
-    const onNav = (e) => { const { tab, sub } = e.detail || {}; if (tab === 'whatsapp' && sub) setWhatsappPage(sub); if (tab) setActiveTab(tab); };
+    const onNav = (e) => {
+      const { tab, sub, screen } = e.detail || {};
+      if (tab === 'whatsapp' && sub) setWhatsappPage(sub);
+      if (tab === 'profile') setProfileScreen(screen || 'home');
+      if (tab) setActiveTab(tab);
+    };
     window.addEventListener('libos:navigate', onNav);
     return () => window.removeEventListener('libos:navigate', onNav);
   }, []);
@@ -90,6 +109,21 @@ export const AppContent = () => {
     setIsSetupWizardOpen(true);
   };
 
+  const openProfile = (screen) => {
+    setProfileScreen(screen);
+    setActiveTab('profile');
+  };
+  const afterPayment = async () => {
+    try { await refreshSession?.(); } catch { /* auth event also refreshes */ }
+    window.dispatchEvent(new CustomEvent('libos:reload-library'));
+  };
+  const sectionBlocked = locked && !isSectionAllowedWhenLocked(activeTab);
+  const admitEnquiry = async (enquiryId) => {
+    await api.updateEnquiry(enquiryId, 'admitted');
+    refreshWaitingEnquiryCount();
+    window.dispatchEvent(new CustomEvent('libos:enquiries-changed'));
+  };
+
   return (
     <div className="app-container">
       {/* Header Bar */}
@@ -102,7 +136,7 @@ export const AppContent = () => {
         }}
       />
 
-      <WhatsAppBanner />
+      {!locked && <WhatsAppBanner />}
       {/* Main Page Body Container */}
       <div className="page-body-wrapper" style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         
@@ -120,7 +154,14 @@ export const AppContent = () => {
                 style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
               >
                 <ErrorBoundary componentName="Active Module">
-            {!hasPermission(activeTab, 'view') && activeTab !== 'dashboard' && activeTab !== 'archives' && activeTab !== 'notifications' && activeTab !== 'support' && activeTab !== 'whatsapp' ? (
+            {sectionBlocked ? (
+              <LockScreen
+                message={subscriptionAccess?.message}
+                canRenew={canRenew}
+                onRenew={() => openProfile('subscription')}
+                onContact={() => openProfile('contact')}
+              />
+            ) : activeTab === 'profile' ? null : !hasPermission(activeTab, 'view') && activeTab !== 'dashboard' && activeTab !== 'archives' && activeTab !== 'notifications' && activeTab !== 'support' && activeTab !== 'whatsapp' ? (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '64px 24px', textAlign: 'center', minHeight: '400px' }}>
                 <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#fee2e2', color: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px' }}>
                   <ShieldAlert size={32} />
@@ -138,7 +179,15 @@ export const AppContent = () => {
                 {activeTab === 'notifications' && <NotificationsCenter setActiveTab={setActiveTab} />}
                 {activeTab === 'support' && <SupportCenter />}
 
-                {activeTab === 'dashboard' && (
+                {activeTab === 'dashboard' && locked && (
+                  <LockedDashboard
+                    message={subscriptionAccess?.message}
+                    canRenew={canRenew}
+                    onRenew={() => openProfile('subscription')}
+                    onContact={() => openProfile('contact')}
+                  />
+                )}
+                {activeTab === 'dashboard' && !locked && (
                   <Dashboard
                     setActiveTab={setActiveTab}
                     onOpenNewStudent={(payload) => {
@@ -228,6 +277,7 @@ export const AppContent = () => {
           }}
           onPrintReceipt={handlePrintReceipt}
           waitlistPayload={waitlistPayload}
+          onAdmitted={admitEnquiry}
         />
 
         <PrintReceiptModal
@@ -245,13 +295,21 @@ export const AppContent = () => {
         
         <Toaster position="bottom-right" />
       </div>
+      {activeTab === 'profile' && (
+        <LibraryOsProfile
+          screen={profileScreen}
+          onScreenChange={setProfileScreen}
+          onClose={() => setActiveTab('dashboard')}
+          onPaid={afterPayment}
+        />
+      )}
     </div>
   );
 };
 
 /** Thin bar above the app showing who is signed in, read-only state, offline mode, and navigation. */
 const SessionBar = ({ libraryName, readOnly, onBack, isOffline = false, onSwitchToCloud }) => {
-  const { user, logout, subscriptionAccess } = useAuth();
+  const { user, logout } = useAuth();
   const [pwOpen, setPwOpen] = useState(false);
   const [subOpen, setSubOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -259,15 +317,8 @@ const SessionBar = ({ libraryName, readOnly, onBack, isOffline = false, onSwitch
   useBackClose(pwOpen, () => setPwOpen(false));
   useBackClose(profileOpen, () => setProfileOpen(false));
   useBackClose(softwareOpen, () => setSoftwareOpen(false));
-  const locked = subscriptionAccess && subscriptionAccess.ok === false;
   return (
     <>
-    {locked && (
-      <div data-testid="subscription-lock-banner" style={{ padding: '8px 16px', background: '#fef2f2', color: '#991b1b', fontSize: 13, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <span>{subscriptionAccess.message || 'Your plan is inactive. Renew to keep editing.'}</span>
-        {user?.role === 'client_admin' && <button type="button" className="btn btn-primary btn-sm" onClick={() => setSoftwareOpen(true)}>View plan</button>}
-      </div>
-    )}
     <div id="session-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '6px 16px', fontSize: 12, background: readOnly ? '#fef3c7' : isOffline ? '#1e293b' : '#111827', color: readOnly ? '#92400e' : '#e5e7eb' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         {onBack && <button className="btn btn-ghost btn-sm" onClick={onBack} style={{ color: 'inherit' }}><ArrowLeft size={14} /> <span>All libraries</span></button>}
@@ -289,6 +340,7 @@ const SessionBar = ({ libraryName, readOnly, onBack, isOffline = false, onSwitch
             <span><span className="session-email">{user?.email} · </span>{user?.role === 'superadmin' ? 'Super Admin' : user?.role === 'client_admin' ? 'Client Admin' : user?.role === 'partner' ? 'Partner' : user?.role === 'agent' ? 'Agent' : 'Staff'}</span>
             {!onBack && <button className="btn btn-ghost btn-sm" onClick={() => setProfileOpen(true)} style={{ color: 'inherit' }} aria-label="My Profile"><UserRound size={14} /> <span>My Profile</span></button>}
             {!onBack && user?.role === 'client_admin' && <button className="btn btn-ghost btn-sm" onClick={() => setSoftwareOpen(true)} style={{ color: 'inherit' }} aria-label="My Software Plan"><Sparkles size={14} /> <span>My Software Plan</span></button>}
+            {!onBack && <button className="btn btn-ghost btn-sm os-profile-btn" onClick={() => window.dispatchEvent(new CustomEvent('libos:navigate', { detail: { tab: 'profile', screen: 'home' } }))} style={{ color: 'inherit' }} aria-label="My Library OS Profile"><CircleUser size={14} /> <span>My Library OS Profile</span></button>}
             {!onBack && <button className="btn btn-ghost btn-sm" onClick={() => setPwOpen(true)} style={{ color: 'inherit' }} aria-label="Change password"><KeyRound size={14} /> <span>Password</span></button>}
             <button className="btn btn-ghost btn-sm" onClick={logout} style={{ color: 'inherit' }}><LogOut size={14} /> <span>Sign out</span></button>
             {subOpen && <MySubscriptionModal libraryName={libraryName} onClose={() => setSubOpen(false)} />}

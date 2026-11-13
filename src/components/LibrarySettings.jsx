@@ -21,6 +21,7 @@ import { getCanonicalSeatTypes } from '../utils/seatTypeUtils';
 import { cycleConfig, effectiveCycleConfig, normalizePlanBillingCycle, CYCLE_MODE_LABELS } from '../utils/billingCycle';
 import { PlanDurationFields } from './PlanDurationFields';
 import toast from 'react-hot-toast';
+import { EnquiryQrCard } from './enquiry/EnquiryQrCard';
 
 const ALL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -2786,6 +2787,8 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
           </div>
         )}
       </AnimatePresence>
+
+      <EnquiryQrCard />
 
       {/* ======================================================== */}
       {/* MODAL: SETUP WIZARD (EDIT / RESUME MODE) */}

@@ -1,8 +1,7 @@
 // Issue #15: owner signup — email code or Google, then plan, then library. Payment step when due.
 import React, { useState, useEffect } from 'react';
 import { api } from '../utils/api';
-
-const limit = (n) => (n ? n.toLocaleString() : 'Unlimited');
+import { SignupPlanPicker } from './SignupPlanPicker';
 
 export function SignupPanel({ plans = [], googleSignup = false, mobileSignupAvailable = false, paymentsConfigured = false, googlePendingToken = '', onDone, onBack }) {
   const [step, setStep] = useState(googlePendingToken ? 2 : 1); // 1 verify, 2 details, 3 payment
@@ -158,7 +157,11 @@ export function SignupPanel({ plans = [], googleSignup = false, mobileSignupAvai
         </form>
       )}
       {step === 2 && (
-        <form onSubmit={finish}>
+        <form onSubmit={finish} className="signup-fields">
+          <style>{`
+            .signup-fields .form-input, .signup-fields .form-select { border-radius: 10px; min-height: 44px; }
+            .signup-fields .form-group { margin-bottom: 14px; }
+          `}</style>
           {info && <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 12px' }}>{info}{!viaGoogle && (channel === 'mobile' ? mobile : email) ? ` (${channel === 'mobile' ? mobile : email})` : ''}</p>}
           {!viaGoogle && (
             <>
@@ -174,27 +177,17 @@ export function SignupPanel({ plans = [], googleSignup = false, mobileSignupAvai
               )}
             </>
           )}
-          {plans.length > 0 && (
-            <fieldset style={{ border: 0, padding: 0, margin: '0 0 12px' }}>
-              <legend className="form-label">Choose a plan</legend>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {plans.map(p => (
-                  <label key={p.planId} data-signup-plan={p.planId} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', border: `1px solid ${planId === p.planId ? 'var(--brand-primary, #2563eb)' : 'var(--border-light, #e5e7eb)'}`, borderRadius: 8, padding: 10, fontSize: 13, cursor: 'pointer' }}>
-                    <input type="radio" name="signup-plan" checked={planId === p.planId} onChange={() => setPlanId(p.planId)} />
-                    <span>
-                      <strong>{p.name}</strong> · ₹{Number(p.priceMonthly).toLocaleString()}/month{p.priceYearly ? ` or ₹${p.priceYearly.toLocaleString()}/year` : ''}{p.trialDays ? ` · ${p.trialDays}-day free trial` : ''}
-                      <br /><span style={{ color: 'var(--text-tertiary)' }}>Students {limit(p.studentLimit)} · Staff {limit(p.staffLimit)} · Branches {limit(p.branchLimit)}</span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-              {plan?.priceYearly ? (
-                <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, marginTop: 8 }}>
-                  <input type="checkbox" checked={interval === 'year'} onChange={e => { setTouchedInterval(true); setInterval(e.target.checked ? 'year' : 'month'); }} /> Pay yearly
-                </label>
-              ) : null}
-            </fieldset>
-          )}
+          <SignupPlanPicker
+            plans={plans}
+            planId={planId}
+            interval={interval}
+            onInterval={(next) => { setTouchedInterval(true); setInterval(next); }}
+            onSelect={(id) => {
+              setPlanId(id);
+              const next = plans.find(p => p.planId === id);
+              if (interval === 'year' && !next?.priceYearly) setInterval('month');
+            }}
+          />
           <div className="form-group"><label className="form-label" htmlFor="signup-name">Your name</label><input id="signup-name" className="form-input" autoComplete="name" value={name} onChange={e => setName(e.target.value)} required={!viaGoogle} /></div>
           <div className="form-group"><label className="form-label" htmlFor="signup-library">Library name</label><input id="signup-library" className="form-input" value={libraryName} onChange={e => setLibraryName(e.target.value)} required /></div>
           <div className="form-group"><label className="form-label" htmlFor="signup-city">City</label><input id="signup-city" className="form-input" value={city} onChange={e => setCity(e.target.value)} /></div>
@@ -219,12 +212,17 @@ export function SignupPanel({ plans = [], googleSignup = false, mobileSignupAvai
             </p>
           )}
           {error && <div role="alert" style={{ color: '#dc2626', fontSize: 13, marginBottom: 12 }}>{error}</div>}
-          <button className="btn btn-primary" type="submit" disabled={busy} style={{ width: '100%', justifyContent: 'center' }}>{busy ? 'Creating…' : 'Create library'}</button>
+          <button className="btn btn-primary" type="submit" disabled={busy} style={{ width: '100%', justifyContent: 'center', minHeight: 46, borderRadius: 10, fontWeight: 700 }}>{busy ? 'Creating…' : 'Create library'}</button>
           {!viaGoogle && <button type="button" className="btn btn-ghost" onClick={() => { setStep(1); setCode(''); }} style={{ width: '100%', justifyContent: 'center', fontSize: 13, marginTop: 6 }}>Use a different {channel === 'mobile' && mobileSignupAvailable ? 'mobile' : 'email'}</button>}
         </form>
       )}
       {step === 3 && (
         <div data-testid="signup-payment-step">
+          {sessionResult?.message && (
+            <div role="status" style={{ background: '#fff7ed', color: '#9a3412', border: '1px solid #fdba74', borderRadius: 10, padding: '10px 12px', fontSize: 14, fontWeight: 600, marginBottom: 12 }}>
+              {sessionResult.message}
+            </div>
+          )}
           <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 12px' }}>
             Your library is ready. Complete payment to unlock editing{paymentsConfigured ? '.' : ' once online payments are connected.'}
           </p>

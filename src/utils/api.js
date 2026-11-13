@@ -3,12 +3,15 @@
  * - Production (e.g. Vercel): set VITE_API_URL to the backend origin, e.g. https://lms-api.onrender.com
  * - Local dev: leave it unset; requests go to /api and Vite proxies them to the local server.
  */
-const RAW_BASE = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
+const viteEnv = typeof import.meta.env === 'object' ? import.meta.env : undefined;
+const RAW_BASE = (viteEnv?.VITE_API_URL || '').trim().replace(/\/+$/, '');
 export const API_BASE = RAW_BASE ? (RAW_BASE.endsWith('/api') ? RAW_BASE : `${RAW_BASE}/api`) : '/api';
 
 import { parseJsonSafe } from './parseJsonSafe';
 import { requestWithRetry, RequestError } from './request';
+import { createSyncQueue as makeSyncQueue } from './syncQueue.js';
 export { parseJsonSafe, requestWithRetry, RequestError };
+export { LOCKED_CONFIG_COLLECTIONS, SYNCED_COLLECTIONS } from './syncQueue.js';
 
 const idemKey = () => globalThis.crypto?.randomUUID?.() || `idem-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const TOKEN_KEY = 'library_api_token';
@@ -36,7 +39,15 @@ export async function apiRequest(path, { method = 'GET', body, signal, retries =
   const text = await res.text();
   const data = parseJsonSafe(text, res.status);
   if (res.status === 401 && token && unauthorizedHandler) unauthorizedHandler();
-  if (!res.ok) throw Object.assign(new Error(data?.error || `Request failed (${res.status})`), { status: res.status, code: data?.code, details: data?.details, retryAfterMs: Number(res.headers.get('retry-after') || 0) * 1000 || undefined });
+  if (res.status === 402 && data?.code === 'SUBSCRIPTION_LOCKED' && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('libos:subscription-locked', { detail: data }));
+  }
+  if (!res.ok) {
+    const message = data?.code === 'SUBSCRIPTION_LOCKED'
+      ? (data.message || 'Your plan has expired.')
+      : (data?.error || `Request failed (${res.status})`);
+    throw Object.assign(new Error(message), { status: res.status, code: data?.code, details: data?.details, retryAfterMs: Number(res.headers.get('retry-after') || 0) * 1000 || undefined });
+  }
   return data;
 }
 
@@ -58,6 +69,8 @@ export async function downloadFile(path, fallbackName = 'export.csv') {
 export const api = {
   health: () => apiRequest('/health'),
   getState: () => apiRequest('/state'),
+  getSettings: () => apiRequest('/settings'),
+  getCollection: (col) => apiRequest(`/${encodeURIComponent(col)}`),
   saveSettings: (settings) => apiRequest('/settings', { method: 'PUT', body: settings }),
   syncCollection: (col, items) => apiRequest(`/${col}`, { method: 'PUT', body: items }),
   authConfig: () => apiRequest('/auth/config'),
@@ -212,6 +225,12 @@ export const api = {
   changePassword: (currentPassword, newPassword) => apiRequest('/auth/change-password', { method: 'POST', body: { currentPassword, newPassword } }),
   adminUpdateLibrary: (libraryId, body) => apiRequest(`/admin/libraries/${encodeURIComponent(libraryId)}`, { method: 'PATCH', body }),
   subscription: () => apiRequest('/subscription'),
+  subscriptionSummary: () => apiRequest('/subscription/summary'),
+  subscriptionHistory: () => apiRequest('/subscription/history'),
+  subscriptionRenew: (body, key) => apiRequest('/subscription/renew', { method: 'POST', body, headers: { 'Idempotency-Key': key || idemKey() } }),
+  subscriptionRenewEarly: (body, key) => apiRequest('/subscription/renew-early', { method: 'POST', body, headers: { 'Idempotency-Key': key || idemKey() } }),
+  subscriptionUpgrade: (body, key) => apiRequest('/subscription/upgrade', { method: 'POST', body, headers: { 'Idempotency-Key': key || idemKey() } }),
+  dashboardCounts: () => apiRequest('/dashboard'),
   subscriptionChange: (planId, interval) => apiRequest('/subscription/change', { method: 'POST', body: { planId, interval } }),
   subscriptionCancel: (resume) => apiRequest('/subscription/cancel', { method: 'POST', body: { resume: Boolean(resume) } }),
   subscriptionRequestDeletion: (confirmName, reason) => apiRequest('/subscription/deletion-request', { method: 'POST', body: { confirmName, reason } }),
@@ -224,42 +243,21 @@ export const api = {
   getStudentDocument: (studentId, key) => apiRequest(`/students/${encodeURIComponent(studentId)}/documents/${encodeURIComponent(key)}`, { timeoutMs: 30000 }).then(r => r?.data ?? null),
   updateDocumentMeta: (key, meta = {}) => apiRequest(`/documents/${encodeURIComponent(key)}`, { method: 'PATCH', body: meta, timeoutMs: 20000 }),
   deleteDocument: (key) => apiRequest(`/documents/${encodeURIComponent(key)}`, { method: 'DELETE', timeoutMs: 20000 }),
+  enquiryCount: () => apiRequest('/enquiries/count'),
+  enquiries: (status = 'waiting') => apiRequest(`/enquiries?status=${encodeURIComponent(status)}`),
+  enquiryLink: () => apiRequest('/enquiries/link'),
+  regenerateEnquiryLink: () => apiRequest('/enquiries/link/regenerate', { method: 'POST', body: {} }),
+  updateEnquiry: (id, status) => apiRequest(`/enquiries/${encodeURIComponent(id)}`, { method: 'PATCH', body: { status } }),
 };
 
-/** Collections persisted by LibraryContext, mapped to backend collection names. */
-export const SYNCED_COLLECTIONS = [
-  'branches', 'sections', 'seatTypes', 'seats', 'shifts', 'plans', 'staffMembers',
-  'students', 'archivedStudents', 'expenses', 'payments', 'waitingList'
-];
-
 /**
- * Debounced, change-detecting sync of one piece of state to the backend.
- * Only runs once the initial load from the backend has completed (enable()).
+ * Debounced sync used by LibraryContext. `write` defaults to the real API.
+ * Keys that were not loaded this session are ignored. See syncQueue.js.
  */
-export function createSyncQueue({ delay = 400, onError } = {}) {
-  const last = new Map();
-  const timers = new Map();
-  let enabled = false;
-  const push = async (key, value) => {
-    const json = JSON.stringify(value);
-    if (last.get(key) === json) return;
-    try {
-      if (key === 'settings') await api.saveSettings(value);
-      else await api.syncCollection(key, value);
-      last.set(key, json);
-    } catch (e) {
-      onError?.(key, e);
-    }
-  };
-  return {
-    enable: () => { enabled = true; },
-    isEnabled: () => enabled,
-    markSynced: (key, value) => last.set(key, JSON.stringify(value)),
-    push,
-    queue(key, value) {
-      if (!enabled) return;
-      clearTimeout(timers.get(key));
-      timers.set(key, setTimeout(() => push(key, value), delay));
-    },
-  };
+export function createSyncQueue(opts = {}) {
+  const write = opts.write || (async (key, value) => {
+    if (key === 'settings') await api.saveSettings(value);
+    else await api.syncCollection(key, value);
+  });
+  return makeSyncQueue({ ...opts, write });
 }

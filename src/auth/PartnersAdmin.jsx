@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Plus, Power, Save, Undo2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api } from '../utils/api';
+import { SaModal } from './SaModal';
 
 const inr = (n) => `₹${Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 const card = { padding: 14, display: 'grid', gap: 10, minWidth: 0 };
@@ -33,6 +34,7 @@ export function PartnersAdmin({ libraries, onChanged }) {
   const [form, setForm] = useState({ kind: 'partner', name: '', email: '' });
   const [assign, setAssign] = useState({ libraryId: '', partnerId: '', originalSellerId: '', reason: '' });
   const [sale, setSale] = useState({ libraryId: '', kind: 'initial', saleRef: '', saleAmount: '' });
+  const [saleOpen, setSaleOpen] = useState(false);
   const load = useCallback(async () => {
     try { const [p, c] = await Promise.all([api.adminPartners(), api.adminCommissions()]); setPartners(p); setRecs(c); } catch (e) { toast.error(e.message); }
   }, []);
@@ -61,7 +63,9 @@ export function PartnersAdmin({ libraries, onChanged }) {
     try {
       const r = await api.adminRecordSale({ ...sale, saleAmount: Number(sale.saleAmount) });
       r.created ? toast.success(`Commission ${inr(r.record.amount)} recorded`) : toast(`No commission: ${String(r.reason).replace('_', ' ')}`);
-      setSale(s => ({ ...s, saleRef: '', saleAmount: '' })); load(); onChanged?.();
+      setSale(s => ({ ...s, saleRef: '', saleAmount: '' }));
+      setSaleOpen(false);
+      load(); onChanged?.();
     } catch (err) { toast.error(err.message); }
   };
   const reverse = async (r) => {
@@ -126,16 +130,22 @@ export function PartnersAdmin({ libraries, onChanged }) {
         <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Direct website signups have no original seller, so they never earn a new-sale commission. A partner assigned later can earn renewal commissions.</span>
       </form>
 
-      <form className="premium-card" style={card} onSubmit={doSale}>
-        <strong>Record a software sale (until billing is connected)</strong>
-        <div style={grid}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <button type="button" className="btn btn-primary btn-sm" onClick={() => setSaleOpen(true)}><Plus size={14} /> Record payment</button>
+      </div>
+      <SaModal open={saleOpen} title="Record a software sale" onClose={() => setSaleOpen(false)}>
+        <form style={{ display: 'grid', gap: 10 }} onSubmit={doSale}>
+          <p style={{ margin: 0, fontSize: 13, color: 'var(--text-secondary)' }}>Until billing is connected, record the sale here. The commission rate is frozen at this moment.</p>
           <label className="form-label" style={{ margin: 0 }}>Library<select className="form-input" required value={sale.libraryId} onChange={set(setSale, 'libraryId')}><option value="">Pick…</option>{libraries.map(l => <option key={l.libraryId} value={l.libraryId}>{l.name}</option>)}</select></label>
           <label className="form-label" style={{ margin: 0 }}>Type<select className="form-input" value={sale.kind} onChange={set(setSale, 'kind')}><option value="initial">New sale</option><option value="renewal">Renewal</option></select></label>
           <label className="form-label" style={{ margin: 0 }}>Invoice / ref<input className="form-input" required value={sale.saleRef} onChange={set(setSale, 'saleRef')} /></label>
           <label className="form-label" style={{ margin: 0 }}>Amount (₹)<input className="form-input" type="number" min={1} required value={sale.saleAmount} onChange={set(setSale, 'saleAmount')} /></label>
-          <button className="btn btn-primary btn-sm" type="submit">Record</button>
-        </div>
-      </form>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+            <button className="btn btn-secondary btn-sm" type="button" onClick={() => setSaleOpen(false)}>Cancel</button>
+            <button className="btn btn-primary btn-sm" type="submit">Record</button>
+          </div>
+        </form>
+      </SaModal>
 
       <div className="premium-card sa-table-card" style={{ padding: 0 }}>
         <div style={{ padding: '12px 14px' }}><strong>Commission records</strong> <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Rate is frozen at the time of sale. Payouts are not handled in the app.</span></div>

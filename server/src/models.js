@@ -26,6 +26,7 @@ export const Library = mongoose.model('Library', new mongoose.Schema({
   subscription: { type: mongoose.Schema.Types.Mixed, default: null }, // Issues #15/#19: { planId, interval, status, price, trialEndsAt, currentPeriodEnd, cancelAtPeriodEnd, pendingPlanId }
   signupAt: { type: Date, default: null },
   deletionRequest: { type: mongoose.Schema.Types.Mixed, default: null }, // Issue #19: owner asked for deletion; Super Admin decides
+  enquiryToken: { type: String, unique: true, sparse: true }, // public QR enquiry link; absent until generated
 }, { timestamps: true }));
 
 export const ROLES = ['superadmin', 'client_admin', 'staff', 'partner', 'agent'];

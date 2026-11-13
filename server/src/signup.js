@@ -12,6 +12,7 @@ import { rateLimited } from './accounts.js';
 import { throttleHit } from './throttle.js';
 import { SoftwarePlan, pubPlan } from './plans.js';
 import { initialSubscription, INTERVALS, paymentProvider } from './billing.js';
+import { trialIdentityUsed, recordTrialIdentifiers, TRIAL_USED_MESSAGE } from './trialUsage.js';
 import { googleEnabled, verifyGoogleIdToken } from './google.js';
 import { EMAIL_RE, normalizeEmail, normalizeMobile, isMobile, maskIdentifier } from './identity.js';
 import { createRegistrationConfirmation, deliverRegistrationConfirmation } from './registration.js';
@@ -62,13 +63,14 @@ export async function createGoogleSignupPending(identity) {
   return raw;
 }
 
-function paymentHookFor(subscription) {
-  const needsPayment = subscription?.status === 'pending_payment';
+function paymentHookFor(subscription, trialMessage) {
+  const needsPayment = subscription?.status === 'pending_payment' || subscription?.status === 'awaiting_payment';
   return {
     needsPayment: Boolean(needsPayment),
     paymentsConfigured: Boolean(paymentProvider()),
     // Frontend / #19 checkout endpoint. Present even when provider is missing so the UI can show the step.
     paymentHook: needsPayment ? { action: 'checkout', path: '/api/subscription/checkout', softwarePlanPath: '/api/software-plan/checkout', method: 'POST' } : null,
+    ...(trialMessage ? { message: trialMessage } : {}),
   };
 }
 
@@ -90,6 +92,15 @@ async function finishOwnerSignup({ email, mobile, name, libraryName, city, passw
     return res.status(409).json({ error: 'An account with this mobile number already exists. Sign in instead.' });
   }
   if (!email && !mobile) return res.status(400).json({ error: 'An email or mobile number is required' });
+
+  // Checked before the account exists so the new row is not treated as a previous trial.
+  let trialMessage = null;
+  let grantTrial = false;
+  if (Number(plan?.trialDays) > 0) {
+    const decision = await trialIdentityUsed({ email, mobile, googleSub: google?.sub || null });
+    if (decision.used) trialMessage = TRIAL_USED_MESSAGE;
+    else grantTrial = true;
+  }
 
   const referrer = referralCode ? await Library.findOne({ referralCode: String(referralCode).trim().toUpperCase() }).lean() : null;
   const ownCode = await uniqueReferralCode();
@@ -121,7 +132,13 @@ async function finishOwnerSignup({ email, mobile, name, libraryName, city, passw
     user.authProviders = ['password'];
     await user.save();
   }
-  const subscription = initialSubscription(plan, interval);
+  let subscription = initialSubscription(plan, interval);
+  if (subscription?.status === 'trialing' && trialMessage) {
+    subscription = { ...subscription, status: 'awaiting_payment', trialEndsAt: null, currentPeriodEnd: null };
+  } else if (grantTrial && subscription) {
+    subscription = { ...subscription, trialGrantedAt: new Date() };
+    await recordTrialIdentifiers({ email, mobile, googleSub: google?.sub || null });
+  }
   await Library.updateOne({ libraryId: library.libraryId }, { $set: { planId: plan?.planId || null, subscription, signupAt: new Date() } });
   if (referrer && referrer.libraryId !== library.libraryId) {
     await Referral.create({
@@ -145,7 +162,7 @@ async function finishOwnerSignup({ email, mobile, name, libraryName, city, passw
   confirmation = await deliverRegistrationConfirmation(confirmation._id).catch(e => { console.error('[registration] delivery failed:', e.message); return confirmation; });
 
   const origJson = res.json.bind(res);
-  res.json = (body) => origJson({ ...body, ...paymentHookFor(subscription), registrationConfirmation: { confirmationNumber: confirmation.confirmationNumber, paymentStatus: confirmation.paymentStatus, deliveryStatus: confirmation.delivery?.status || 'pending' } });
+  res.json = (body) => origJson({ ...body, ...paymentHookFor(subscription, trialMessage), registrationConfirmation: { confirmationNumber: confirmation.confirmationNumber, paymentStatus: confirmation.paymentStatus, deliveryStatus: confirmation.delivery?.status || 'pending' } });
   return issueSession(user, res);
 }
 

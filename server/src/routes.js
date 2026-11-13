@@ -32,7 +32,8 @@ import { createSoftwarePlanRouter, createSoftwarePlanAdminRouter } from './softw
 import { throttleHit, clearThrottle } from './throttle.js';
 import { normalizeEmail, normalizeMobile, EMAIL_RE } from './identity.js';
 import { createSubscriptionRouter } from './subscription.js';
-import { requireActiveSubscription, requireFeature, refreshSubscriptionStatus, accessFor } from './subscriptionAccess.js';
+import { requireActiveSubscription, requireFeature, refreshSubscriptionStatus, accessFor, toClientAccess } from './subscriptionAccess.js';
+import { createPublicEnquiryRouter, createTenantEnquiryRouter } from './enquiry.js';
 import { createPlanAdminRouter, SoftwarePlan, checkBranchLimit, checkStaffLimit } from './plans.js';
 import { createPaymentsAdminRouter } from './paymentsAdmin.js';
 import { createBillingAdminRouter } from './billingConfig.js';
@@ -81,7 +82,7 @@ async function issueSession(user, res) {
   if (denial) return res.status(denial.status).json({ error: denial.message });
   await User.updateOne({ _id: user._id }, { $set: { lastLoginAt: new Date() } });
   const access = library ? accessFor(library, { role: user.role }) : { ok: true, status: null };
-  const subscriptionAccess = { ok: access.ok, status: access.status, code: access.code || null, message: access.message || null };
+  const subscriptionAccess = toClientAccess(access);
   res.json({
     token: signToken(user),
     user: user.toSafeJSON(),
@@ -249,6 +250,7 @@ router.post('/auth/google', wrap(async (req, res) => {
 
 router.use(createPublicAccountRouter({ issueSession }));
 router.use(createSignupRouter({ issueSession })); // Issue #15 (off unless OWNER_SIGNUP_ENABLED=true)
+router.use(createPublicEnquiryRouter()); // public QR form; still accepts enquiries when the plan is locked
 
 // Evolution delivery webhook: no login, verified by a per-instance HMAC token.
 router.use('/whatsapp', createWhatsappWebhookRouter());
@@ -264,7 +266,7 @@ router.get('/auth/me', wrap(async (req, res) => {
   res.json({
     user: user.toSafeJSON(),
     library: library && { libraryId: library.libraryId, name: library.name, status: library.status, planId: library.planId || null, subscription: library.subscription || null },
-    subscriptionAccess: { ok: access.ok, status: access.status, code: access.code, message: access.message || null },
+    subscriptionAccess: toClientAccess(access),
   });
 }));
 
@@ -489,6 +491,15 @@ tenant.get('/state', wrap(async (req, res) => {
   res.json(out);
 }));
 
+tenant.get('/dashboard', wrap(async (req, res) => {
+  const [students, seats, payments] = await Promise.all([
+    models.students.countDocuments({ tenantId: req.tenantId }),
+    models.seats.countDocuments({ tenantId: req.tenantId }),
+    models.payments.countDocuments({ tenantId: req.tenantId }),
+  ]);
+  res.json({ students, seats, payments });
+}));
+
 tenant.get('/settings', wrap(async (req, res) => {
   const s = await Settings.findOne({ tenantId: req.tenantId }).lean();
   res.json(s ? clean(s) : null);
@@ -564,6 +575,7 @@ tenant.delete('/documents/:key', wrap(async (req, res) => {
 }));
 
 tenant.use(createSubscriptionRouter());
+tenant.use(createTenantEnquiryRouter());
 tenant.use(createSeatRouter());
 tenant.use(createFinanceRouter());
 tenant.use(createStudentRouter());

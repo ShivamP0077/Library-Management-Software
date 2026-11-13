@@ -468,12 +468,16 @@ export async function settleInvoice(invoiceId, { providerRef, providerOrderRef, 
     const isUpgrade = invoice.kind === 'upgrade' || invoice.changeType === 'upgrade';
     const isRenewal = invoice.changeType === 'renewal';
     const oldEnd = existing.currentPeriodEnd ? new Date(existing.currentPeriodEnd) : null;
-    // Renewal extends from the old period end (no lost days when paid early); a lapsed period restarts now.
+    // Early renewal continues from the current expiry (the new period starts when the
+    // paid one ends). A lapsed period — expired trial, cancelled, or past end — restarts
+    // at payment time so paying unlocks immediately. An upgrade keeps the current end
+    // only while that end is still in the future.
     const renewFrom = isRenewal && oldEnd && oldEnd > now && existing.planId === invoice.planId ? oldEnd : null;
-    const periodStart = isUpgrade ? new Date(existing.currentPeriodStart || existing.startedAt || now) : (renewFrom || now);
-    const periodEnd = isUpgrade && oldEnd
-      ? oldEnd
-      : addInterval(periodStart, iv);
+    const upgradeKeepsEnd = isUpgrade && oldEnd && oldEnd > now;
+    const periodStart = upgradeKeepsEnd
+      ? new Date(existing.currentPeriodStart || existing.startedAt || now)
+      : (renewFrom || now);
+    const periodEnd = upgradeKeepsEnd ? oldEnd : addInterval(periodStart, iv);
 
     // Stage 2: durable markPaid. Only the settling claim holder can finish.
     const claimed = await SoftwareInvoice.findOneAndUpdate(

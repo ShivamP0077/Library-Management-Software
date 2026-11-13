@@ -8,6 +8,9 @@ import { audit } from './audit.js';
 import { SoftwarePlan, pubPlan, libraryLimits } from './plans.js';
 import { paymentProvider, planPrice, INTERVALS, initialSubscription } from './billing.js';
 import { refreshPaymentProvider } from './paymentConfig.js';
+import { effectiveStatus } from './subscriptionAccess.js';
+import { walletSnapshot } from './wallet.js';
+import { checkoutSoftwarePlan } from './softwarePlan.js';
 import { SoftwareInvoice, listInvoices, newInvoiceId } from './payments/invoices.js';
 import { getBillingConfig, publicBillingConfig, taxFor } from './billingConfig.js';
 import { notifySuperAdminsOfDeletionRequest } from './paymentsAdmin.js';
@@ -48,11 +51,130 @@ async function view(tenantId) {
   };
 }
 
+const DAY = 864e5;
+
+function summaryStatus(status) {
+  if (status === 'trialing') return 'trial';
+  if (status === 'active') return 'active';
+  return 'expired';
+}
+
+function daysLeft(date, now = new Date()) {
+  if (!date) return 0;
+  const ms = new Date(date).getTime() - now.getTime();
+  return ms > 0 ? Math.ceil(ms / DAY) : 0;
+}
+
+/** Current plan card for the Subscription page. */
+export async function planSummary(tenantId, now = new Date()) {
+  const lib = await Library.findOne({ libraryId: tenantId }).lean();
+  const sub = lib?.subscription || null;
+  const plan = lib?.planId ? await SoftwarePlan.findOne({ planId: lib.planId }).lean() : null;
+  const raw = effectiveStatus(sub, now);
+  const expiry = sub?.status === 'trialing' ? (sub.trialEndsAt || sub.currentPeriodEnd) : sub?.currentPeriodEnd;
+  const wallet = await walletSnapshot(tenantId);
+  const price = sub?.price != null ? Number(sub.price) : Number(planPrice(plan, sub?.interval || 'month') || 0);
+  return {
+    planId: plan?.planId || sub?.planId || null,
+    planName: plan?.name || null,
+    price,
+    currency: 'INR',
+    billingCycle: sub?.interval || 'month',
+    start: sub?.currentPeriodStart || sub?.startedAt || null,
+    expiry: expiry || null,
+    status: sub ? summaryStatus(raw) : null,
+    rawStatus: raw,
+    daysLeft: daysLeft(expiry, now),
+    walletBalance: (wallet.availableMinor || 0) / 100,
+    walletBalanceMinor: wallet.availableMinor || 0,
+    locked: Boolean(raw && !['active', 'trialing'].includes(raw)),
+  };
+}
+
+function historyTypeOf(inv) {
+  if (inv.historyType) return inv.historyType;
+  if (inv.changeType === 'upgrade' || inv.kind === 'upgrade') return 'upgrade';
+  if (inv.changeType === 'renewal') {
+    const start = inv.periodStart ? new Date(inv.periodStart) : null;
+    const paid = inv.paidAt ? new Date(inv.paidAt) : (inv.createdAt ? new Date(inv.createdAt) : null);
+    if (start && paid && start.getTime() > paid.getTime() + 60 * 1000) return 'early_renew';
+    return 'renew';
+  }
+  return 'new';
+}
+
+export async function subscriptionHistory(tenantId) {
+  const lib = await Library.findOne({ libraryId: tenantId }).lean();
+  const invoices = await SoftwareInvoice.find({ tenantId, kind: { $ne: 'topup' } }).sort({ createdAt: -1 }).limit(100).lean();
+  const planIds = [...new Set(invoices.map(i => i.planId).filter(Boolean))];
+  if (lib?.planId) planIds.push(lib.planId);
+  const plans = await SoftwarePlan.find({ planId: { $in: planIds } }).select('planId name').lean();
+  const names = Object.fromEntries(plans.map(p => [p.planId, p.name]));
+  const items = invoices.map(inv => ({
+    amount: Number(inv.totalMinor || Math.round(Number(inv.amount || 0) * 100)) / 100,
+    amountMinor: Number(inv.totalMinor || Math.round(Number(inv.amount || 0) * 100)),
+    type: historyTypeOf(inv),
+    plan: names[inv.planId] || inv.planId || null,
+    planId: inv.planId || null,
+    periodFrom: inv.periodStart || null,
+    periodTo: inv.periodEnd || null,
+    transactionDate: inv.paidAt || inv.createdAt || null,
+    status: inv.status,
+  }));
+  const sub = lib?.subscription;
+  if (sub?.trialGrantedAt || sub?.status === 'trialing') {
+    items.push({
+      amount: 0,
+      amountMinor: 0,
+      type: 'trial',
+      plan: names[sub.planId] || sub.planId || null,
+      planId: sub.planId || null,
+      periodFrom: sub.startedAt || sub.trialGrantedAt || null,
+      periodTo: sub.trialEndsAt || sub.currentPeriodEnd || null,
+      transactionDate: sub.trialGrantedAt || sub.startedAt || null,
+      status: sub.status === 'trialing' ? 'trial' : 'ended',
+    });
+  }
+  items.sort((a, b) => new Date(b.transactionDate || 0) - new Date(a.transactionDate || 0));
+  return items;
+}
+
+async function renewWith(req, res, { early }) {
+  const lib = await Library.findOne({ libraryId: req.tenantId }).lean();
+  if (!lib?.planId) return res.status(400).json({ error: 'Choose a plan', code: 'plan_required' });
+  const interval = INTERVALS.includes(req.body?.interval) ? req.body.interval : (lib.subscription?.interval || 'month');
+  req.body = {
+    ...req.body,
+    planId: lib.planId,
+    interval,
+    early,
+  };
+  return checkoutSoftwarePlan(req, res);
+}
+
 export function createSubscriptionRouter() {
   const r = express.Router();
   r.use('/subscription', requireRole('client_admin', 'superadmin'));
 
   r.get('/subscription', wrap(async (req, res) => res.json(await view(req.tenantId))));
+
+  r.get('/subscription/summary', wrap(async (req, res) => res.json(await planSummary(req.tenantId))));
+
+  r.get('/subscription/history', wrap(async (req, res) => res.json({ items: await subscriptionHistory(req.tenantId) })));
+
+  // Same plan. Open period continues from the current expiry; a lapsed plan starts at payment time.
+  r.post('/subscription/renew', wrap(async (req, res) => renewWith(req, res, { early: false })));
+  r.post('/subscription/renew-early', wrap(async (req, res) => renewWith(req, res, { early: true })));
+  r.post('/subscription/upgrade', wrap(async (req, res) => {
+    const lib = await Library.findOne({ libraryId: req.tenantId }).lean();
+    const planId = req.body?.planId;
+    if (!planId) return res.status(400).json({ error: 'Choose a plan', code: 'plan_required' });
+    if (planId === lib?.planId && (req.body?.interval || lib?.subscription?.interval || 'month') === (lib?.subscription?.interval || 'month')) {
+      return res.status(400).json({ error: 'You are already on this plan. Use renew.', code: 'same_plan' });
+    }
+    req.body = { ...req.body, planId };
+    return checkoutSoftwarePlan(req, res);
+  }));
 
   // Change plan. Moving to a paid price needs a payment provider; moving down keeps the
   // current plan until the period ends (pendingPlanId) so nothing already paid for is lost.
@@ -108,7 +230,9 @@ export function createSubscriptionRouter() {
     const lib = await Library.findOne({ libraryId: req.tenantId });
     if (!lib) return res.status(404).json({ error: 'Library not found' });
     const sub = lib.subscription;
-    if (!sub || sub.status !== 'pending_payment') {
+    const live = effectiveStatus(sub);
+    const payable = new Set(['pending_payment', 'awaiting_payment', 'expired', 'cancelled', 'past_due']);
+    if (!sub || !payable.has(live)) {
       return res.status(400).json({ error: 'No payment is due right now.', code: 'no_payment_due' });
     }
     await refreshPaymentProvider();
@@ -127,8 +251,11 @@ export function createSubscriptionRouter() {
     if (!invoice) {
       const config = publicBillingConfig(await getBillingConfig());
       const tax = taxFor(amountMinor, config);
+      const end = sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd) : null;
+      const historyType = end && end > new Date() ? 'early_renew' : (end ? 'renew' : 'new');
       invoice = await SoftwareInvoice.create({
         invoiceId: newInvoiceId(), tenantId: req.tenantId, kind: 'subscription', planId: lib.planId || null,
+        changeType: end ? 'renewal' : 'new', historyType,
         interval: sub.interval || 'month', amount: tax.totalMinor / 100, totalMinor: tax.totalMinor,
         baseMinor: amountMinor, discountMinor: 0, taxableMinor: tax.taxableMinor, taxMinor: tax.taxMinor,
         taxIncluded: tax.mode === 'included', taxRate: tax.ratePct || null, walletMinor: 0,

@@ -8,7 +8,9 @@ import { DeletionJob } from './deletionJob.js';
 import { createEvolutionClient, evolutionConfigured, instanceNameFor } from './evolution.js';
 
 // Retained on purpose. Everything else with tenantId/libraryId is removed.
-const KEEP = new Set(['AuditLog', 'Library', 'User', 'DeletionJob']);
+// TrialUsage stores only hashed identities and has no tenant field, so a delete
+// cannot match it. It is listed here so a future tenant field cannot wipe it.
+const KEEP = new Set(['AuditLog', 'Library', 'User', 'DeletionJob', 'TrialUsage']);
 const inFlight = new Map();
 
 export const TENANT_FIELDS = ['tenantId', 'libraryId'];

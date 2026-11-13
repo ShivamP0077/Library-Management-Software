@@ -29,14 +29,18 @@ test('plan features: empty = all; listed = only those', () => {
   assert.equal(planHasFeature(null, 'whatsapp'), true);
 });
 
-test('pending_payment blocks writes but allows reads and subscription endpoints', async () => {
+test('pending_payment blocks reads and writes outside the allowlist', async () => {
   await call('POST', '/api/admin/plans', { token: SA(), body: { planId: 'locked', name: 'Locked', priceMonthly: 100, features: ['Receipts'] } });
   await Library.updateOne({ libraryId: 'lib-a' }, { $set: { planId: 'locked', subscription: { planId: 'locked', status: 'pending_payment', price: 100, interval: 'month' } } });
 
-  assert.equal((await call('GET', '/api/students', { token: A() })).status, 200, 'reads ok');
+  const read = await call('GET', '/api/students', { token: A() });
+  assert.equal(read.status, 402, 'reads locked');
+  assert.equal(read.body.error, 'subscription_locked');
+  assert.equal(read.body.code, 'SUBSCRIPTION_LOCKED');
+  assert.equal(read.body.message, 'Your My Library OS plan has expired. Renew to continue.');
   const w = await call('POST', '/api/students', { token: A(), body: { id: 'LOCK1', name: 'Lock' } });
   assert.equal(w.status, 402, JSON.stringify(w.body));
-  assert.equal(w.body.code, 'subscription_locked');
+  assert.equal(w.body.code, 'SUBSCRIPTION_LOCKED');
 
   assert.equal((await call('GET', '/api/subscription', { token: A() })).status, 200, 'subscription still readable');
   // Changing to a free plan must still work while locked (escape hatch).
@@ -51,7 +55,9 @@ test('expired trial is persisted and blocks writes', async () => {
   const me = await call('GET', '/api/auth/me', { token: A() });
   assert.equal(me.status, 200);
   assert.equal(me.body.subscriptionAccess.ok, false);
+  assert.equal(me.body.subscriptionAccess.locked, true);
   assert.equal(me.body.subscriptionAccess.status, 'expired');
+  assert.deepEqual(me.body.subscriptionAccess.allowedSections, ['dashboard', 'settings', 'profile']);
   assert.equal((await Library.findOne({ libraryId: 'lib-a' }).lean()).subscription.status, 'expired');
   assert.equal((await call('POST', '/api/students', { token: A(), body: { id: 'LOCK3', name: 'Nope' } })).status, 402);
 });

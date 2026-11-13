@@ -530,7 +530,10 @@ export function createSupportAdminRouter() {
     const t = await findAny(req.params.id);
     if (!t) return res.status(404).json({ error: 'Ticket not found' });
     await markTicketRead(t, 'admin');
-    await audit(req, 'support.ticket_view', { tenantId: t.tenantId, target: ticketNumberLabel(t.number) });
+    // Chat polls this every 10s; a background refresh is not a new view.
+    if (String(req.query.poll || '') !== '1') {
+      await audit(req, 'support.ticket_view', { tenantId: t.tenantId, target: ticketNumberLabel(t.number) });
+    }
     res.json(pubTicket(t.toObject(), { full: true, admin: true }));
   }));
 

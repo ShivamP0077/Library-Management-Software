@@ -271,7 +271,7 @@ export const SupportCenter = () => {
     const id = open.id;
     const timer = setInterval(async () => {
       try {
-        const fresh = await api.ticket(id);
+        const fresh = await api.ticket(id, { poll: true });
         setOpen(cur => (cur && cur.id === id ? fresh : cur));
       } catch { /* next poll retries */ }
     }, 10000);

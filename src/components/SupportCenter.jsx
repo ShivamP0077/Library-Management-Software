@@ -45,7 +45,7 @@ export const Thread = ({ ticket, fetchAttachment, viewer = 'owner' }) => (
           background: mine ? 'var(--bg-surface, #fff)' : '#f8fbff',
         }}>
           <div style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <strong style={{ color: 'var(--text-primary)' }}>{m.fromSupport ? 'Library OS Support' : (m.authorEmail || 'Library')}</strong>
+            <strong style={{ color: 'var(--text-primary)' }}>{m.fromSupport ? 'My Library OS Support' : (m.authorEmail || 'Library')}</strong>
             <span>• {when(m.at)}</span>
             <span>• {m.status === 'sent' ? 'Sent' : titleCase(m.status || 'sent')}</span>
           </div>
@@ -210,7 +210,7 @@ export const SupportCenter = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}><LifeBuoy size={22} /> Help &amp; Support</h2>
-          <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Raise a ticket and chat with the Library OS support team.</p>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Raise a ticket and chat with the My Library OS support team.</p>
         </div>
         <button className="btn btn-primary btn-sm" onClick={() => setCreating(c => !c)}>{creating ? <X size={14} /> : <Plus size={14} />} New ticket</button>
       </div>

@@ -201,9 +201,12 @@ export function LoginScreen({ onContinueOffline }) {
       `}</style>
       <div className="premium-card" style={{ width: '100%', maxWidth: 400, padding: 32 }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <div style={{ fontSize: 40 }}>📖</div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, marginTop: 8 }}>Library Management OS</h1>
-          <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>{subtitle}</p>
+          <img
+            src="/logo-full.png"
+            alt="My Library OS"
+            style={{ display: 'block', width: '100%', maxWidth: 240, height: 'auto', margin: '0 auto' }}
+          />
+          <p style={{ color: 'var(--text-secondary)', fontSize: 14, marginTop: 12 }}>{subtitle}</p>
         </div>
 
         {mode === 'login' && googleEnabled && (

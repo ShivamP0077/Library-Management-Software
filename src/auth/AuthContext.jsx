@@ -5,7 +5,7 @@ import { setCacheScope, clearCacheScope } from '../utils/tenantCache';
 const AuthContext = createContext(null);
 
 export const OAUTH_ERROR_MESSAGES = {
-  not_registered: "This Google account isn't registered with Library OS. Ask your library owner or administrator to add your email, then try again.",
+  not_registered: "This Google account isn't registered with My Library OS. Ask your library owner or administrator to add your email, then try again.",
   email_unverified: 'Your Google email address is not verified.',
   account_mismatch: 'This email is linked to a different Google account.',
   account_disabled: 'Your account is disabled.',

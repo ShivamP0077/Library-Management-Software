@@ -90,7 +90,7 @@ export function registrationConfirmationText(doc, library) {
     : d.paymentStatus === 'free' ? 'Free plan — no payment is due'
     : 'Unpaid — this is not a payment receipt';
   return [
-    'LIBRARY OS — REGISTRATION CONFIRMATION',
+    'MY LIBRARY OS — REGISTRATION CONFIRMATION',
     `Confirmation number: ${d.confirmationNumber}`,
     `Library: ${d.libraryName || library?.name || ''} (Library ID: ${d.libraryId || d.tenantId})`,
     `Owner: ${d.ownerName || ''}`,
@@ -125,7 +125,7 @@ export async function deliverRegistrationConfirmation(docId) {
     if (!doc.email) {
       result = { sent: false, logged: true, reason: 'no_verified_email' };
     } else {
-      const sent = await sendMail({ to: doc.email, subject: `Library OS registration confirmed — ${doc.confirmationNumber}`, text });
+      const sent = await sendMail({ to: doc.email, subject: `My Library OS registration confirmed — ${doc.confirmationNumber}`, text });
       result = sent ? { sent: true } : { sent: false, logged: true, reason: 'email_transport_not_configured' };
     }
   }

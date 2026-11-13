@@ -17,7 +17,7 @@ export default function HowItWorks() {
   return (
     <section id="how" className="relative bg-paper py-24 text-ink-950 sm:py-32">
       <div className="container-x">
-        <SectionHeading eyebrow="How it works" title="Up and running in three steps" sub="No installs and no hardware — Library OS runs in the browser on the computer or phone you already have." />
+        <SectionHeading eyebrow="How it works" title="Up and running in three steps" sub="No installs and no hardware — My Library OS runs in the browser on the computer or phone you already have." />
         <div ref={ref} className="relative mt-16">
           <div className="absolute left-[16.66%] right-[16.66%] top-7 hidden h-px bg-stone-300 md:block">
             <m.div style={{ width }} className="h-full bg-gradient-to-r from-gold-500 to-gold-400" />

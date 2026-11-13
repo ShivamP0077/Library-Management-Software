@@ -74,7 +74,7 @@ export const SupportDesk = ({ libraries = [], onAccessLibrary }) => {
           <button className="btn btn-secondary btn-sm" disabled={noteBusy || !note.trim()}>{noteBusy ? 'Saving…' : 'Add internal note'}</button>
         </form>
       </div>
-      <ReplyBox placeholder="Reply as Library OS Support…" onSend={async (b) => setOpen(await api.adminReplyTicket(open.id, { ...b, status: replyStatus }))}
+      <ReplyBox placeholder="Reply as My Library OS Support…" onSend={async (b) => setOpen(await api.adminReplyTicket(open.id, { ...b, status: replyStatus }))}
         extra={<select className="input-field" style={{ width: 'auto', maxWidth: '100%', minWidth: 0 }} value={replyStatus} onChange={e => setReplyStatus(e.target.value)} aria-label="Status after reply">{STATUSES.map(s => <option key={s} value={s}>then: {STATUS_LABELS[s]}</option>)}</select>} />
     </div>
   );

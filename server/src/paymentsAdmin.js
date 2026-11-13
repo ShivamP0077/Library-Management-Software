@@ -90,7 +90,7 @@ export async function notifySuperAdminsOfDeletionRequest(lib, request) {
   ].join('\n');
   await Promise.all(to.map(email => sendMail({
     to: email,
-    subject: `[Library OS] Deletion requested: ${lib.name}`,
+    subject: `[My Library OS] Deletion requested: ${lib.name}`,
     text,
   }).catch(e => console.error('[mail] deletion alert failed:', e.message))));
 }

@@ -203,7 +203,7 @@ test('PROF: sensitive library contact edits need owner+reauth; confirmation PDF/
 });
 
 test('PDF writer preserves readable heading punctuation and INR text', () => {
-  const pdf = textToPdf('LIBRARY OS — RECEIPT\nStatus: paid · Imported text: ₹999').toString('ascii');
-  assert.match(pdf, /LIBRARY OS - RECEIPT/);
+  const pdf = textToPdf('MY LIBRARY OS — RECEIPT\nStatus: paid · Imported text: ₹999').toString('ascii');
+  assert.match(pdf, /MY LIBRARY OS - RECEIPT/);
   assert.match(pdf, /Status: paid - Imported text: INR 999/);
 });

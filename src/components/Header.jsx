@@ -96,7 +96,7 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
           <div style={{ fontSize: '28px', lineHeight: 1 }}>{settings.logo}</div>
           <div style={{ minWidth: 0 }}>
             <h1 className="header-title" style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>{settings.name}</h1>
-            <p style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>Library Management OS</p>
+            <p style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>My Library OS</p>
           </div>
         </div>
 

@@ -149,7 +149,7 @@ export function MyProfileModal({ onClose }) {
   ].join('\n') : '';
   const share = async () => {
     try {
-      if (navigator.share) await navigator.share({ title: 'Library OS registration confirmation', text: confirmationText() });
+      if (navigator.share) await navigator.share({ title: 'My Library OS registration confirmation', text: confirmationText() });
       else await navigator.clipboard.writeText(confirmationText());
       toast.success(navigator.share ? 'Shared' : 'Confirmation copied');
     } catch { /* user cancelled */ }
@@ -158,7 +158,7 @@ export function MyProfileModal({ onClose }) {
     if (!confirmation) return;
     const w = window.open('', '_blank');
     if (!w) return setError('Allow pop-ups to print the confirmation');
-    w.document.write(`<!doctype html><title>${escapeHtml(confirmation.confirmationNumber)}</title><h2>Library OS — Registration Confirmation</h2><p><b>${escapeHtml(confirmation.confirmationNumber)}</b></p><p>${escapeHtml(confirmation.libraryName)} (${escapeHtml(confirmation.libraryId)})</p><p>Owner: ${escapeHtml(confirmation.ownerName || '')}</p><p>Plan: ${escapeHtml(confirmation.planName || 'No plan')} ${escapeHtml(confirmation.interval || '')}</p><p>Account status: ${escapeHtml(confirmation.paymentStatus)}</p><p><b>This confirms registration only. It is not a payment receipt.</b></p>`);
+    w.document.write(`<!doctype html><title>${escapeHtml(confirmation.confirmationNumber)}</title><h2>My Library OS — Registration Confirmation</h2><p><b>${escapeHtml(confirmation.confirmationNumber)}</b></p><p>${escapeHtml(confirmation.libraryName)} (${escapeHtml(confirmation.libraryId)})</p><p>Owner: ${escapeHtml(confirmation.ownerName || '')}</p><p>Plan: ${escapeHtml(confirmation.planName || 'No plan')} ${escapeHtml(confirmation.interval || '')}</p><p>Account status: ${escapeHtml(confirmation.paymentStatus)}</p><p><b>This confirms registration only. It is not a payment receipt.</b></p>`);
     w.document.close(); w.focus(); w.print();
   };
 

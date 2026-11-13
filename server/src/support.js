@@ -58,6 +58,13 @@ const ticketSchema = new mongoose.Schema({
   statusHistory: { type: [statusEventSchema], default: [] },
   lastMessageAt: { type: Date, default: Date.now },
   firstResponseAt: Date, resolvedAt: Date, closedAt: Date,
+  // Per-side read cursors. Missing on older tickets; unread then counts every message from the other side.
+  ownerLastReadAt: Date,
+  adminLastReadAt: Date,
+  // Legacy tickets (pre-messages[]) may store the opening text and the first staff reply here.
+  // They are shown as chat messages on read and are never written back.
+  description: String,
+  reply: String,
 }, { timestamps: true });
 // Deliberately no {tenantId, number} unique index and no global unique index here: duplicates
 // already exist in production and auto-index creation would fail. scripts/support-global-numbering.mjs
@@ -96,21 +103,80 @@ const pubMsg = (m) => ({
   authorEmail: m.authorEmail, authorRole: m.authorRole, fromSupport: !!m.fromSupport, body: m.body, at: m.at,
   attachments: (m.attachments || []).map(pubAttachment),
 });
+
+/**
+ * Messages to show in the thread. Stored messages win. When an old ticket has none, a legacy
+ * `description` / `reply` is presented as the first messages. Nothing is written back to the DB.
+ */
+export function presentMessages(t) {
+  const stored = Array.isArray(t?.messages) ? t.messages : [];
+  if (stored.length) return stored;
+  const out = [];
+  const description = typeof t?.description === 'string' ? t.description.trim() : '';
+  const reply = typeof t?.reply === 'string' ? t.reply.trim() : '';
+  if (description) {
+    out.push({
+      _id: 'legacy-description', authorEmail: t.createdByEmail || '', authorRole: t.createdByRole || 'client_admin',
+      fromSupport: false, body: description, status: 'sent', attachments: [], at: t.createdAt || t.lastMessageAt || null,
+    });
+  }
+  if (reply) {
+    out.push({
+      _id: 'legacy-reply', authorEmail: t.assignedTo || 'support', authorRole: 'super_admin',
+      fromSupport: true, body: reply, status: 'sent', attachments: [],
+      at: t.firstResponseAt || t.updatedAt || t.createdAt || null,
+    });
+  }
+  return out;
+}
+
+/** Messages from the other side that arrived after this side's last read. No cursor ⇒ all of them. */
+export function countUnread(t, side, messages = presentMessages(t)) {
+  const readAt = side === 'admin' ? t?.adminLastReadAt : t?.ownerLastReadAt;
+  const readMs = readAt ? new Date(readAt).getTime() : null;
+  let n = 0;
+  for (const m of messages) {
+    const fromOther = side === 'admin' ? !m.fromSupport : !!m.fromSupport;
+    if (!fromOther) continue;
+    if (readMs == null || Number.isNaN(readMs)) { n += 1; continue; }
+    const at = new Date(m.at || 0).getTime();
+    if (at > readMs) n += 1;
+  }
+  return n;
+}
+
+/** Lightweight read cursor. Does not touch updatedAt, messages, or ticket numbers. */
+export async function markTicketRead(t, side) {
+  const field = side === 'admin' ? 'adminLastReadAt' : 'ownerLastReadAt';
+  const now = new Date();
+  const q = SupportTicket.updateOne({ _id: t._id, tenantId: t.tenantId }, { $set: { [field]: now } }, { timestamps: false });
+  if (side === 'admin') q.setOptions({ skipTenantGuard: true });
+  await q;
+  if (typeof t.set === 'function') t.set(field, now);
+  else t[field] = now;
+  return now;
+}
 const pubInternalNote = (n) => ({ id: String(n._id), authorEmail: n.authorEmail, body: n.body, at: n.at });
 export const ticketNumberLabel = (number) => `#${String(Math.max(0, Number(number) || 0)).padStart(6, '0')}`;
 
-export const pubTicket = (t, { full = false, admin = false } = {}) => ({
-  id: String(t._id), tenantId: t.tenantId, number: t.number, numberLabel: ticketNumberLabel(t.number),
-  subject: t.subject, category: t.category, priority: t.priority, status: t.status,
-  createdByEmail: t.createdByEmail, assignedTo: t.assignedTo || null, createdAt: t.createdAt, updatedAt: t.updatedAt, lastMessageAt: t.lastMessageAt,
-  firstResponseAt: t.firstResponseAt || null, resolvedAt: t.resolvedAt || null, closedAt: t.closedAt || null,
-  messageCount: (t.messages || []).length,
-  legacyAliases: (t.legacyAliases || []).map(a => ({ tenantId: a.tenantId, number: a.number, label: a.label })),
-  migrationVersion: t.migrationVersion || null,
-  ...(full ? { messages: (t.messages || []).map(pubMsg), statusHistory: (t.statusHistory || []).map(e => ({ status: e.status, byEmail: e.byEmail, at: e.at })) } : {}),
-  // Internal notes are only ever included on the Super Admin router.
-  ...(admin && full ? { internalNotes: (t.internalNotes || []).map(pubInternalNote) } : {}),
-});
+export const pubTicket = (t, { full = false, admin = false } = {}) => {
+  const side = admin ? 'admin' : 'owner';
+  const shown = presentMessages(t);
+  return {
+    id: String(t._id), tenantId: t.tenantId, number: t.number, numberLabel: ticketNumberLabel(t.number),
+    subject: t.subject, category: t.category, priority: t.priority, status: t.status,
+    createdByEmail: t.createdByEmail, assignedTo: t.assignedTo || null, createdAt: t.createdAt, updatedAt: t.updatedAt, lastMessageAt: t.lastMessageAt,
+    firstResponseAt: t.firstResponseAt || null, resolvedAt: t.resolvedAt || null, closedAt: t.closedAt || null,
+    messageCount: shown.length,
+    unreadCount: countUnread(t, side, shown),
+    ...(side === 'admin' ? { adminLastReadAt: t.adminLastReadAt || null } : { ownerLastReadAt: t.ownerLastReadAt || null }),
+    legacyAliases: (t.legacyAliases || []).map(a => ({ tenantId: a.tenantId, number: a.number, label: a.label })),
+    migrationVersion: t.migrationVersion || null,
+    ...(full ? { messages: shown.map(pubMsg), statusHistory: (t.statusHistory || []).map(e => ({ status: e.status, byEmail: e.byEmail, at: e.at })) } : {}),
+    // Internal notes are only ever included on the Super Admin router.
+    ...(admin && full ? { internalNotes: (t.internalNotes || []).map(pubInternalNote) } : {}),
+  };
+};
 
 const statusStamps = (status) => ({
   ...(status === 'resolved' ? { resolvedAt: new Date() } : {}),
@@ -326,7 +392,15 @@ export function createSupportRouter() {
   r.get('/support/tickets/:id', wrap(async (req, res) => {
     const t = await findTicket(req);
     if (!t) return res.status(404).json({ error: 'Ticket not found' });
+    await markTicketRead(t, 'owner');
     res.json(pubTicket(t.toObject(), { full: true }));
+  }));
+
+  r.post('/support/tickets/:id/read', wrap(async (req, res) => {
+    const t = await findTicket(req);
+    if (!t) return res.status(404).json({ error: 'Ticket not found' });
+    const at = await markTicketRead(t, 'owner');
+    res.json({ ok: true, unreadCount: 0, ownerLastReadAt: at });
   }));
 
   r.get('/support/tickets/:id/messages/:mid/attachments/:aid', wrap(async (req, res) => {
@@ -361,7 +435,7 @@ export function createSupportRouter() {
         },
         ...(reopen ? { statusHistory: statusEvent(req, 'open') } : {}),
       },
-      $set: { lastMessageAt: now, ...(reopen ? { status: 'open', resolvedAt: null, closedAt: null } : {}) },
+      $set: { lastMessageAt: now, ownerLastReadAt: now, ...(reopen ? { status: 'open', resolvedAt: null, closedAt: null } : {}) },
     };
     const u = await SupportTicket.findOneAndUpdate(
       ticketQuery(req, { _id: t._id, ...idempotentFilter(clientMessageId, authorId) }),
@@ -441,20 +515,33 @@ export function createSupportAdminRouter() {
         : { number: -1 };
     const { page, limit, skip } = pagination(req, 50);
     const [list, total] = await Promise.all([
-      SupportTicket.find(q).setOptions({ skipTenantGuard: true }).select('-messages -internalNotes').sort(sort).skip(skip).limit(limit).lean(),
+      SupportTicket.find(q).setOptions({ skipTenantGuard: true })
+        .select('tenantId number subject category priority status createdByEmail createdByRole assignedTo createdAt updatedAt lastMessageAt firstResponseAt resolvedAt closedAt legacyAliases migrationVersion ownerLastReadAt adminLastReadAt description reply messages.fromSupport messages.at')
+        .sort(sort).skip(skip).limit(limit).lean(),
       SupportTicket.countDocuments(q).setOptions({ skipTenantGuard: true }),
     ]);
     const libs = await Library.find({ libraryId: { $in: [...new Set(list.map(t => t.tenantId))] } }).select('name libraryId').lean();
     const names = Object.fromEntries(libs.map(l => [l.libraryId, l.name]));
     res.set('X-Page', String(page)).set('X-Limit', String(limit)).set('X-Total-Count', String(total));
-    res.json(list.map(t => ({ ...pubTicket(t), libraryName: names[t.tenantId] || t.tenantId })));
+    res.json(list.map(t => ({ ...pubTicket(t, { admin: true }), libraryName: names[t.tenantId] || t.tenantId })));
   }));
 
   r.get('/support/tickets/:id', wrap(async (req, res) => {
     const t = await findAny(req.params.id);
     if (!t) return res.status(404).json({ error: 'Ticket not found' });
-    await audit(req, 'support.ticket_view', { tenantId: t.tenantId, target: ticketNumberLabel(t.number) });
+    await markTicketRead(t, 'admin');
+    // Chat polls this every 10s; a background refresh is not a new view.
+    if (String(req.query.poll || '') !== '1') {
+      await audit(req, 'support.ticket_view', { tenantId: t.tenantId, target: ticketNumberLabel(t.number) });
+    }
     res.json(pubTicket(t.toObject(), { full: true, admin: true }));
+  }));
+
+  r.post('/support/tickets/:id/read', wrap(async (req, res) => {
+    const t = await findAny(req.params.id);
+    if (!t) return res.status(404).json({ error: 'Ticket not found' });
+    const at = await markTicketRead(t, 'admin');
+    res.json({ ok: true, unreadCount: 0, adminLastReadAt: at });
   }));
 
   r.get('/support/tickets/:id/messages/:mid/attachments/:aid', wrap(async (req, res) => {
@@ -490,7 +577,7 @@ export function createSupportAdminRouter() {
           statusHistory: statusEvent(req, status),
         },
         $set: {
-          lastMessageAt: now, status, ...statusStamps(status),
+          lastMessageAt: now, adminLastReadAt: now, status, ...statusStamps(status),
           ...(t.firstResponseAt ? {} : { firstResponseAt: now }),
           ...(t.assignedTo ? {} : { assignedTo: req.user.email }),
         },

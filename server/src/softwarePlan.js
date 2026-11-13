@@ -197,11 +197,25 @@ async function createProviderCheckout({ provider, library, plan, interval, amoun
   });
 }
 
+/** A failed attempt with no payment link should not be replayed forever. */
+async function replayOrRelease(existing) {
+  if (!existing) return null;
+  const url = existing.raw?.checkout?.url;
+  const dead = !url && existing.status !== 'paid' && existing.status !== 'settling' && Boolean(existing.failureReason);
+  if (!dead) return { ok: true, invoice: existing, checkout: existing.raw?.checkout || null, replay: true };
+  await SoftwareInvoice.updateOne({ _id: existing._id, status: { $nin: ['paid', 'settling'] } }, {
+    $unset: { idempotencyKey: 1 },
+    $set: { status: 'void' },
+  });
+  return null;
+}
+
 export async function checkoutSoftwarePlan(req, res) {
   const idempotencyKey = String(req.get('Idempotency-Key') || req.body?.idempotencyKey || '').trim();
   if (!idempotencyKey) return res.status(400).json({ error: 'Idempotency-Key header is required', code: 'idempotency_key_required' });
   const existing = await SoftwareInvoice.findOne({ tenantId: req.tenantId, idempotencyKey });
-  if (existing) return res.json({ ok: true, invoice: existing, checkout: existing.raw?.checkout || null, replay: true });
+  const replay = await replayOrRelease(existing);
+  if (replay) return res.json(replay);
 
   const quote = await quotePlanChange({ tenantId: req.tenantId, ...req.body });
   const lib = await getLibrary(req.tenantId);
@@ -241,7 +255,12 @@ export async function checkoutSoftwarePlan(req, res) {
     if (hold) await releaseWalletHold(hold.holdId, { reason: 'Duplicate checkout' });
     if (e?.code === 11000) {
       const dup = await SoftwareInvoice.findOne({ tenantId: req.tenantId, idempotencyKey });
-      return res.json({ ok: true, invoice: dup, checkout: dup?.raw?.checkout || null, replay: true });
+      if (!dup) throw e;
+      const again = await replayOrRelease(dup);
+      if (again) return res.json(again);
+      if (req._checkoutRetry) throw e;
+      req._checkoutRetry = true;
+      return checkoutSoftwarePlan(req, res);
     }
     throw e;
   }
@@ -268,15 +287,31 @@ export async function checkoutSoftwarePlan(req, res) {
     return res.status(503).json({ error: 'Payments are not set up yet. Ask the Super Admin to configure Razorpay or PayPal.', code: 'payments_not_configured', invoiceId });
   }
   try {
+    await SoftwareInvoice.updateOne({ invoiceId }, { $set: { provider: provider.name } });
     const checkout = await createProviderCheckout({
       provider, library: lib, plan: quote.plan, interval: quote.interval,
       amountMinor: quote.gatewayDueMinor, invoiceId,
       returnUrl: req.body?.returnUrl, cancelUrl: req.body?.cancelUrl,
     });
-    await SoftwareInvoice.updateOne({ invoiceId }, { $set: { provider: provider.name, providerRef: checkout.reference, providerOrderRef: checkout.reference, 'raw.checkout': checkout } });
-    invoice = await SoftwareInvoice.findOne({ invoiceId });
-    await audit(req, 'software_plan.checkout_started', { detail: { invoiceId, provider: provider.name, gatewayMinor: quote.gatewayDueMinor, walletMinor: quote.walletAppliedMinor } });
-    res.status(201).json({ ok: true, invoice, checkout: { ...checkout, amountMinor: quote.gatewayDueMinor }, quote });
+    const savedId = checkout.invoiceId || invoiceId;
+    if (savedId !== invoiceId) {
+      await SoftwareInvoice.updateOne({ invoiceId, status: 'open' }, {
+        $set: { status: 'void', failureReason: 'Checkout was started on a new invoice' },
+        $unset: { idempotencyKey: 1 },
+      });
+    }
+    await SoftwareInvoice.updateOne({ invoiceId: savedId }, {
+      $set: {
+        provider: provider.name,
+        providerRef: checkout.reference,
+        providerOrderRef: checkout.reference,
+        'raw.checkout': checkout,
+        idempotencyKey,
+      },
+    });
+    invoice = await SoftwareInvoice.findOne({ invoiceId: savedId });
+    await audit(req, 'software_plan.checkout_started', { detail: { invoiceId: savedId, provider: provider.name, gatewayMinor: quote.gatewayDueMinor, walletMinor: quote.walletAppliedMinor } });
+    res.status(201).json({ ok: true, invoice, checkout: { ...checkout, invoiceId: savedId, amountMinor: quote.gatewayDueMinor }, quote });
   } catch (e) {
     await failInvoice(invoiceId, { reason: e.message });
     throw e;

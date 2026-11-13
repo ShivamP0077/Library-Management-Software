@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Wallet } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api } from '../../utils/api';
+import { PAYMENT_NOT_READY_MESSAGE } from '../../utils/support';
 import {
   cycleLabel, daysLeftUntil, formatPlanDate, historyTypeLabel, statusPillLabel,
 } from '../../utils/subscriptionLock';
@@ -24,6 +25,7 @@ export function SubscriptionPage({ onBack, onPaid, canPay = true, locked = false
   const [summary, setSummary] = useState(null);
   const [history, setHistory] = useState(null);
   const [plans, setPlans] = useState([]);
+  const [planInfo, setPlanInfo] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [useWallet, setUseWallet] = useState(true);
@@ -33,6 +35,7 @@ export function SubscriptionPage({ onBack, onPaid, canPay = true, locked = false
   const [quote, setQuote] = useState(null);
   const [quoteError, setQuoteError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [payBlocked, setPayBlocked] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -46,6 +49,7 @@ export function SubscriptionPage({ onBack, onPaid, canPay = true, locked = false
       setSummary(sum);
       setHistory(hist?.items || []);
       const list = plan?.plans || [];
+      setPlanInfo(plan);
       setPlans(list);
       setInterval(sum?.billingCycle === 'year' ? 'year' : 'month');
       setPlanId(prev => prev || list.find(p => p.planId !== sum?.planId)?.planId || list[0]?.planId || '');
@@ -97,6 +101,12 @@ export function SubscriptionPage({ onBack, onPaid, canPay = true, locked = false
   const expired = summary?.status === 'expired' || summary?.locked;
   const open = summary?.status === 'active' || summary?.status === 'trial';
   const yearlyOk = useMemo(() => plans.some(p => p.priceYearly != null), [plans]);
+  const billingNotReady = Boolean(
+    planInfo?.billingConfig?.configured === false
+    || quote?.billingConfig?.configured === false
+    || quote?.ready === false
+    || payBlocked
+  );
 
   const pay = async (kind) => {
     setBusy(true);
@@ -121,7 +131,12 @@ export function SubscriptionPage({ onBack, onPaid, canPay = true, locked = false
       await onPaid?.();
       await load();
     } catch (e) {
-      setError(e.message || 'Payment could not start');
+      if (e.code === 'billing_not_configured') {
+        setPayBlocked(true);
+        setError(PAYMENT_NOT_READY_MESSAGE);
+      } else {
+        setError(e.message || 'Payment could not start');
+      }
     } finally {
       setBusy(false);
     }
@@ -139,7 +154,7 @@ export function SubscriptionPage({ onBack, onPaid, canPay = true, locked = false
       {!canPay && !locked && (
         <div className="os-card os-card-pad os-note">Only the library owner can renew or upgrade. You can still contact support from the profile menu.</div>
       )}
-      {canPay && error && <div className="os-error" role="alert">{error}</div>}
+      {canPay && error && error !== PAYMENT_NOT_READY_MESSAGE && <div className="os-error" role="alert">{error}</div>}
       {canPay && loading && <div className="os-card os-card-pad os-note">Loading your plan…</div>}
       {canPay && !loading && !summary && !error && <div className="os-card os-card-pad os-note">No subscription on this library yet.</div>}
       {canPay && !loading && summary && (
@@ -162,10 +177,11 @@ export function SubscriptionPage({ onBack, onPaid, canPay = true, locked = false
       )}
       {canPay && summary && (
         <section className="os-card os-card-pad" style={{ display: 'grid', gap: 12 }}>
+          {billingNotReady && <div className="os-error" role="alert">{PAYMENT_NOT_READY_MESSAGE}</div>}
           <div className="os-actions">
-            {expired && <button type="button" className="btn btn-primary" disabled={busy} onClick={() => pay('renew')}>Renew</button>}
+            {expired && <button type="button" className="btn btn-primary" disabled={busy || billingNotReady} onClick={() => pay('renew')}>Renew</button>}
             {open && (
-              <button type="button" className="btn btn-primary" disabled={busy} onClick={() => pay('early')}>Renew early</button>
+              <button type="button" className="btn btn-primary" disabled={busy || billingNotReady} onClick={() => pay('early')}>Renew early</button>
             )}
             <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => setUpgradeOpen(v => !v)}>Upgrade plan</button>
           </div>
@@ -185,7 +201,7 @@ export function SubscriptionPage({ onBack, onPaid, canPay = true, locked = false
                   Yearly billing
                 </label>
               )}
-              <button type="button" className="btn btn-primary" disabled={busy || !planId} onClick={() => pay('upgrade')}>{busy ? 'Working…' : 'Continue with this plan'}</button>
+              <button type="button" className="btn btn-primary" disabled={busy || !planId || billingNotReady} onClick={() => pay('upgrade')}>{busy ? 'Working…' : 'Continue with this plan'}</button>
             </div>
           )}
           <div className="os-card" style={{ boxShadow: 'none', border: '1px solid var(--border-light)' }}>

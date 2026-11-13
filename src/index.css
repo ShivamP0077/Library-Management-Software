@@ -447,6 +447,7 @@ body {
   color: #111111;
   padding: 14px 16px 16px;
 }
+.receipt-modal-body > .receipt-seg { margin-bottom: 12px; }
 .receipt-modal-footer {
   flex-direction: column;
   align-items: stretch;
@@ -820,12 +821,13 @@ body {
   .receipt-stamp { font-size: 10pt; padding: 0.6mm 2.4mm; }
   .receipt-stamp.is-long { font-size: 8.5pt; max-width: 36mm; }
   .receipt-copy-label { font-size: 9.5pt; }
-  .receipt-info-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 2.4mm; }
+  .receipt-info-grid { grid-template-columns: 1fr 1fr 1.7fr 1fr; margin-top: 2.4mm; }
   .receipt-info-grid > div { border-bottom: none; border-right: 1px solid #e5e5e5; padding: 1.4mm 2mm; }
   .receipt-info-grid > div:nth-child(2n) { border-right: 1px solid #e5e5e5; }
   .receipt-info-grid > div:last-child { border-right: none; }
   .receipt-info-grid span, .receipt-k { font-size: 8.5pt; color: #333; }
   .receipt-info-grid strong { font-size: 11pt; }
+  .receipt-info-period strong { white-space: nowrap; overflow-wrap: normal; }
   .receipt-student { margin-top: 2.2mm; padding: 1.6mm 2mm; }
   .receipt-photo { width: 24mm; height: 24mm; object-fit: cover; border-radius: 2mm; }
   .receipt-initials { width: 12mm; height: 12mm; }

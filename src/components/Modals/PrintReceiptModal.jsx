@@ -159,7 +159,7 @@ const ReceiptSlip = ({ receipt, settings, branch, photo, copyLabel, view }) => {
 
       <div className="receipt-info-grid">
         {cells.map(([label, value]) => (
-          <div key={label}>
+          <div key={label} className={label === 'Period' ? 'receipt-info-period' : undefined}>
             <span>{label}</span>
             <strong>{value}</strong>
           </div>
@@ -359,6 +359,20 @@ export const PrintReceiptModal = ({ receipt, onClose }) => {
         </div>
 
         <div className="modal-body receipt-modal-body">
+          <div className="receipt-seg no-print" role="radiogroup" aria-label="Which copy to print">
+            {COPY_CHOICES.map(choice => (
+              <button
+                key={choice.id}
+                type="button"
+                role="radio"
+                aria-checked={copyChoice === choice.id}
+                className={copyChoice === choice.id ? 'is-selected' : undefined}
+                onClick={() => setCopyChoice(choice.id)}
+              >
+                {choice.label}
+              </button>
+            ))}
+          </div>
           <div className="receipt-preview">
             <ReceiptStack {...slipProps} />
           </div>
@@ -374,20 +388,6 @@ export const PrintReceiptModal = ({ receipt, onClose }) => {
         )}
 
         <div className="modal-footer no-print receipt-modal-footer">
-          <div className="receipt-seg" role="radiogroup" aria-label="Which copy to print">
-            {COPY_CHOICES.map(choice => (
-              <button
-                key={choice.id}
-                type="button"
-                role="radio"
-                aria-checked={copyChoice === choice.id}
-                className={copyChoice === choice.id ? 'is-selected' : undefined}
-                onClick={() => setCopyChoice(choice.id)}
-              >
-                {choice.label}
-              </button>
-            ))}
-          </div>
           <div className="receipt-modal-actions">
             <button className="btn btn-secondary" onClick={onClose}>Close Preview</button>
             <button className="btn btn-primary" onClick={handlePrint} disabled={photoLoading}>

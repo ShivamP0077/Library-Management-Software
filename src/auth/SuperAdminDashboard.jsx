@@ -93,7 +93,7 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <Shield size={22} />
           <div>
-            <h1 style={{ fontSize: 18, fontWeight: 700 }}>Super Admin — Library OS</h1>
+            <h1 style={{ fontSize: 18, fontWeight: 700 }}>Super Admin — My Library OS</h1>
             <p style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{user?.email}</p>
           </div>
         </div>

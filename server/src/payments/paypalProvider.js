@@ -87,11 +87,11 @@ export function createPaypalProvider({ clientId, clientSecret, webhookId = '', m
           purchase_units: [{
             reference_id: invoiceId,
             custom_id: `${library.libraryId}|${invoiceId}|${interval || 'month'}|${plan?.planId || ''}`,
-            description: `Library OS — ${plan?.name || library.planId || 'subscription'}`,
+            description: `My Library OS — ${plan?.name || library.planId || 'subscription'}`,
             amount: { currency_code: currency, value },
           }],
           application_context: {
-            brand_name: 'Library OS',
+            brand_name: 'My Library OS',
             user_action: 'PAY_NOW',
             return_url: returnUrl || 'https://example.com/pay/return',
             cancel_url: cancelUrl || returnUrl || 'https://example.com/pay/cancel',

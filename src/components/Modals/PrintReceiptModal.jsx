@@ -115,7 +115,7 @@ const ReceiptBody = ({ receipt, settings, branch, photo, copyLabel, view }) => {
         *** Computer Generated Official Tax Invoice & Receipt ***
       </div>
       <div style={{ textAlign: 'center', fontSize: '0.625rem', color: '#64748b', fontWeight: 600 }}>
-        Powered by Library OS
+        Powered by My Library OS
       </div>
 
     </div>

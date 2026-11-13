@@ -184,13 +184,13 @@ export function createSignupRouter({ issueSession }) {
     if (await throttleHit(`signup-email:${email}`, 5, 15 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
     const generic = { ok: true, message: 'We sent a 6-digit code to your email.' };
     if (await User.exists({ email })) {
-      await sendMail({ to: email, subject: 'Library OS signup', text: 'Someone tried to sign up with this email, but you already have a Library OS account. Sign in instead, or use Forgot password.' });
+      await sendMail({ to: email, subject: 'My Library OS signup', text: 'Someone tried to sign up with this email, but you already have a My Library OS account. Sign in instead, or use Forgot password.' });
       return res.json(generic); // same answer: no account discovery
     }
     const code = String(crypto.randomInt(0, 1e6)).padStart(6, '0');
     await SignupOtp.updateMany({ email, channel: 'email', usedAt: null }, { $set: { usedAt: new Date() } });
     await SignupOtp.create({ email, channel: 'email', codeHash: sha(`${email}:${code}`), expiresAt: new Date(Date.now() + CODE_MINUTES * 60e3) });
-    await sendMail({ to: email, subject: 'Your Library OS signup code', text: `Your signup code is ${code}. It expires in ${CODE_MINUTES} minutes.` });
+    await sendMail({ to: email, subject: 'Your My Library OS signup code', text: `Your signup code is ${code}. It expires in ${CODE_MINUTES} minutes.` });
     res.json(generic);
   }));
 
@@ -204,13 +204,13 @@ export function createSignupRouter({ issueSession }) {
     if (await throttleHit(`signup-mobile:${mobile}`, 5, 15 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
     const generic = { ok: true, message: `We sent a 6-digit code to ${maskIdentifier(mobile)}.` };
     if (await User.exists({ mobile })) {
-      await sendMobileMessage({ to: mobile, text: 'Someone tried to sign up with this mobile number, but a Library OS account already exists. Sign in instead, or use Forgot password.' });
+      await sendMobileMessage({ to: mobile, text: 'Someone tried to sign up with this mobile number, but a My Library OS account already exists. Sign in instead, or use Forgot password.' });
       return res.json(generic);
     }
     const code = String(crypto.randomInt(0, 1e6)).padStart(6, '0');
     await SignupOtp.updateMany({ mobile, channel: 'mobile', usedAt: null }, { $set: { usedAt: new Date() } });
     await SignupOtp.create({ mobile, channel: 'mobile', codeHash: sha(`mobile:${mobile}:${code}`), expiresAt: new Date(Date.now() + CODE_MINUTES * 60e3) });
-    await sendMobileMessage({ to: mobile, text: `Your Library OS signup code is ${code}. It expires in ${CODE_MINUTES} minutes.` });
+    await sendMobileMessage({ to: mobile, text: `Your My Library OS signup code is ${code}. It expires in ${CODE_MINUTES} minutes.` });
     res.json(generic);
   }));
 

@@ -164,7 +164,7 @@ export function softwareReceiptText(inv, lib) {
   const paymentId = inv.providerPaymentRef || (inv.gatewayMinor > 0 || fin.legacy ? inv.providerRef : null);
   const orderId = inv.providerOrderRef || null;
   return [
-    'LIBRARY OS — SOFTWARE PLAN PAYMENT RECEIPT',
+    'MY LIBRARY OS — SOFTWARE PLAN PAYMENT RECEIPT',
     `Receipt: ${inv.receiptNo}`,
     `Invoice: ${inv.invoiceId}`,
     `Library: ${lib?.name || inv.tenantId} (${inv.tenantId})`,
@@ -183,8 +183,8 @@ export function softwareReceiptText(inv, lib) {
     orderId ? `Order ID: ${orderId}` : null,
     !paymentId && !orderId ? `Transaction reference: ${inv.providerRef || `wallet:${inv.invoiceId}`}` : null,
     '',
-    'Gateway fees are absorbed by Library OS; they are not added to this receipt.',
-    'This is a Library OS subscription receipt, not a student fee receipt.',
+    'Gateway fees are absorbed by My Library OS; they are not added to this receipt.',
+    'This is a My Library OS subscription receipt, not a student fee receipt.',
   ].filter(v => v !== null).join('\n');
 }
 
@@ -252,7 +252,7 @@ export async function deliverSoftwareReceipt(invoiceId, { force = false, trigger
       const text = softwareReceiptText(claimed, lib);
       const accepted = await sendMail({
         to: email,
-        subject: `Library OS payment receipt ${claimed.receiptNo}`,
+        subject: `My Library OS payment receipt ${claimed.receiptNo}`,
         text,
         attachments: [{ filename: `receipt-${claimed.receiptNo}.pdf`, content: textToPdf(text), contentType: 'application/pdf' }],
       });

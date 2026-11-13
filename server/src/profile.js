@@ -196,11 +196,11 @@ async function sendReauthCode(user, channel, code) {
   if (!target) return { sent: false, reason: 'no_verified_channel' };
   if (channel === 'mobile') {
     if (!smsConfigured()) return { sent: false, reason: 'sms_not_configured' };
-    return sendMobileMessage({ to: target, text: `Your Library OS security code is ${code}. It expires in 10 minutes.` });
+    return sendMobileMessage({ to: target, text: `Your My Library OS security code is ${code}. It expires in 10 minutes.` });
   }
   if (!emailConfigured()) return { sent: false, reason: 'email_not_configured' };
   try {
-    const sent = await sendMail({ to: target, subject: 'Your Library OS security code', text: `Your security code is ${code}. It expires in 10 minutes.` });
+    const sent = await sendMail({ to: target, subject: 'Your My Library OS security code', text: `Your security code is ${code}. It expires in 10 minutes.` });
     return { sent: Boolean(sent) || process.env.NODE_ENV === 'test', reason: sent ? null : 'email_capture_only' };
   } catch (e) {
     return { sent: false, reason: 'email_delivery_failed' };
@@ -331,12 +331,12 @@ export function createProfileRouter() {
     await user.save();
     let result;
     if (channel === 'mobile') {
-      result = await sendMobileMessage({ to: target, text: `Your Library OS verification code is ${code}. It expires in 10 minutes.` });
+      result = await sendMobileMessage({ to: target, text: `Your My Library OS verification code is ${code}. It expires in 10 minutes.` });
     } else if (!emailConfigured()) {
       result = { sent: false, reason: 'email_not_configured' };
     } else {
       try {
-        const sent = await sendMail({ to: target, subject: 'Verify your new Library OS email', text: `Your verification code is ${code}. It expires in 10 minutes.` });
+        const sent = await sendMail({ to: target, subject: 'Verify your new My Library OS email', text: `Your verification code is ${code}. It expires in 10 minutes.` });
         result = { sent: Boolean(sent) || process.env.NODE_ENV === 'test', reason: sent ? null : 'email_delivery_failed' };
       } catch { result = { sent: false, reason: 'email_delivery_failed' }; }
     }
@@ -464,10 +464,10 @@ export function createProfileRouter() {
     await PasswordSetupOtp.create({ userId: String(user._id), via, codeHash: sha(`${user._id}:${via}:${code}`), expiresAt: minutes(10) });
     const target = via === 'mobile' ? user.mobile : user.email;
     let result;
-    if (via === 'mobile') result = await sendMobileMessage({ to: target, text: `Your Library OS password setup code is ${code}. It expires in 10 minutes.` });
+    if (via === 'mobile') result = await sendMobileMessage({ to: target, text: `Your My Library OS password setup code is ${code}. It expires in 10 minutes.` });
     else {
       try {
-        const sent = await sendMail({ to: target, subject: 'Your Library OS password setup code', text: `Your password setup code is ${code}. It expires in 10 minutes.` });
+        const sent = await sendMail({ to: target, subject: 'Your My Library OS password setup code', text: `Your password setup code is ${code}. It expires in 10 minutes.` });
         result = { sent: Boolean(sent) || process.env.NODE_ENV === 'test', reason: sent ? null : 'email_delivery_failed' };
       } catch { result = { sent: false, reason: 'email_delivery_failed' }; }
     }

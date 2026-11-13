@@ -97,7 +97,7 @@ export function createRazorpayProvider({ keyId, keySecret, webhookSecret = '', m
           amount: amtPaise,
           currency,
           accept_partial: false,
-          description: `Library OS — ${plan?.name || library.planId || 'subscription'} (${interval || 'month'})`,
+          description: `My Library OS — ${plan?.name || library.planId || 'subscription'} (${interval || 'month'})`,
           customer: {
             name: library.name,
             email: library.contactEmail || undefined,
@@ -129,7 +129,7 @@ export function createRazorpayProvider({ keyId, keySecret, webhookSecret = '', m
           period,
           interval: 1,
           item: {
-            name: `Library OS ${plan?.name || plan?.planId}`,
+            name: `My Library OS ${plan?.name || plan?.planId}`,
             amount: amtPaise,
             currency: 'INR',
           },

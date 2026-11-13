@@ -98,7 +98,7 @@ export const StudentExcelViewModal = ({ isOpen, onClose, studentsData, title = "
       // Header
       doc.setFontSize(20);
       doc.setTextColor(33, 33, 33);
-      doc.text(settings?.libraryName || "Library Management System", 14, 22);
+      doc.text(settings?.libraryName || "My Library OS", 14, 22);
       
       doc.setFontSize(14);
       doc.setTextColor(100, 100, 100);

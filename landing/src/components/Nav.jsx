@@ -13,10 +13,10 @@ const links = [
 
 export function Logo({ className = '' }) {
   return (
-    <a href="#top" className={`flex cursor-pointer items-center gap-2.5 ${className}`} aria-label={`${BRAND} home`}>
-      <img src="/favicon.svg" alt="" width="32" height="32" className="h-8 w-8" />
-      <span className="font-display text-lg font-bold tracking-tight text-white">
-        Library<span className="text-gold-400">OS</span>
+    <a href="#top" className={`flex min-w-0 cursor-pointer items-center gap-2.5 ${className}`} aria-label={`${BRAND} home`}>
+      <img src="/logo-icon.png" alt="" width="32" height="32" className="h-8 w-8 shrink-0" />
+      <span className="font-display whitespace-nowrap text-base font-bold tracking-tight text-white sm:text-lg">
+        My Library <span className="text-[#1A6FFF]">OS</span>
       </span>
     </a>
   );

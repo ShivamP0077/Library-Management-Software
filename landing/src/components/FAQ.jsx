@@ -4,8 +4,8 @@ import { Plus } from 'lucide-react';
 import { SectionHeading } from './ui.jsx';
 
 const faqs = [
-  ['Who is Library OS for?', 'Owners and managers of reading libraries, study rooms and self-study halls where students rent a seat for a shift or a full day, usually on a monthly plan.'],
-  ['Do I need to install anything?', 'No. Library OS is a web app — open it in a modern browser and sign in. There is no hardware or software to install.'],
+  ['Who is My Library OS for?', 'Owners and managers of reading libraries, study rooms and self-study halls where students rent a seat for a shift or a full day, usually on a monthly plan.'],
+  ['Do I need to install anything?', 'No. My Library OS is a web app — open it in a modern browser and sign in. There is no hardware or software to install.'],
   ['How does sign-in work?', 'You sign in with your Google account. Your email address is linked to your role — super admin or library admin — so there are no separate passwords to manage.'],
   ['Can I manage more than one branch?', 'Yes. You can set up multiple branches, and a super admin gets a combined overview of seats, occupancy and revenue across all of them.'],
   ['Can other libraries see my data?', 'No. Each client library’s records are kept separate on the server, and library admins can only access their own library.'],

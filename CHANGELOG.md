@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-13 (IST)
+
+- **Brand: rename to My Library OS and use the new logo.** The live site and app still said "Library OS" or "Library Management OS", and the landing used an old gold-book mark (the apple-touch icon was a broken error-page image). Customer-facing text now says "My Library OS" — landing, app tab title, login, header subtitle, support, receipts, emails, SMS and payment labels. The new book-and-circuit logo is used for favicons, the apple-touch icon, the social preview image, the landing wordmark and the login screen. Each library's own header/receipt logo is unchanged. Cookies, localStorage keys, `LIB-`/`REG-` codes, backup file format (`LOSB1`, `library-os-*.bak`), package names and Vercel project names are unchanged. The WhatsApp linked-device name is left to a later Evolution setting. Files: `index.html`, `public/`, `src/auth/LoginScreen.jsx`, `src/components/Header.jsx`, `landing/index.html`, `landing/public/`, `landing/src/`, `server/src/` emails, receipts and payment providers.
+
 ## 2026-11-10 (IST)
 
 - **#15 Google signup fix** — 21:55 IST. Cause: the signup page's Continue with Google button used the relative link `/api/auth/google/start?signup=1`, which on Vercel opened the website itself instead of the API, so no Google signup started and the user landed back on sign in. Fix: it now uses the same API address as the sign-in Google button (`api.googleStartUrl()`) with `?signup=1`. File: `src/auth/SignupPanel.jsx`.

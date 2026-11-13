@@ -61,7 +61,7 @@ export default function Footer() {
         ))}
       </div>
       <div className="container-x mt-12 flex flex-col justify-between gap-3 border-t border-white/10 pt-6 text-xs sm:flex-row">
-        <p>© {new Date().getFullYear()} Library OS. All rights reserved.</p>
+        <p>© {new Date().getFullYear()} My Library OS. All rights reserved.</p>
         <p>Made for study rooms and reading libraries.</p>
       </div>
     </footer>

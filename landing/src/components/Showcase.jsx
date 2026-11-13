@@ -209,16 +209,16 @@ export default function Showcase() {
               <span className="h-3 w-3 rounded-full bg-rose-400/80" />
               <span className="h-3 w-3 rounded-full bg-amber-400/80" />
               <span className="h-3 w-3 rounded-full bg-emerald-400/80" />
-              <span className="mx-auto hidden rounded-md bg-white/5 px-24 py-1 text-xs text-stone-500 sm:block">your-library · Library OS</span>
+              <span className="mx-auto hidden rounded-md bg-white/5 px-24 py-1 text-xs text-stone-500 sm:block">your-library · My Library OS</span>
               <SampleBadge className="ml-auto text-gold-300 sm:ml-0" />
             </div>
             <div className="flex bg-stone-100">
               <aside className="hidden w-56 shrink-0 flex-col gap-1 border-r border-stone-200 bg-white p-3 md:flex">
                 <div className="mb-3 flex items-center gap-2 px-2 py-2">
-                  <img src="/favicon.svg" alt="" className="h-7 w-7" />
+                  <img src="/logo-icon.png" alt="" className="h-7 w-7" />
                   <div className="leading-tight">
                     <p className="text-sm font-bold text-ink-950">Your Library</p>
-                    <p className="text-[11px] text-stone-500">Library Management OS</p>
+                    <p className="text-[11px] text-stone-500">My Library OS</p>
                   </div>
                 </div>
                 {nav.map(([l, I], i) => {

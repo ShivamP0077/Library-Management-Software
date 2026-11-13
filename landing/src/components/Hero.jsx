@@ -68,7 +68,7 @@ export default function Hero() {
             transition={{ duration: 0.8, delay: 0.16, ease }}
             className="mt-6 max-w-xl text-base leading-relaxed text-stone-300 sm:text-lg"
           >
-            Library OS replaces registers and spreadsheets with a live seat map, shift-based admissions, split payments
+            My Library OS replaces registers and spreadsheets with a live seat map, shift-based admissions, split payments
             with printable receipts, expenses and P&amp;L — plus a super admin view across every branch you run.
           </m.p>
           <m.div

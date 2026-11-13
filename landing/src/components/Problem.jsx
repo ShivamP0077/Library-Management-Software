@@ -15,14 +15,14 @@ export default function Problem() {
       <div className="container-x">
         <SectionHeading
           dark
-          eyebrow="Why Library OS"
+          eyebrow="Why My Library OS"
           title={<>Your study room is busy. <span className="text-stone-500">Your paperwork shouldn’t be.</span></>}
-          sub="Running a reading library means juggling seats, shifts, admissions, fees and staff every single day. Library OS turns that juggling act into one calm, organised system."
+          sub="Running a reading library means juggling seats, shifts, admissions, fees and staff every single day. My Library OS turns that juggling act into one calm, organised system."
         />
         <div className="mx-auto mt-16 max-w-5xl overflow-hidden rounded-3xl border border-white/10">
           <div className="hidden grid-cols-2 border-b border-white/10 bg-white/[0.03] text-xs font-semibold uppercase tracking-[0.14em] sm:grid">
             <div className="px-6 py-4 text-stone-500">The register way</div>
-            <div className="border-l border-white/10 px-6 py-4 text-gold-300">With Library OS</div>
+            <div className="border-l border-white/10 px-6 py-4 text-gold-300">With My Library OS</div>
           </div>
           {rows.map(([before, after], i) => (
             <Reveal key={i} delay={i * 0.05} className="grid border-b border-white/10 last:border-b-0 sm:grid-cols-2">

@@ -137,7 +137,7 @@ export function createPublicAccountRouter({ issueSession }) {
     const code = String(crypto.randomInt(0, 1e6)).padStart(6, '0');
     await PasswordResetOtp.updateMany({ userId: String(user._id), usedAt: null }, { $set: { usedAt: new Date() } }); // old codes stop working
     await PasswordResetOtp.create({ userId: String(user._id), codeHash: sha(`${user._id}:${code}`), expiresAt: new Date(Date.now() + OTP_MINUTES() * 60e3), ip: req.ip });
-    await sendMail({ to: user.email, subject: 'Your Library OS password reset code',
+    await sendMail({ to: user.email, subject: 'Your My Library OS password reset code',
       text: `Your password reset code is ${code}. It expires in ${OTP_MINUTES()} minutes. If you did not ask for this, ignore this email.` });
     await audit({ user: { id: String(user._id), email: user.email, role: user.role }, ip: req.ip }, 'password.reset_requested', { tenantId: user.tenantId || null, target: mask(user.email) });
     res.json(generic);
@@ -160,7 +160,7 @@ export function createPublicAccountRouter({ issueSession }) {
     const code = String(crypto.randomInt(0, 1e6)).padStart(6, '0');
     await PasswordResetOtp.updateMany({ userId: String(user._id), usedAt: null }, { $set: { usedAt: new Date() } });
     await PasswordResetOtp.create({ userId: String(user._id), mobile, channel: 'mobile', codeHash: sha(`${user._id}:${code}`), expiresAt: new Date(Date.now() + OTP_MINUTES() * 60e3), ip: req.ip });
-    await sendMobileMessage({ to: mobile, text: `Your Library OS password reset code is ${code}. It expires in ${OTP_MINUTES()} minutes. If you did not ask for this, ignore this message.` });
+    await sendMobileMessage({ to: mobile, text: `Your My Library OS password reset code is ${code}. It expires in ${OTP_MINUTES()} minutes. If you did not ask for this, ignore this message.` });
     await audit({ user: { id: String(user._id), email: user.email, role: user.role }, ip: req.ip }, 'password.reset_requested', { tenantId: user.tenantId || null, target: `••••${mobile.slice(-4)}` });
     res.json(generic);
   }));
@@ -238,7 +238,7 @@ export function createTenantAccountRouter() {
     const lib = await Library.findOne({ libraryId: req.tenantId }).lean();
     let emailed = false;
     if (req.body?.sendEmail !== false) {
-      try { emailed = await sendMail({ to: email, subject: `You're invited to ${lib?.name || 'a library'} on Library OS`, text: `You have been invited to join ${lib?.name || 'a library'} as ${role === 'staff' ? 'staff' : 'an admin'}.\n\nOpen this link to set your password (valid for ${hours} hours, one-time use):\n${link}` }); }
+      try { emailed = await sendMail({ to: email, subject: `You're invited to ${lib?.name || 'a library'} on My Library OS`, text: `You have been invited to join ${lib?.name || 'a library'} as ${role === 'staff' ? 'staff' : 'an admin'}.\n\nOpen this link to set your password (valid for ${hours} hours, one-time use):\n${link}` }); }
       catch (e) { console.error('[invite] email failed:', e.message); }
     }
     await audit(req, 'invite.created', { target: email, detail: { role, staffId: req.body?.staffId, hours } });

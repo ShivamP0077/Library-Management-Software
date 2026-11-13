@@ -138,6 +138,7 @@ Vite bakes `VITE_*` values into the bundle at **build** time, so restart `npm ru
 | `DEMO_LIBRARY_ID` | optional | `lib-demo` | Library ID used by `npm run seed:demo` | — |
 | `DEMO_ADMIN_EMAIL` | optional | `demo.admin@example.com` | Demo client admin created by `seed:demo` | — |
 | `DEMO_CREDENTIALS_FILE` | optional | — | Where `seed:demo` writes the generated demo admin password | A local path outside the repo |
+| `SUPPORT_EMAIL` | optional | `mylibraryosadmin@gmail.com` | Support address printed on registration confirmations. `SMTP_FROM` is the sending mailbox and is not shown | Official support email |
 | `DB_RETRY_MS` | optional | `30000` | How long to wait between MongoDB connection retries | — |
 | `JSON_LIMIT` | optional | `25mb` | Max JSON request size (document scans are sent as base64) | — |
 | `SERVE_FRONTEND` | optional | off | `true` makes the API also serve the built app from `../dist` (single-host setup) | — |
@@ -161,6 +162,9 @@ GOOGLE_CLIENT_ID=
 | `VITE_API_URL` | optional locally, **required on Vercel** | empty, so it uses `/api` through the Vite proxy | Backend origin; `/api` is added automatically | Local: leave empty. Production: `https://lms-api-sz2z.onrender.com` |
 | `VITE_GOOGLE_CLIENT_ID` | optional | empty (no Google button) | Shows the "Sign in with Google" button | Same value as the backend's `GOOGLE_CLIENT_ID` |
 | `VITE_DEV_API_PROXY` | optional (dev only, read by `vite.config.js`) | `http://localhost:4000` | Where the dev server proxies `/api` and `/health` | e.g. `https://lms-api-sz2z.onrender.com` to use the live API from the local UI |
+| `VITE_SUPPORT_EMAIL` | optional | `mylibraryosadmin@gmail.com` | Email shown in Contact Us, Help & Support, and the plan lock screen | Official support email |
+| `VITE_SUPPORT_PHONE` | optional | hidden | Phone row on Contact Us. Leave unset to hide the row | — |
+| `VITE_SUPPORT_WHATSAPP` | optional | hidden | WhatsApp row on Contact Us. Leave unset to hide the row | — |
 | `NO_OPEN` / `CI` | optional (dev only) | — | Any value stops `npm run dev` from opening a browser | — |
 
 ### Landing — `landing/.env.local`
@@ -169,7 +173,7 @@ GOOGLE_CLIENT_ID=
 |---|---|---|---|---|
 | `VITE_APP_URL` | recommended | `/app` | Target of the Sign in / Start free trial buttons | Local: `http://localhost:3001`. Production: `https://library-os-app.vercel.app` |
 | `VITE_SITE_URL` | recommended for production | empty | The landing's own public URL, used for canonical and social-preview tags at build time | Production: `https://library-os-ashy.vercel.app` (or your custom domain) |
-| `VITE_DEMO_EMAIL` | optional | `hello@example.com` (placeholder) | Address for the "Book a demo" mailto link | Your sales/support email |
+| `VITE_DEMO_EMAIL` | optional | `mylibraryosadmin@gmail.com` | Address for the "Book a demo" mailto link | Official support email |
 
 ### Google sign-in (not set up yet)
 1. Google Cloud Console → APIs & Services → **OAuth consent screen**: set it up (External, app name, support email). While testing, add test users.

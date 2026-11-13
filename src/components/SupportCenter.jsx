@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState
 import toast from 'react-hot-toast';
 import { LifeBuoy, Plus, X, Paperclip, Send, ArrowLeft, Download, Search, RefreshCw } from 'lucide-react';
 import { api, downloadFile } from '../utils/api';
+import { SUPPORT_EMAIL } from '../utils/support';
 import { useLibrary } from '../context/LibraryContext';
 
 export const TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
@@ -309,7 +310,7 @@ export const SupportCenter = () => {
       {showList && <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}><LifeBuoy size={22} /> Help &amp; Support</h2>
-          <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Raise a ticket and chat with the My Library OS support team.</p>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Raise a ticket and chat with the My Library OS support team. Email <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>.</p>
         </div>
         <button className="btn btn-primary btn-sm" onClick={() => setCreating(c => !c)}>{creating ? <X size={14} /> : <Plus size={14} />} New ticket</button>
       </div>}

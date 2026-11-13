@@ -12,17 +12,9 @@ import { useLibrary } from '../../context/LibraryContext';
 import { SupportCenter } from '../SupportCenter';
 import { applyTheme, readTheme } from '../../utils/theme';
 import { isLibraryLocked } from '../../utils/subscriptionLock';
+import { SUPPORT_EMAIL, SUPPORT_PHONE, SUPPORT_WHATSAPP, whatsappHref } from '../../utils/support';
 import { SubscriptionPage } from './SubscriptionPage';
 import './profile.css';
-
-const SUPPORT_EMAIL = import.meta.env.VITE_SUPPORT_EMAIL || 'support@libraryos.app';
-const SUPPORT_PHONE = import.meta.env.VITE_SUPPORT_PHONE || '';
-const SUPPORT_WHATSAPP = import.meta.env.VITE_SUPPORT_WHATSAPP || '';
-
-const whatsappHref = (value) => {
-  const digits = String(value || '').replace(/\D/g, '');
-  return digits ? `https://wa.me/${digits}` : '';
-};
 
 function Row({ icon: Icon, tint, label, value, onClick, danger = false }) {
   return (
@@ -144,16 +136,20 @@ export function LibraryOsProfile({ screen = 'home', onScreenChange, onClose, onP
             <span className="os-row-label">Email</span>
             <span className="os-row-value">{SUPPORT_EMAIL}</span>
           </a>
-          <div className="os-row" style={{ cursor: 'default' }}>
-            <span className="os-icon" style={{ background: '#dcfce7' }}><Phone size={18} color="#1c1917" /></span>
-            <span className="os-row-label">Phone</span>
-            <span className="os-row-value">{SUPPORT_PHONE ? <a href={`tel:${SUPPORT_PHONE}`}>{SUPPORT_PHONE}</a> : 'Not listed'}</span>
-          </div>
-          <div className="os-row" style={{ cursor: 'default' }}>
-            <span className="os-icon" style={{ background: '#d1fae5' }}><Phone size={18} color="#1c1917" /></span>
-            <span className="os-row-label">WhatsApp</span>
-            <span className="os-row-value">{SUPPORT_WHATSAPP && whatsappHref(SUPPORT_WHATSAPP) ? <a href={whatsappHref(SUPPORT_WHATSAPP)} target="_blank" rel="noreferrer">Chat</a> : 'Not listed'}</span>
-          </div>
+          {SUPPORT_PHONE && (
+            <div className="os-row" style={{ cursor: 'default' }}>
+              <span className="os-icon" style={{ background: '#dcfce7' }}><Phone size={18} color="#1c1917" /></span>
+              <span className="os-row-label">Phone</span>
+              <span className="os-row-value"><a href={`tel:${SUPPORT_PHONE}`}>{SUPPORT_PHONE}</a></span>
+            </div>
+          )}
+          {SUPPORT_WHATSAPP && whatsappHref(SUPPORT_WHATSAPP) && (
+            <div className="os-row" style={{ cursor: 'default' }}>
+              <span className="os-icon" style={{ background: '#d1fae5' }}><Phone size={18} color="#1c1917" /></span>
+              <span className="os-row-label">WhatsApp</span>
+              <span className="os-row-value"><a href={whatsappHref(SUPPORT_WHATSAPP)} target="_blank" rel="noreferrer">Chat</a></span>
+            </div>
+          )}
           <button type="button" className="os-row" onClick={() => go('support')}>
             <span className="os-icon" style={{ background: '#ffedd5' }}><LifeBuoy size={18} color="#1c1917" /></span>
             <span className="os-row-label">Help & Support</span>

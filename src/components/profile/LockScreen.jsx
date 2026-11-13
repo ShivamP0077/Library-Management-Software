@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Lock, Phone } from 'lucide-react';
+import { Lock, Mail, Phone } from 'lucide-react';
 import { api } from '../../utils/api';
+import { SUPPORT_EMAIL } from '../../utils/support';
 import './profile.css';
 
 export function LockScreen({ message, onRenew, onContact, canRenew = true }) {
@@ -12,6 +13,7 @@ export function LockScreen({ message, onRenew, onContact, canRenew = true }) {
       <div className="os-lock-actions">
         {canRenew && <button type="button" className="btn btn-primary" onClick={onRenew}>Renew now</button>}
         <button type="button" className="btn btn-secondary" onClick={onContact}><Phone size={16} /> Contact us</button>
+        <a className="btn btn-secondary" href={`mailto:${SUPPORT_EMAIL}`}><Mail size={16} /> {SUPPORT_EMAIL}</a>
       </div>
     </div>
   );
@@ -39,6 +41,7 @@ export function LockedDashboard({ message, onRenew, onContact, canRenew = true }
         <div className="os-lock-actions" style={{ justifyContent: 'flex-start', marginTop: 10 }}>
           {canRenew && <button type="button" className="btn btn-primary btn-sm" onClick={onRenew}>Renew now</button>}
           <button type="button" className="btn btn-secondary btn-sm" onClick={onContact}>Contact us</button>
+          <a className="btn btn-secondary btn-sm" href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>
         </div>
       </div>
       {error && <div className="os-error">{error}</div>}

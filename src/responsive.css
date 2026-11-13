@@ -76,9 +76,10 @@ img, svg, canvas, video { max-width: 100%; }
   .page-scroller { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
 
   /* Session bar: compact */
-  #session-bar { padding: 4px 8px !important; }
+  #session-bar { padding: 4px 8px !important; flex-wrap: wrap; }
   #session-bar .session-email { display: none; }
   #session-bar .btn span { display: none; }
+  #session-bar .os-profile-btn span { display: inline !important; }
 
   /* Page headings wrap instead of overflowing */
   .main-content h2 { font-size: 22px !important; }

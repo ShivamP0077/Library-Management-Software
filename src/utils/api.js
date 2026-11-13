@@ -36,7 +36,15 @@ export async function apiRequest(path, { method = 'GET', body, signal, retries =
   const text = await res.text();
   const data = parseJsonSafe(text, res.status);
   if (res.status === 401 && token && unauthorizedHandler) unauthorizedHandler();
-  if (!res.ok) throw Object.assign(new Error(data?.error || `Request failed (${res.status})`), { status: res.status, code: data?.code, details: data?.details, retryAfterMs: Number(res.headers.get('retry-after') || 0) * 1000 || undefined });
+  if (res.status === 402 && data?.code === 'SUBSCRIPTION_LOCKED' && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('libos:subscription-locked', { detail: data }));
+  }
+  if (!res.ok) {
+    const message = data?.code === 'SUBSCRIPTION_LOCKED'
+      ? (data.message || 'Your plan has expired.')
+      : (data?.error || `Request failed (${res.status})`);
+    throw Object.assign(new Error(message), { status: res.status, code: data?.code, details: data?.details, retryAfterMs: Number(res.headers.get('retry-after') || 0) * 1000 || undefined });
+  }
   return data;
 }
 
@@ -207,6 +215,12 @@ export const api = {
   changePassword: (currentPassword, newPassword) => apiRequest('/auth/change-password', { method: 'POST', body: { currentPassword, newPassword } }),
   adminUpdateLibrary: (libraryId, body) => apiRequest(`/admin/libraries/${encodeURIComponent(libraryId)}`, { method: 'PATCH', body }),
   subscription: () => apiRequest('/subscription'),
+  subscriptionSummary: () => apiRequest('/subscription/summary'),
+  subscriptionHistory: () => apiRequest('/subscription/history'),
+  subscriptionRenew: (body, key) => apiRequest('/subscription/renew', { method: 'POST', body, headers: { 'Idempotency-Key': key || idemKey() } }),
+  subscriptionRenewEarly: (body, key) => apiRequest('/subscription/renew-early', { method: 'POST', body, headers: { 'Idempotency-Key': key || idemKey() } }),
+  subscriptionUpgrade: (body, key) => apiRequest('/subscription/upgrade', { method: 'POST', body, headers: { 'Idempotency-Key': key || idemKey() } }),
+  dashboardCounts: () => apiRequest('/dashboard'),
   subscriptionChange: (planId, interval) => apiRequest('/subscription/change', { method: 'POST', body: { planId, interval } }),
   subscriptionCancel: (resume) => apiRequest('/subscription/cancel', { method: 'POST', body: { resume: Boolean(resume) } }),
   subscriptionRequestDeletion: (confirmName, reason) => apiRequest('/subscription/deletion-request', { method: 'POST', body: { confirmName, reason } }),
@@ -248,6 +262,7 @@ export function createSyncQueue({ delay = 400, onError } = {}) {
   };
   return {
     enable: () => { enabled = true; },
+    disable: () => { enabled = false; },
     isEnabled: () => enabled,
     markSynced: (key, value) => last.set(key, JSON.stringify(value)),
     push,

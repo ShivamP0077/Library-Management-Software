@@ -19,6 +19,7 @@ import {
   RefreshCw,
   LifeBuoy,
   MessageCircle,
+  CircleUser,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
@@ -41,12 +42,14 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
     if (isRefreshing) return;
     try {
       const refreshed = await refreshData();
+      if (refreshed === 'locked') return;
       if (refreshed) {
         toast.success('Data refreshed successfully.');
       } else {
         toast.error('No data available on the server.');
       }
     } catch (e) {
+      if (e?.code === 'SUBSCRIPTION_LOCKED' || e?.status === 402) return;
       toast.error('Could not refresh data. Please try again.');
     }
   };
@@ -235,6 +238,24 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
             </button>
           );
         })}
+        {drawerOpen && (
+          <button
+            type="button"
+            id="nav-tab-profile"
+            onClick={() => {
+              setDrawerOpen(false);
+              window.dispatchEvent(new CustomEvent('libos:navigate', { detail: { tab: 'profile', screen: 'home' } }));
+            }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8, padding: '12px',
+              background: 'transparent', border: 'none', color: 'var(--text-primary)',
+              fontWeight: 600, fontSize: 14, cursor: 'pointer', textAlign: 'left',
+            }}
+          >
+            <CircleUser size={16} />
+            <span>My Library OS Profile</span>
+          </button>
+        )}
       </nav>
 
       {/* Rendered into <body>: the glass header's backdrop-filter would otherwise trap position:fixed */}

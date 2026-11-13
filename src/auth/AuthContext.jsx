@@ -52,7 +52,27 @@ export function AuthProvider({ children }) {
     setStatus('anonymous');
   }, []);
 
+  const refreshSession = useCallback(async () => {
+    if (!getToken()) return null;
+    const r = await api.me();
+    setSession({ user: r.user, library: r.library, subscriptionAccess: r.subscriptionAccess || null });
+    setStatus('authenticated');
+    return r;
+  }, []);
+
   useEffect(() => { onUnauthorized(logout); }, [logout]);
+
+  useEffect(() => {
+    let last = 0;
+    const onLock = () => {
+      const now = Date.now();
+      if (now - last < 2000) return;
+      last = now;
+      refreshSession().catch(() => {});
+    };
+    window.addEventListener('libos:subscription-locked', onLock);
+    return () => window.removeEventListener('libos:subscription-locked', onLock);
+  }, [refreshSession]);
 
   useEffect(() => {
     // The OAuth callback returns the token (or an error code) in the URL fragment.
@@ -81,7 +101,7 @@ export function AuthProvider({ children }) {
   const loginWithGoogle = async (credential) => completeLogin(await api.loginWithGoogle(credential));
 
   return (
-    <AuthContext.Provider value={{ ...session, status, oauthError, googleSignupPending, clearGoogleSignupPending: () => setGoogleSignupPending(''), completeLogin, loginWithPassword, loginWithGoogle, logout }}>
+    <AuthContext.Provider value={{ ...session, status, oauthError, googleSignupPending, clearGoogleSignupPending: () => setGoogleSignupPending(''), completeLogin, loginWithPassword, loginWithGoogle, logout, refreshSession }}>
       {children}
     </AuthContext.Provider>
   );

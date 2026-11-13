@@ -4,7 +4,9 @@ import App from './App';
 import './index.css';
 import './responsive.css';
 import { initResponsiveTables } from './utils/responsiveTables';
+import { applyTheme, readTheme } from './utils/theme';
 
+applyTheme(readTheme());
 initResponsiveTables();
 
 ReactDOM.createRoot(document.getElementById('root')).render(

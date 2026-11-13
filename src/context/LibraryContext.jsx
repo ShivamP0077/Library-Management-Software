@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import toast from 'react-hot-toast';
+import { isSubscriptionLockError } from '../utils/subscriptionLock';
 import { api, createSyncQueue, SYNCED_COLLECTIONS } from '../utils/api';
 import { getDefaultPermissionsForRole, syncLegacyPermissions } from '../utils/staffPermissions';
 import { isShiftInPlan, resolveCanonicalShift, getCanonicalShifts, normalizeShiftName, shiftsOverlap } from '../utils/shiftUtils';
@@ -732,6 +733,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
     let warned = false;
     syncRef.current = createSyncQueue({
       onError: (key, e) => {
+        if (isSubscriptionLockError(e)) return;
         // Server-side business rule (e.g. seat double booking): show the reason and
         // reload the server's truth instead of keeping the rejected local change.
         if (e.status === 409 || e.status === 400) {
@@ -783,8 +785,13 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       }
       applyRemoteState(remote);
       setBackendStatus('online');
+      syncRef.current?.enable();
       return true;
     } catch (e) {
+      if (isSubscriptionLockError(e)) {
+        setBackendStatus('locked');
+        return 'locked';
+      }
       setBackendStatus('offline');
       throw e;
     } finally {
@@ -828,10 +835,28 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         setBackendStatus('online');
       } catch (e) {
         if (cancelled) return;
+        if (isSubscriptionLockError(e)) {
+          setBackendStatus('locked');
+          if (!readOnly) sync.enable();
+          return;
+        }
         setBackendStatus('offline');
       }
     })();
-    return () => { cancelled = true; };
+    const reload = async () => {
+      try {
+        const remote = await api.getState();
+        if (cancelled) return;
+        applyRemoteStateRef.current?.(remote);
+        setBackendStatus('online');
+        sync.enable();
+      } catch (e) {
+        if (cancelled) return;
+        if (isSubscriptionLockError(e)) setBackendStatus('locked');
+      }
+    };
+    window.addEventListener('libos:reload-library', reload);
+    return () => { cancelled = true; window.removeEventListener('libos:reload-library', reload); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

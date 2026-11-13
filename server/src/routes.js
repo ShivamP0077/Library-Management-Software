@@ -36,6 +36,7 @@ import { createSubscriptionRouter } from './subscription.js';
 import { requireActiveSubscription, requireFeature, refreshSubscriptionStatus, accessFor } from './subscriptionAccess.js';
 import { createPlanAdminRouter, SoftwarePlan, checkBranchLimit, checkStaffLimit } from './plans.js';
 import { createPaymentsAdminRouter } from './paymentsAdmin.js';
+import { createSystemWhatsappRouter } from './systemWhatsapp.js';
 import { createBillingAdminRouter } from './billingConfig.js';
 import { refreshPaymentProvider } from './paymentConfig.js';
 import { DeletionJob } from './deletionJob.js';
@@ -301,6 +302,7 @@ admin.use(createPartnerAdminRouter());
 admin.use(createSupportAdminRouter());
 admin.use(createPlanAdminRouter());
 admin.use(createPaymentsAdminRouter()); // Issue #19
+admin.use(createSystemWhatsappRouter()); // system WhatsApp sender (libos-system)
 admin.use(createBillingAdminRouter()); // Issue #19 explicit tax/currency policy
 admin.use(createSoftwarePlanAdminRouter()); // Issue #19 offers + referral campaigns
 

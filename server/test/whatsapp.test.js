@@ -11,6 +11,12 @@ test('instance name is derived from libraryId and URL safe', () => {
   assert.equal(instanceNameFor('Lib A/../x'), 'libos-lib-a-x');
   assert.notEqual(instanceNameFor('lib-a'), instanceNameFor('lib-b'));
   assert.throws(() => instanceNameFor(''));
+  // The system sender owns this name. No library id may map to it.
+  for (const id of ['system', 'SYSTEM', 'System', 'system!!!']) {
+    assert.throws(() => instanceNameFor(id), /reserved/i);
+  }
+  assert.notEqual(instanceNameFor('lib-system'), 'libos-system');
+  assert.notEqual(instanceNameFor('libos-system'), 'libos-system');
 });
 
 test('normalizePhone handles Indian numbers', () => {
@@ -223,6 +229,12 @@ function memMessages(rows) {
   };
 }
 
+test('webhook: libos-system events do not crash and are not applied to a library log', async () => {
+  const M = memMessages([{ _id: 'sys', libraryId: 'system', providerMessageId: 'PS', status: 'sent' }]);
+  assert.equal(await applyStatusUpdate('libos-system', { keyId: 'PS', status: 'READ' }, M), false);
+  assert.equal(M.rows[0].status, 'sent');
+});
+
 test('webhook: status only moves forward and is tenant-checked by instance', async () => {
   const M = memMessages([{ _id: 'a', libraryId: 'lib-a', providerMessageId: 'P1', status: 'sent' }]);
   assert.equal(await applyStatusUpdate('libos-lib-b', { keyId: 'P1', status: 'READ' }, M), false); // other library's instance
@@ -248,6 +260,13 @@ test('webhook route: rejects bad tokens, accepts the derived token', async () =>
     assert.equal((await post(`?token=${webhookTokenFor('libos-lib-b')}`, body)).status, 401);
     const ok = await post(`?token=${webhookTokenFor('libos-lib-a')}`, body);
     assert.equal(ok.status, 200); assert.equal((await ok.json()).updated, 1);
+    assert.equal(M.rows[0].status, 'delivered');
+    const sys = await fetch(`http://127.0.0.1:${server.address().port}/wa/webhook/libos-system?token=${webhookTokenFor('libos-system')}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event: 'messages.update', data: { keyId: 'P1', status: 'READ' } }),
+    });
+    assert.equal(sys.status, 200);
+    assert.equal((await sys.json()).ignored, true);
     assert.equal(M.rows[0].status, 'delivered');
   } finally { server.close(); process.env.EVOLUTION_API_KEY = prev; }
 });

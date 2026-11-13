@@ -7,6 +7,7 @@ import { User, Library } from './models.js';
 import { createLibrary, validatePassword } from './services.js';
 import { sendMail } from './mailer.js';
 import { sendMobileMessage, smsConfigured } from './messaging.js';
+import { systemWhatsappReady } from './systemWhatsapp.js';
 import { audit } from './audit.js';
 import { rateLimited } from './accounts.js';
 import { throttleHit } from './throttle.js';
@@ -166,11 +167,13 @@ export function createSignupRouter({ issueSession }) {
 
   r.get('/auth/signup/config', wrap(async (_req, res) => {
     const enabled = signupEnabled();
+    const mobileSignup = enabled && (smsConfigured() || await systemWhatsappReady());
     res.json({
       enabled,
       plans: enabled ? await signupPlans() : [],
       googleSignup: enabled && googleEnabled(),
-      mobileSignup: enabled && smsConfigured(),
+      mobileSignup,
+      mobileSignupAvailable: mobileSignup,
       paymentsConfigured: Boolean(paymentProvider()),
     });
   }));
@@ -198,7 +201,7 @@ export function createSignupRouter({ issueSession }) {
     if (!signupEnabled()) return off(res);
     const mobile = normalizeMobile(req.body?.mobile);
     if (!isMobile(mobile)) return res.status(400).json({ error: 'A valid mobile number is required' });
-    if (!smsConfigured()) return res.status(503).json({ error: 'Mobile verification is not configured. Contact support.', code: 'mobile_otp_not_configured' });
+    if (!(smsConfigured() || await systemWhatsappReady())) return res.status(503).json({ error: 'Mobile verification is not configured. Contact support.', code: 'mobile_otp_not_configured' });
     if (rateLimited(`sump-ip:${req.ip}`, 10, 15 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
     if (rateLimited(`su-mobile:${mobile}`, 1, 60e3)) return res.status(429).json({ error: 'Please wait a minute before requesting another code.' });
     if (await throttleHit(`signup-mobile:${mobile}`, 5, 15 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
@@ -208,9 +211,13 @@ export function createSignupRouter({ issueSession }) {
       return res.json(generic);
     }
     const code = String(crypto.randomInt(0, 1e6)).padStart(6, '0');
+    const text = `Your My Library OS sign-up code is ${code}. It expires in ${CODE_MINUTES} minutes. Do not share it.`;
+    const delivery = await sendMobileMessage({ to: mobile, text });
+    if (!delivery?.sent) {
+      return res.status(503).json({ error: 'Could not send the code on WhatsApp. Try email sign-up.' });
+    }
     await SignupOtp.updateMany({ mobile, channel: 'mobile', usedAt: null }, { $set: { usedAt: new Date() } });
     await SignupOtp.create({ mobile, channel: 'mobile', codeHash: sha(`mobile:${mobile}:${code}`), expiresAt: new Date(Date.now() + CODE_MINUTES * 60e3) });
-    await sendMobileMessage({ to: mobile, text: `Your My Library OS signup code is ${code}. It expires in ${CODE_MINUTES} minutes.` });
     res.json(generic);
   }));
 

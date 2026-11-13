@@ -322,11 +322,11 @@ const LibraryWorkspace = ({ libraryId, libraryName, readOnly = false, lockedStaf
     <div className="lib-workspace" style={{ display: 'flex', flexDirection: 'column' }}>
       <SessionBar libraryName={libraryName} readOnly={readOnly} onBack={onBack} isOffline={isOffline} onSwitchToCloud={onSwitchToCloud} />
       <div style={{ flex: 1, minHeight: 0 }}>
-        <LibraryProvider key={`${libraryId || 'local'}-${readOnly}-${isOffline}`} readOnly={readOnly} lockedStaffId={lockedStaffId}>
-          <ErrorBoundary>
+        <ErrorBoundary>
+          <LibraryProvider key={`${libraryId || 'local'}-${readOnly}-${isOffline}`} readOnly={readOnly} lockedStaffId={lockedStaffId}>
             <AppContent />
-          </ErrorBoundary>
-        </LibraryProvider>
+          </LibraryProvider>
+        </ErrorBoundary>
       </div>
     </div>
   );

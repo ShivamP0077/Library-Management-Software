@@ -209,6 +209,11 @@ export const setReceiptDeps = (d) => { receiptDeps = d || {}; };
 const RECEIPT_RETRY_MS = [1000, 2000, 4000, 8000]; // ~15s total
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+/** Receipts go out for a real payment, including one whose paidOn is already in the past. Refunds and zero amounts do not. */
+export function receiptSendable(p) {
+  return Boolean(p?.studentId) && Number(p?.netTotal ?? p?.amount ?? 0) > 0 && p?.method !== 'Refund';
+}
+
 /** Fire-and-forget after new payments are saved. Admission vs renewal by prior payment history.
  *  opts.retry=false skips the student lookup retries (used when the student was just written). */
 export async function autoSendReceipts(tenantId, payments, { retry = true } = {}) {
@@ -216,7 +221,7 @@ export async function autoSendReceipts(tenantId, payments, { retry = true } = {}
   const delays = retry ? (receiptDeps.retryMs || RECEIPT_RETRY_MS) : [];
   const out = [];
   for (const p of payments) {
-    if (!p?.studentId || Number(p.netTotal ?? p.amount ?? 0) <= 0 || p.method === 'Refund') continue;
+    if (!receiptSendable(p)) continue;
     const key = String(p._key ?? p.receiptNo ?? p.id);
     const find = () => models.students.findOne({ tenantId, _key: String(p.studentId) }).lean();
     let s = await find();

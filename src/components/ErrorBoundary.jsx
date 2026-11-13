@@ -33,17 +33,18 @@ export class ErrorBoundary extends React.Component {
         }}>
           <AlertTriangle size={32} color="#ef4444" />
           <h3 style={{ fontSize: '16px', fontWeight: 700, margin: 0 }}>
-            {this.props.fallbackTitle || 'Component Encountered an Issue'}
+            {this.props.fallbackTitle || 'Something went wrong'}
           </h3>
           <p style={{ fontSize: '13px', margin: 0, maxWidth: '420px', color: '#b91c1c' }}>
-            {this.state.error?.message || 'An unexpected rendering error occurred. The application recovered safely.'}
+            This screen could not be shown. Your saved records are still there. Reload the page to continue.
           </p>
           <button
+            type="button"
             className="btn btn-secondary"
-            onClick={() => this.setState({ hasError: false, error: null })}
+            onClick={() => window.location.reload()}
             style={{ marginTop: '8px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}
           >
-            <RefreshCw size={14} /> Try Reloading Section
+            <RefreshCw size={14} /> Reload
           </button>
         </div>
       );

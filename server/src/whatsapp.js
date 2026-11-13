@@ -198,15 +198,20 @@ export async function logSkipped({ libraryId, type, to, dedupeKey, reason, text,
 }
 
 const money = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
-/** Receipt text for an admission/renewal payment (spec §6: admission & renewal receipts). */
+/** Receipt text for an admission/renewal payment (spec §6: admission & renewal receipts).
+ *  A backdated payment is still a receipt: it shows the real paid date and the service period. */
 export function buildReceiptText(payment, student) {
+  const paid = payment?.paidOn || payment?.date;
+  const start = payment?.periodStart || payment?.startDate;
+  const end = payment?.periodEnd || payment?.endDate;
   const lines = [
     `Hi ${student?.name || 'there'}, thank you for your payment.`,
     `Receipt: ${payment.receiptNo || payment.id}`,
     `Amount: ${money(payment.netTotal ?? payment.amount)}`,
   ];
-  if (payment.date) lines.push(`Date: ${payment.date}`);
-  if (student?.expiryDate || student?.endDate) lines.push(`Valid till: ${student.expiryDate || student.endDate}`);
+  if (paid) lines.push(`Paid on ${paid}`);
+  if (start || end) lines.push(`Period: ${start || '—'} to ${end || '—'}`);
+  else if (student?.expiryDate || student?.endDate) lines.push(`Valid till: ${student.expiryDate || student.endDate}`);
   return lines.join('\n');
 }
 

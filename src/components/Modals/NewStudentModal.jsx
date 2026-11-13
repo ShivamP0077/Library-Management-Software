@@ -6,7 +6,8 @@ import { NumericInput } from '../NumericInput';
 import toast from 'react-hot-toast';
 import { calculatePricing } from '../../utils/pricingCalculator';
 import { handleSplitAmountChange, handleAddSplitComponent, handleRemoveSplitComponent, validateSplitPayment } from '../../utils/splitPaymentUtils';
-import { calculateSubscriptionExpiry, formatDate } from '../../utils/dateUtils';
+import { calculateSubscriptionExpiry, validatePaidOn } from '../../utils/dateUtils';
+import { cycleConfig, firstAdmissionCharge, addDays } from '../../utils/billingCycle';
 import { saveDocumentBlobNow, deleteDocumentBlob, getDocumentBlob } from '../../utils/idbStorage';
 import { api } from '../../utils/api';
 import { uploadAttachmentFile, makeAttachmentKey } from '../../utils/attachmentUpload';
@@ -22,7 +23,6 @@ const formatFileSize = (bytes) => {
 
 import { getCanonicalShifts, isShiftInPlan } from '../../utils/shiftUtils';
 import { clientCanEditAmount } from '../../utils/amountPermission';
-import { cycleConfig, firstAdmissionCharge } from '../../utils/billingCycle';
 import { getCanonicalSeatTypes, areSeatTypesEquivalent } from '../../utils/seatTypeUtils';
 
 export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPayload }) => {
@@ -156,6 +156,8 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
   const [fine, setFine] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState('');
   const [splitBreakdown, setSplitBreakdown] = useState([{ method: '', amount: '' }]);
+  const [paidOn, setPaidOn] = useState(todayStr);
+  const [joiningDate, setJoiningDate] = useState(todayStr);
 
   // Error & Status State
   const [errors, setErrors] = useState({});
@@ -242,8 +244,11 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
         setShiftId('');
         setPaymentMethod('');
         setSplitBreakdown([{ method: '', amount: '' }]);
+        setPaidOn(todayStr);
+        setJoiningDate(todayStr);
       }
       setDurationMonths(1); setIsManualDuration(false); setDiscountType('None'); setDiscountValue(0); setFine(0);
+      setPaidOn(todayStr); setJoiningDate(todayStr);
     }
   }, [isOpen, waitlistPayload]);
 
@@ -399,6 +404,10 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
     const parsedDur = Number(durationMonths);
     if (!parsedDur || parsedDur < 1) errs.durationMonths = "Valid Subscription Duration (>= 1) is required.";
     if (isFixed && !seatNo) errs.seatNo = "Physical seat allocation is required for Fixed desks.";
+    const paidOnError = validatePaidOn(paidOn, todayStr);
+    if (paidOnError) errs.paidOn = paidOnError;
+    if (!joiningDate) errs.joiningDate = "Enter the period start date.";
+    else if (joiningDate > todayStr) errs.joiningDate = "Period start cannot be in the future.";
     if (!paymentMethod) errs.paymentMethod = "Please select a payment method.";
     if (paymentMethod === 'Split') {
       const splitCheck = validateSplitPayment(splitBreakdown, netPayable);
@@ -445,8 +454,16 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
       return;
     }
 
-    const todayFormatted = formatDate(new Date());
-    const calculatedExpiry = calculateSubscriptionExpiry(todayFormatted, durationMonths || 1);
+    const todayFormatted = joiningDate || todayStr;
+    const anchorDay = Number(String(todayFormatted).slice(8, 10)) || undefined;
+    let calculatedExpiry = calculateSubscriptionExpiry(todayFormatted, durationMonths || 1, anchorDay);
+    let proRatedPayload = null;
+    if (proRateApplied) {
+      const unit = Number(suggestedBase) / Math.max(1, Number(durationMonths) || 1);
+      const pr = firstAdmissionCharge(unit, todayFormatted, cycleConfig(settings));
+      calculatedExpiry = pr.to;
+      proRatedPayload = { ...pr, fullFee: Number(suggestedBase) };
+    }
 
     const docRecords = docGroups.map((group) => {
       const files = (group.files || []).map(({ dataUrl: _u, ...f }) => ({ ...f, name: group.name, docTypeId: group.docTypeId }));
@@ -477,10 +494,11 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
       shift: shifts.find(s => s.id === shiftId)?.name || 'Full Day',
       seatNo: isFixed ? seatNo : 'Non-Fixed Seat',
       durationMonths: Number(durationMonths),
-      amountPaid: Number(baseAmount),
-      suggestedAmount: Number(proRateApplied ? proRateApplied.amount : suggestedBase),
-      ...(Number(baseAmount) !== Number(proRateApplied ? proRateApplied.amount : suggestedBase) ? { amountEdited: true } : {}),
-      ...(proRateApplied ? { proRated: proRateApplied } : {}),
+      amountPaid: proRatedPayload ? proRatedPayload.amount : Number(baseAmount),
+      suggestedAmount: proRatedPayload ? proRatedPayload.amount : Number(suggestedBase),
+      ...(!proRatedPayload && Number(baseAmount) !== Number(suggestedBase) ? { amountEdited: true } : {}),
+      ...(proRatedPayload ? { proRated: proRatedPayload } : {}),
+      paidOn,
       discount: calculatedDiscount,
       fine: Number(fine),
       paymentMethod,
@@ -489,7 +507,7 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
       documents: docRecords,
       idProofStatus: submitDocLater ? 'Pending' : (docRecords.length ? 'Verified' : 'Not Required'),
       startDate: todayFormatted,
-      expiryDate: proRateApplied ? proRateApplied.to : calculatedExpiry
+      expiryDate: calculatedExpiry
     };
 
     const res = addStudent(studentData);
@@ -902,7 +920,7 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                     const cfg = cycleConfig(settings);
                     if (cfg.mode === 'ANNIVERSARY' || !plans.find(p => p.id === planId) || Number(durationMonths) !== 1) return null;
                     const unit = Number(suggestedBase) / Math.max(1, Number(durationMonths) || 1);
-                    const pr = firstAdmissionCharge(unit, todayStr, cfg);
+                    const pr = firstAdmissionCharge(unit, joiningDate || todayStr, cfg);
                     if (!pr.prorated) return null;
                     return (
                       <div data-testid="prorate-box" style={{ fontSize: '12px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '8px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
@@ -951,6 +969,25 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                     <span style={{ fontSize: '18px', fontWeight: 700, color: 'var(--brand-primary)' }}>
                       ₹{netPayable.toLocaleString()}
                     </span>
+                  </div>
+                </div>
+              )}
+
+              {!isCapacityFull && planId && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" style={{ fontSize: '12px' }}>Period start / joining date</label>
+                    <input type="date" className="form-input" value={joiningDate} max={todayStr} onChange={(e) => {
+                      setJoiningDate(e.target.value);
+                      if (proRateApplied) setBaseAmount(Number(suggestedBase));
+                    }} />
+                    {errors.joiningDate && <span style={{ color: '#ef4444', fontSize: '11px', display: 'block', marginTop: '4px' }}>{errors.joiningDate}</span>}
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" style={{ fontSize: '12px' }}>Payment date</label>
+                    <input type="date" className="form-input" value={paidOn} max={todayStr} min={addDays(todayStr, -60)} onChange={(e) => setPaidOn(e.target.value)} />
+                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>The day the fee was paid. It can differ from the period start.</span>
+                    {errors.paidOn && <span style={{ color: '#ef4444', fontSize: '11px', display: 'block', marginTop: '4px' }}>{errors.paidOn}</span>}
                   </div>
                 </div>
               )}

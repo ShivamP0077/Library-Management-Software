@@ -27,6 +27,14 @@ test('settings validate and are tenant-scoped', async () => {
   assert.equal(b.body.expiryDaysBefore, DEFAULT_REMINDER_SETTINGS.expiryDaysBefore);
 });
 
+test('reminder rules do not plan a day that is already in the past', () => {
+  const rules = [{ id: 'a', offsetDays: -3, sendHour: 10, enabled: true }];
+  assert.deepEqual(desiredFor({ _key: 'S', expiryDate: '2026-12-10' }, { rules }, '2026-12-10'), []);
+  assert.equal(desiredFor({ _key: 'S', expiryDate: '2026-12-20' }, { rules }, '2026-12-10')[0].sendOn, '2026-12-17');
+  // Legacy single reminder: nothing is planned once the expiry date itself has passed.
+  assert.deepEqual(desiredFor({ _key: 'S', expiryDate: '2026-12-01' }, { ...DEFAULT_REMINDER_SETTINGS }, '2026-12-10'), []);
+});
+
 test('fixed-day expiry option never schedules after the expiry date', () => {
   const [e] = desiredFor({ _key: 'X', expiryDate: '2026-12-10' }, { ...DEFAULT_REMINDER_SETTINGS, expiryFixedDay: 5 }, '2026-11-01');
   assert.equal(e.sendOn, '2026-12-05');

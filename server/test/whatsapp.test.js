@@ -91,6 +91,13 @@ test('permissions: owner/superadmin yes; staff only with settings rights', async
 test('receipt text', () => {
   const t = buildReceiptText({ receiptNo: 'R1', netTotal: 1500, date: '2026-11-01' }, { name: 'Asha' });
   assert.match(t, /Asha/); assert.match(t, /R1/); assert.match(t, /1,500/);
+  assert.match(t, /Paid on 2026-11-01/);
+  const backdated = buildReceiptText({
+    receiptNo: 'R2', netTotal: 900, paidOn: '2026-12-07', date: '2026-12-10',
+    periodStart: '2026-12-01', periodEnd: '2026-12-31',
+  }, { name: 'Ravi', expiryDate: '2027-01-31' });
+  assert.match(backdated, /Paid on 2026-12-07/);
+  assert.match(backdated, /Period: 2026-12-01 to 2026-12-31/);
 });
 
 // Route-level tests with a mocked Evolution client and stubbed config model

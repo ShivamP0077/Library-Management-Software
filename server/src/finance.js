@@ -21,9 +21,63 @@ export const derivePlanPrices = (baseMonthly, tiers = [{ months: 1, discountPct:
 
 export class ValidationError extends Error { constructor(m) { super(m); this.status = 400; this.code = 'validation_failed'; } }
 
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+const shiftIso = (iso, n) => {
+  const [y, m, d] = String(iso).slice(0, 10).split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+};
+
+/**
+ * Payment date window: not in the future, and not more than 60 days ago.
+ * Returns '' when allowed. Same wording as the admission/renewal form.
+ */
+export function paidOnError(paidOn, today = todayIn()) {
+  const v = String(paidOn || '').slice(0, 10);
+  if (!ISO_DAY.test(v)) return 'Enter a valid payment date (YYYY-MM-DD).';
+  const [y, m, d] = v.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) return 'Enter a valid payment date (YYYY-MM-DD).';
+  const day = String(today || todayIn()).slice(0, 10);
+  if (v > day) return 'Payment date cannot be in the future.';
+  if (v < shiftIso(day, -60)) return 'Payment date cannot be more than 60 days ago.';
+  return '';
+}
+
+/** Keep `date` equal to paidOn. Fills enteredAt the first time a payment is recorded. */
+export function applyPaidOn(record, { today = todayIn() } = {}) {
+  if (!record || record.paidOn == null || record.paidOn === '') return record;
+  const msg = paidOnError(record.paidOn, today);
+  if (msg) throw new ValidationError(msg);
+  record.paidOn = String(record.paidOn).slice(0, 10);
+  record.date = record.paidOn;
+  if (!record.enteredAt) record.enteredAt = new Date().toISOString();
+  return record;
+}
+
+/**
+ * Check paidOn only on history rows that were not already saved.
+ * Older rows without paidOn, or with a date that has since aged past 60 days, still sync.
+ */
+export function normalizeStudentPaymentDates(student, previous, today = todayIn()) {
+  if (!student) return student;
+  const prevRenewals = new Set((previous?.renewalHistory || []).map(r => r?.renewalId).filter(Boolean));
+  const prevPays = new Set((previous?.paymentHistory || []).map(p => p?.receiptNo || p?.id).filter(Boolean));
+  for (const r of student.renewalHistory || []) {
+    if (r?.renewalId && prevRenewals.has(r.renewalId)) continue;
+    applyPaidOn(r, { today });
+  }
+  for (const p of student.paymentHistory || []) {
+    const id = p?.receiptNo || p?.id;
+    if (id && prevPays.has(id)) continue;
+    applyPaidOn(p, { today });
+  }
+  return student;
+}
+
 /** Server-side payment rules: no negatives, no overpayment, split rows sum exactly. */
-export function validatePayment(p) {
+export function validatePayment(p, { checkPaidOn = true } = {}) {
   if (!p) return;
+  if (checkPaidOn) applyPaidOn(p);
   const num = (v) => Number(v ?? 0);
   const isRefund = p.method === 'Refund' || num(p.netTotal) < 0;
   for (const f of ['amount', 'discount', 'fine', 'netTotal']) {
@@ -54,8 +108,9 @@ export function validatePayment(p) {
 export function validatePaymentBatch(items, previous = new Map()) {
   for (const p of items) {
     const prev = previous.get(String(p.receiptNo ?? p.id));
-    if (prev && ['amount', 'discount', 'fine', 'netTotal', 'method'].every(k => prev[k] === p[k]) && JSON.stringify(prev.breakdown || null) === JSON.stringify(p.breakdown || null)) continue;
-    validatePayment(p);
+    const sameMoney = prev && ['amount', 'discount', 'fine', 'netTotal', 'method', 'paidOn', 'date'].every(k => prev[k] === p[k]) && JSON.stringify(prev.breakdown || null) === JSON.stringify(p.breakdown || null);
+    if (sameMoney) continue;
+    validatePayment(p, { checkPaidOn: !prev || prev.paidOn !== p.paidOn || !prev.paidOn });
   }
 }
 

@@ -7,10 +7,23 @@ let modalStack = [];
 let tabListener = null;
 let nextId = 1;
 
-const url = (tab) => `${w.location.pathname}${w.location.search}#/${tab}`;
+function ticketFromHash(hash) {
+  try {
+    return new URLSearchParams(String(hash || '').replace(/^#/, '')).get('ticket') || '';
+  } catch {
+    return '';
+  }
+}
+
+const url = (tab) => {
+  const id = ticketFromHash(w.location.hash);
+  // Keep a ticket id on the profile/support hash so Contact Us can open that chat.
+  const extra = id && (tab === 'profile' || tab === 'support') ? `&ticket=${encodeURIComponent(id)}` : '';
+  return `${w.location.pathname}${w.location.search}#/${tab}${extra}`;
+};
 
 export const TAB_FROM_HASH = () => {
-  const m = w && /^#\/([a-z-]+)$/.exec(w.location.hash || '');
+  const m = w && /^#\/([a-z-]+)(?:[?&#].*)?$/.exec(w.location.hash || '');
   return m ? m[1] : null;
 };
 

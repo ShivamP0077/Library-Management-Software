@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { X, Wallet, Download, Copy, Gift } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api } from '../utils/api';
+import { PAYMENT_NOT_READY_MESSAGE } from '../utils/support';
 
 const fmt = (minor, currency = 'INR') => `${currency === 'INR' ? '₹' : ''}${(Number(minor || 0) / 100).toLocaleString(currency === 'INR' ? 'en-IN' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${currency === 'INR' ? '' : ` ${currency}`}`;
 
@@ -21,6 +22,7 @@ export function MySoftwarePlanModal({ onClose }) {
   const [quote, setQuote] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [payBlocked, setPayBlocked] = useState(false);
   const [topup, setTopup] = useState('1000');
   const [walletSpend, setWalletSpend] = useState(null);
   const [walletHistory, setWalletHistory] = useState([]);
@@ -37,7 +39,7 @@ export function MySoftwarePlanModal({ onClose }) {
       setPlanId(prev => prev || preferred);
       setInterval(prev => prev || r.subscription?.interval || 'month');
       return { ...r, planId: preferred };
-    } catch (e) { setError(e.message || 'Could not load your plan'); return null; }
+    } catch (e) { setError(e.code === 'billing_not_configured' ? PAYMENT_NOT_READY_MESSAGE : (e.message || 'Could not load your plan')); return null; }
   };
   useEffect(() => { load(); }, []);
 
@@ -48,7 +50,11 @@ export function MySoftwarePlanModal({ onClose }) {
     try {
       const q = await api.softwarePlanQuote({ planId, interval, offerCode: offerCode || undefined, useWallet, walletMinor: useWallet ? (walletSpend == null ? undefined : Math.max(0, Math.round(Number(walletSpend)))) : 0, ...overrides });
       setQuote(q);
-    } catch (e) { setError(e.message); setQuote(null); } finally { setBusy(false); }
+    } catch (e) {
+      if (e.code === 'billing_not_configured') setPayBlocked(true);
+      setError(e.code === 'billing_not_configured' ? PAYMENT_NOT_READY_MESSAGE : e.message);
+      setQuote(null);
+    } finally { setBusy(false); }
   };
   useEffect(() => { if (data && planId) quoteNow(); }, [data, planId, interval, useWallet]);
 
@@ -63,7 +69,10 @@ export function MySoftwarePlanModal({ onClose }) {
       else toast.success('Plan updated');
       setQuote(null);
       await load();
-    } catch (e) { setError(e.message); } finally { setBusy(false); }
+    } catch (e) {
+      if (e.code === 'billing_not_configured') setPayBlocked(true);
+      setError(e.code === 'billing_not_configured' ? PAYMENT_NOT_READY_MESSAGE : e.message);
+    } finally { setBusy(false); }
   };
 
   const startTopup = async () => {
@@ -74,7 +83,10 @@ export function MySoftwarePlanModal({ onClose }) {
       const r = await api.walletTopup({ amount });
       if (r.checkout?.url) { window.location.href = r.checkout.url; return; }
       toast.success('Top-up started');
-    } catch (e) { setError(e.message); } finally { setBusy(false); }
+    } catch (e) {
+      if (e.code === 'billing_not_configured') setPayBlocked(true);
+      setError(e.code === 'billing_not_configured' ? PAYMENT_NOT_READY_MESSAGE : e.message);
+    } finally { setBusy(false); }
   };
 
   const copyCode = async () => {
@@ -100,6 +112,11 @@ export function MySoftwarePlanModal({ onClose }) {
   const walletMax = Math.min(Number(quote?.wallet?.availableMinor ?? w?.availableMinor ?? 0), Number(quote?.totalMinor ?? 0));
   const walletSliderValue = Math.min(Number(walletSpend == null ? (quote?.walletAppliedMinor || 0) : walletSpend), walletMax);
   const gatewayBlocked = Boolean(quote && quote.gatewayDueMinor > 0 && !data?.providersConfigured);
+  const billingNotReady = Boolean(
+    payBlocked
+    || quote?.ready === false
+    || (data?.billingConfig?.configured === false && quote?.changeType !== 'downgrade')
+  );
 
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="My Software Plan" style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16 }}>
@@ -130,7 +147,7 @@ export function MySoftwarePlanModal({ onClose }) {
               <section style={{ border: '1px solid var(--border-light, #e5e7eb)', borderRadius: 10, padding: 12 }}>
                 <div style={{ fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', fontWeight: 700 }}>Billing setup</div>
                 <div style={{ fontWeight: 700, marginTop: 4 }}>{data.billingConfig?.configured ? 'Configured' : 'Not configured'}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{data.billingConfig?.taxMode === 'none' ? 'No tax' : data.billingConfig?.taxMode ? `Tax ${data.billingConfig.taxRatePct}% (${data.billingConfig.taxMode})` : 'Super Admin must choose tax/currency'}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{data.billingConfig?.taxMode === 'none' ? 'No tax' : data.billingConfig?.taxMode ? `Tax ${data.billingConfig.taxRatePct}% (${data.billingConfig.taxMode})` : 'Tax and currency are not set up yet'}</div>
                 <div style={{ fontSize: 11, color: data.providersConfigured ? '#15803d' : '#b45309', marginTop: 4 }}>{data.providersConfigured ? 'External payment provider ready' : 'External provider unavailable — wallet-only actions remain available'}</div>
               </section>
             </div>
@@ -168,9 +185,9 @@ export function MySoftwarePlanModal({ onClose }) {
                   <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--border-light, #e5e7eb)', marginTop: 4, paddingTop: 4 }}><strong>Total</strong><strong>{fmt(quote.totalMinor, quote.currency)}</strong></div>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Wallet applied</span><span>-{fmt(quote.walletAppliedMinor, quote.currency)}</span></div>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Pay by external gateway</span><strong>{fmt(quote.gatewayDueMinor, quote.currency)}</strong></div>
-                  {!quote.ready && <div style={{ color: '#b45309', marginTop: 6 }}>Super Admin must configure tax/currency before activation.</div>}
-                  {gatewayBlocked && <div style={{ color: '#b45309', marginTop: 6 }}>External payments are unavailable. Ask the Super Admin to configure Razorpay/PayPal, or use wallet credit only.</div>}
-                  <button type="button" className="btn btn-primary" style={{ marginTop: 8 }} disabled={busy || !quote.ready || gatewayBlocked} onClick={checkout}>
+                  {billingNotReady && <div style={{ color: '#b45309', marginTop: 6 }}>{PAYMENT_NOT_READY_MESSAGE}</div>}
+                  {gatewayBlocked && !billingNotReady && <div style={{ color: '#b45309', marginTop: 6 }}>External payments are unavailable. Ask the Super Admin to configure Razorpay/PayPal, or use wallet credit only.</div>}
+                  <button type="button" className="btn btn-primary" style={{ marginTop: 8 }} disabled={busy || billingNotReady || gatewayBlocked} onClick={checkout}>
                     {busy ? 'Working…' : quote.changeType === 'downgrade' ? 'Schedule downgrade' : quote.gatewayDueMinor === 0 ? 'Pay from wallet' : 'Continue to payment'}
                   </button>
                 </div>
@@ -181,7 +198,7 @@ export function MySoftwarePlanModal({ onClose }) {
               <h4 style={{ margin: '0 0 8px' }}>Wallet top-up</h4>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                 <input className="input-field" style={{ maxWidth: 160 }} inputMode="decimal" value={topup} onChange={e => setTopup(e.target.value)} />
-                <button type="button" className="btn btn-secondary btn-sm" disabled={busy || !data.providersConfigured} onClick={startTopup}>Top up</button>
+                <button type="button" className="btn btn-secondary btn-sm" disabled={busy || !data.providersConfigured || data.billingConfig?.configured === false} onClick={startTopup}>Top up</button>
                 <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Top-ups are separate from plan purchases. Bonus credits expire per the Super Admin policy; cash does not expire. No withdrawals or refunds.</span>
                 {!data.providersConfigured && <span style={{ fontSize: 12, color: '#b45309' }}>Top-up needs an external payment provider.</span>}
               </div>

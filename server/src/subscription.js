@@ -209,9 +209,12 @@ export function createSubscriptionRouter() {
         gatewayMinor: tax.totalMinor, currency: config.currency, status: 'open', provider: configured.name, dueAt: now,
       });
       const result = await configured.createCheckout({ library: lib, plan: target, interval, amount: tax.totalMinor / 100, invoiceId: invoice.invoiceId, returnUrl: `${process.env.FRONTEND_URL || ''}/#software_plan` });
-      await SoftwareInvoice.updateOne({ invoiceId: invoice.invoiceId, tenantId: req.tenantId }, { $set: { providerRef: result.reference, 'raw.checkout': result } });
-      await audit(req, 'subscription.checkout_created', { tenantId: req.tenantId, target: invoice.invoiceId, detail: { planId, interval, amountMinor: tax.totalMinor, provider: configured.name } });
-      return res.status(201).json({ ...await view(req.tenantId), checkout: { ...result, invoiceId: invoice.invoiceId, amountMinor: tax.totalMinor, pendingPlanId: planId } });
+      const savedId = result.invoiceId || invoice.invoiceId;
+      if (savedId === invoice.invoiceId) {
+        await SoftwareInvoice.updateOne({ invoiceId: savedId, tenantId: req.tenantId }, { $set: { providerRef: result.reference, 'raw.checkout': result } });
+      }
+      await audit(req, 'subscription.checkout_created', { tenantId: req.tenantId, target: savedId, detail: { planId, interval, amountMinor: tax.totalMinor, provider: configured.name } });
+      return res.status(201).json({ ...await view(req.tenantId), checkout: { ...result, invoiceId: savedId, amountMinor: tax.totalMinor, pendingPlanId: planId } });
     }
     if (sub.currentPeriodEnd && new Date(sub.currentPeriodEnd) > now && sub.status === 'active' && Number(newPrice) < curPrice) {
       next = { ...sub, pendingPlanId: planId, pendingInterval: interval };
@@ -267,8 +270,11 @@ export function createSubscriptionRouter() {
       library: lib, plan, interval: sub.interval, amount: Number(invoice.gatewayMinor) / 100,
       invoiceId: invoice.invoiceId, returnUrl: req.body?.returnUrl || undefined,
     });
-    await SoftwareInvoice.updateOne({ invoiceId: invoice.invoiceId, tenantId: req.tenantId, providerRef: { $in: [null, ''] } }, { $set: { providerRef: result.reference, 'raw.checkout': result } });
-    return res.json({ ok: true, ...result, invoiceId: invoice.invoiceId, amountMinor: invoice.gatewayMinor });
+    const savedId = result.invoiceId || invoice.invoiceId;
+    if (savedId === invoice.invoiceId) {
+      await SoftwareInvoice.updateOne({ invoiceId: savedId, tenantId: req.tenantId, providerRef: { $in: [null, ''] } }, { $set: { providerRef: result.reference, 'raw.checkout': result } });
+    }
+    return res.json({ ok: true, ...result, invoiceId: savedId, amountMinor: invoice.gatewayMinor });
   }));
 
   r.post('/subscription/cancel', wrap(async (req, res) => {

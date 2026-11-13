@@ -64,7 +64,7 @@ const senderName = (m, mine) => {
   return m.authorEmail || 'Library';
 };
 
-/** WhatsApp-style ticket thread shared by the library Help & Support screen and the Super Admin desk. */
+/** WhatsApp-style ticket thread shared by Contact Us and the Super Admin desk. */
 export const ChatThread = ({
   ticket, viewer = 'owner', onBack, onSend, fetchAttachment,
   libraryName, headerExtra, toolbar, belowThread, composerExtra, placeholder = 'Message',
@@ -236,7 +236,7 @@ const ExportCard = () => {
   );
 };
 
-export const SupportCenter = () => {
+export const SupportCenter = ({ embedded = false }) => {
   const [list, setList] = useState([]);
   const [meta, setMeta] = useState(null);
   const [open, setOpen] = useState(null);
@@ -308,11 +308,11 @@ export const SupportCenter = () => {
   return (
     <div className="support-center" style={{ display: 'grid', gap: 16, minWidth: 0 }}>
       {showList && <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <div>
+        {!embedded && <div>
           <h2 style={{ fontSize: 22, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}><LifeBuoy size={22} /> Help &amp; Support</h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Raise a ticket and chat with the My Library OS support team. Email <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>.</p>
-        </div>
-        <button className="btn btn-primary btn-sm" onClick={() => setCreating(c => !c)}>{creating ? <X size={14} /> : <Plus size={14} />} New ticket</button>
+        </div>}
+        <button className="btn btn-primary btn-sm" style={embedded ? { marginLeft: 'auto' } : undefined} onClick={() => setCreating(c => !c)}>{creating ? <X size={14} /> : <Plus size={14} />} New ticket</button>
       </div>}
       {creating && showList && <NewTicket meta={meta} onDone={(t) => { setCreating(false); setOpen(t); load({ pageNo: 1 }); }} />}
       <div className={`support-layout${open && wide ? ' split' : ''}`}>

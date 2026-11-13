@@ -17,9 +17,9 @@ import {
   Menu,
   X,
   RefreshCw,
-  LifeBuoy,
   MessageCircle,
   CircleUser,
+  ChevronRight,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
@@ -41,7 +41,7 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
     refreshData,
     isRefreshing
   } = useLibrary();
-  const { user, subscriptionAccess } = useAuth() || {};
+  const { user, library, subscriptionAccess } = useAuth() || {};
   const enquiryBadge = badgeCount(useWaitingEnquiryCount(isLibraryLocked(subscriptionAccess, user)));
 
   const handleRefresh = async () => {
@@ -72,14 +72,20 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
     { id: 'reports', label: 'Reports & P&L', icon: BarChart3 },
     { id: 'whatsapp', label: 'WhatsApp', icon: MessageCircle },
     { id: 'settings', label: 'Library Settings', icon: Settings },
-    { id: 'support', label: 'Help & Support', icon: LifeBuoy }
   ];
 
   const visibleTabs = tabs.filter(t => {
-    if (t.id === 'dashboard' || t.id === 'support') return true;
+    if (t.id === 'dashboard') return true;
     if (t.id === 'whatsapp') return canManageWhatsapp;
     return hasPermission(t.id, 'view');
   });
+  const ownerName = user?.name || 'Owner';
+  const ownerInitial = (user?.name || user?.email || 'M').trim().charAt(0).toUpperCase() || 'M';
+  const libraryName = settings?.name || library?.name || 'Library';
+  const openProfile = () => {
+    setDrawerOpen(false);
+    window.dispatchEvent(new CustomEvent('libos:navigate', { detail: { tab: 'profile', screen: 'home' } }));
+  };
 
   // Mobile: hamburger drawer (all tabs + switchers) and a bottom tab bar for primary tabs
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -197,6 +203,24 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
         </div>
       </div>
 
+      {drawerOpen && (
+        <button
+          type="button"
+          id="drawer-profile-card"
+          className="mobile-drawer-profile"
+          onClick={openProfile}
+          aria-label="My Library OS Profile"
+        >
+          <span className="mobile-drawer-avatar" aria-hidden="true">{ownerInitial}</span>
+          <span className="mobile-drawer-profile-text">
+            <strong>My Library OS Profile</strong>
+            <span>{ownerName}</span>
+            <span>{libraryName}</span>
+          </span>
+          <ChevronRight size={18} aria-hidden="true" />
+        </button>
+      )}
+
       {/* Main Navigation Bar */}
       <nav className={`header-nav ${drawerOpen ? 'drawer-open' : ''}`} style={{ display: 'flex', gap: '4px', padding: '0 24px', overflowX: 'auto', position: 'relative' }}>
         {visibleTabs.map(t => {
@@ -247,24 +271,49 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
             </button>
           );
         })}
-        {drawerOpen && (
-          <button
-            type="button"
-            id="nav-tab-profile"
-            onClick={() => {
-              setDrawerOpen(false);
-              window.dispatchEvent(new CustomEvent('libos:navigate', { detail: { tab: 'profile', screen: 'home' } }));
-            }}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 8, padding: '12px',
-              background: 'transparent', border: 'none', color: 'var(--text-primary)',
-              fontWeight: 600, fontSize: 14, cursor: 'pointer', textAlign: 'left',
-            }}
-          >
-            <CircleUser size={16} />
-            <span>My Library OS Profile</span>
-          </button>
-        )}
+        <button
+          type="button"
+          id="nav-tab-profile"
+          className="header-profile-tab"
+          aria-current={activeTab === 'profile' ? 'page' : undefined}
+          onClick={openProfile}
+          style={{
+            position: 'sticky',
+            right: 0,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '16px 12px',
+            marginLeft: 'auto',
+            background: 'var(--bg-surface, #fff)',
+            border: 'none',
+            color: activeTab === 'profile' ? 'var(--text-primary)' : 'var(--text-secondary)',
+            fontWeight: activeTab === 'profile' ? 700 : 600,
+            fontSize: '14px',
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+            flexShrink: 0,
+            zIndex: 2,
+          }}
+        >
+          <CircleUser size={16} />
+          <span>My Library OS Profile</span>
+          {activeTab === 'profile' && (
+            <motion.div
+              layoutId="activeTabIndicator"
+              style={{
+                position: 'absolute',
+                bottom: 0,
+                left: 0,
+                right: 0,
+                height: '2px',
+                background: 'var(--brand-primary)',
+                borderRadius: '2px 2px 0 0'
+              }}
+              transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+            />
+          )}
+        </button>
       </nav>
 
       {/* Rendered into <body>: the glass header's backdrop-filter would otherwise trap position:fixed */}

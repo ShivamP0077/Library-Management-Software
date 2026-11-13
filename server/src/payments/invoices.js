@@ -65,6 +65,19 @@ export function newInvoiceId() {
   return `inv_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/**
+ * An open invoice for this library can continue checkout when its provider is
+ * unset or already this provider. Missing, paid, void, or other-library ids
+ * are not usable — callers start a new invoice instead of failing the owner.
+ */
+export async function findUsableOpenInvoice({ invoiceId, tenantId, provider }) {
+  if (!invoiceId || !tenantId) return null;
+  const row = await SoftwareInvoice.findOne({ invoiceId, tenantId }).exec();
+  if (!row || row.status !== 'open') return null;
+  if (row.provider && row.provider !== provider) return null;
+  return row;
+}
+
 export function newReceiptNo() {
   return `RCPT-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 }

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ArrowLeft, Building2, ChevronRight, CreditCard, FileText, Info, KeyRound, Languages,
-  LifeBuoy, LogOut, Mail, Moon, Phone, Shield, Wallet,
+  LogOut, Mail, Moon, Phone, Shield, Wallet,
 } from 'lucide-react';
 import pkg from '../../../package.json';
 import { useAuth } from '../../auth/AuthContext';
@@ -58,7 +58,12 @@ export function LibraryOsProfile({ screen = 'home', onScreenChange, onClose, onP
     return () => { document.body.style.overflow = prev; };
   }, []);
 
-  const go = (next) => onScreenChange?.(next);
+  const go = (next) => onScreenChange?.(next === 'support' ? 'contact' : next);
+  const view = screen === 'support' ? 'contact' : screen;
+
+  useEffect(() => {
+    if (screen === 'support') onScreenChange?.('contact');
+  }, [screen, onScreenChange]);
 
   const home = (
     <div className="os-profile-inner">
@@ -125,9 +130,9 @@ export function LibraryOsProfile({ screen = 'home', onScreenChange, onClose, onP
   );
 
   let body = home;
-  if (screen === 'subscription') {
+  if (view === 'subscription') {
     body = <SubscriptionPage onBack={() => go('home')} onPaid={onPaid} canPay={canPay} locked={planLocked} />;
-  } else if (screen === 'contact') {
+  } else if (view === 'contact') {
     body = (
       <Subpage title="Contact Us" onBack={() => go('home')}>
         <section className="os-card os-contact">
@@ -150,21 +155,11 @@ export function LibraryOsProfile({ screen = 'home', onScreenChange, onClose, onP
               <span className="os-row-value"><a href={whatsappHref(SUPPORT_WHATSAPP)} target="_blank" rel="noreferrer">Chat</a></span>
             </div>
           )}
-          <button type="button" className="os-row" onClick={() => go('support')}>
-            <span className="os-icon" style={{ background: '#ffedd5' }}><LifeBuoy size={18} color="#1c1917" /></span>
-            <span className="os-row-label">Help & Support</span>
-            <ChevronRight size={18} className="os-chevron" />
-          </button>
         </section>
+        <SupportCenter embedded />
       </Subpage>
     );
-  } else if (screen === 'support') {
-    body = (
-      <Subpage title="Help & Support" onBack={() => go('contact')}>
-        <SupportCenter />
-      </Subpage>
-    );
-  } else if (screen === 'privacy') {
+  } else if (view === 'privacy') {
     body = (
       <Subpage title="Privacy Policy" onBack={() => go('home')}>
         <section className="os-card os-card-pad os-legal">

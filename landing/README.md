@@ -14,7 +14,7 @@ npm run preview   # serve the build
 |---|---|---|
 | `VITE_APP_URL` | `/app` | Target of "Start free trial" / "Sign in" buttons (the deployed app URL) |
 | `VITE_DEMO_EMAIL` | `mylibraryosadmin@gmail.com` | "Book a demo" mailto address |
-| `VITE_SITE_URL` | empty | Absolute site URL used for canonical + og:image tags |
+| `VITE_SITE_URL` | `https://mylibraryos.in` | Absolute site URL used for canonical + og:image tags |
 
 ## Deploy (Vercel)
 Set the project Root Directory to `landing`; framework Vite, build `npm run build`, output `dist` (also in `vercel.json`).

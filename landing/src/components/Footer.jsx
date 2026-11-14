@@ -30,16 +30,23 @@ export function FinalCTA() {
   );
 }
 
-export default function Footer() {
+export default function Footer({ home = true }) {
+  const hash = (id) => (home ? id : `/${id}`);
   const cols = [
-    ['Product', [['Features', '#features'], ['Product tour', '#product'], ['Pricing', '#pricing']]],
-    ['Get started', [['Start free trial', APP_URL], ['Sign in', APP_URL], ['Book a demo', DEMO_HREF], ['FAQ', '#faq']]],
+    ['Product', [['Features', hash('#features')], ['Product tour', hash('#product')], ['Pricing', hash('#pricing')]]],
+    ['Get started', [['Start free trial', APP_URL], ['Sign in', APP_URL], ['Book a demo', DEMO_HREF], ['FAQ', hash('#faq')]]],
+    ['Legal', [
+      ['Privacy Policy', '/privacy'],
+      ['Terms & Conditions', '/terms'],
+      ['Refund & Cancellation Policy', '/refund'],
+      ['Contact Us', '/contact'],
+    ]],
   ];
   return (
     <footer className="border-t border-white/10 bg-ink-950 py-14 text-stone-400">
-      <div className="container-x grid gap-10 md:grid-cols-[1.5fr_1fr_1fr]">
+      <div className="container-x grid gap-10 sm:grid-cols-2 lg:grid-cols-[1.4fr_1fr_1fr_1fr]">
         <div>
-          <Logo />
+          <Logo href={home ? '#top' : '/'} />
           <p className="mt-4 max-w-sm text-sm leading-relaxed">
             Seat, shift, admission and fee management for reading libraries and study rooms.
           </p>

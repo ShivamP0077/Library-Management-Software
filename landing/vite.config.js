@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), 'VITE_');
-  const siteUrl = (env.VITE_SITE_URL || '').replace(/\/$/, '');
+  const siteUrl = (env.VITE_SITE_URL || 'https://mylibraryos.in').replace(/\/$/, '');
   return {
     plugins: [
       react(),

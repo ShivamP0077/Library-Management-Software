@@ -28,7 +28,7 @@ export function PaymentsAdmin() {
 
   const load = async () => {
     try {
-      const [c, d, b, o, rc] = await Promise.all([
+      const [c, d, b, o, rc, inv] = await Promise.all([
         api.adminPaymentsConfig(),
         api.adminDeletionRequests().catch(() => []),
         api.adminBillingConfig().catch(() => null),

@@ -98,6 +98,142 @@ test('Razorpay webhook rejects bad signatures and activates on valid payment_lin
   assert.equal(inv.status, 'paid');
 });
 
+async function postRazorpay(event, secret = 'hooksec') {
+  const raw = JSON.stringify(event);
+  const sig = crypto.createHmac('sha256', secret).update(raw).digest('hex');
+  const res = await fetch(`${ctx.base}/api/payments/webhook/razorpay`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-razorpay-signature': sig },
+    body: raw,
+  });
+  const body = await res.json();
+  return { status: res.status, body };
+}
+
+function mockPaymentLinkLookup(plinkId, linkBody) {
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes('api.razorpay.com') && u.includes(`/payment_links/${plinkId}`)) {
+      calls += 1;
+      return {
+        ok: true,
+        status: 200,
+        async text() { return JSON.stringify(linkBody); },
+      };
+    }
+    return realFetch(url, opts);
+  };
+  return { calls: () => calls, restore: () => { globalThis.fetch = realFetch; } };
+}
+
+test('payment.captured settles when the payment is on the stored payment link', async () => {
+  await updatePaymentConfig({
+    activeProvider: 'razorpay',
+    razorpay: { enabled: true, keyId: 'rzp_test', keySecret: 'keysec', webhookSecret: 'hooksec', mode: 'test' },
+  }, { updatedBy: 'test' });
+  await refreshPaymentProvider();
+  await Library.updateOne({ libraryId: 'lib-a' }, {
+    $set: { planId: 'pro', subscription: { status: 'pending_payment', interval: 'month', price: 1, planId: 'pro' } },
+  });
+  await SoftwareInvoice.create({
+    invoiceId: 'inv_cap_ok', tenantId: 'lib-a', planId: 'pro', interval: 'month',
+    amount: 1, totalMinor: 100, baseMinor: 100, taxableMinor: 100, gatewayMinor: 100,
+    currency: 'INR', status: 'open', provider: 'razorpay',
+    providerRef: 'plink_x', providerOrderRef: 'plink_x',
+  });
+  const mock = mockPaymentLinkLookup('plink_x', {
+    id: 'plink_x',
+    status: 'paid',
+    amount: 100,
+    amount_paid: 100,
+    order_id: 'order_for_plink_x',
+    payments: [{ payment_id: 'pay_x', amount: 100, status: 'captured' }],
+  });
+  try {
+    const res = await postRazorpay({
+      id: 'evt_cap_ok',
+      event: 'payment.captured',
+      payload: {
+        payment: {
+          entity: {
+            id: 'pay_x',
+            order_id: 'order_for_plink_x',
+            amount: 100,
+            currency: 'INR',
+            status: 'captured',
+            notes: { tenantId: 'lib-a', invoiceId: 'inv_cap_ok', planId: 'pro', interval: 'month' },
+          },
+        },
+      },
+    });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.ok, true, JSON.stringify(res.body));
+    assert.equal(res.body.status, 'active');
+    assert.equal(mock.calls(), 1);
+  } finally {
+    mock.restore();
+  }
+  const inv = await SoftwareInvoice.findOne({ invoiceId: 'inv_cap_ok' }).lean();
+  assert.equal(inv.status, 'paid');
+  const lib = await Library.findOne({ libraryId: 'lib-a' }).lean();
+  assert.equal(lib.subscription.status, 'active');
+  assert.equal(lib.planId, 'pro');
+});
+
+test('payment.captured rejects when the payment is not on the stored payment link', async () => {
+  await updatePaymentConfig({
+    activeProvider: 'razorpay',
+    razorpay: { enabled: true, keyId: 'rzp_test', keySecret: 'keysec', webhookSecret: 'hooksec', mode: 'test' },
+  }, { updatedBy: 'test' });
+  await refreshPaymentProvider();
+  await Library.updateOne({ libraryId: 'lib-b' }, {
+    $set: { planId: 'pro', subscription: { status: 'pending_payment', interval: 'month', price: 1, planId: 'pro' } },
+  });
+  await SoftwareInvoice.create({
+    invoiceId: 'inv_cap_bad', tenantId: 'lib-b', planId: 'pro', interval: 'month',
+    amount: 1, totalMinor: 100, baseMinor: 100, taxableMinor: 100, gatewayMinor: 100,
+    currency: 'INR', status: 'open', provider: 'razorpay',
+    providerRef: 'plink_x', providerOrderRef: 'plink_x',
+  });
+  const mock = mockPaymentLinkLookup('plink_x', {
+    id: 'plink_x',
+    status: 'paid',
+    amount: 100,
+    order_id: 'order_for_plink_x',
+    payments: [{ payment_id: 'pay_other', amount: 100, status: 'captured' }],
+  });
+  try {
+    const res = await postRazorpay({
+      id: 'evt_cap_bad',
+      event: 'payment.captured',
+      payload: {
+        payment: {
+          entity: {
+            id: 'pay_x',
+            order_id: 'order_unrelated',
+            amount: 100,
+            currency: 'INR',
+            status: 'captured',
+            notes: { tenantId: 'lib-b', invoiceId: 'inv_cap_bad', planId: 'pro', interval: 'month' },
+          },
+        },
+      },
+    });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.ok, false, JSON.stringify(res.body));
+    assert.equal(mock.calls(), 1);
+  } finally {
+    mock.restore();
+  }
+  const inv = await SoftwareInvoice.findOne({ invoiceId: 'inv_cap_bad' }).lean();
+  assert.equal(inv.status, 'past_due');
+  assert.match(String(inv.failureReason || ''), /provider_reference_mismatch/);
+  const lib = await Library.findOne({ libraryId: 'lib-b' }).lean();
+  assert.equal(lib.subscription.status, 'pending_payment');
+});
+
 test('payment amount tampering: order|payment HMAC must match key secret', () => {
   const keySecret = 'keysec';
   const orderId = 'order_1';
@@ -122,8 +258,9 @@ test('checkout uses server subscription amount (ignores client amount) and retur
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (url, opts) => {
     if (String(url).includes('razorpay.com')) {
-      const body = JSON.parse(opts.body);
-      assert.equal(body.amount, 50000); // paise from server price 500 — not client-tampered
+      const body = opts?.body ? JSON.parse(opts.body) : {};
+      // Create sends the amount. The follow-up notes update does not.
+      if (body.amount != null) assert.equal(body.amount, 50000); // paise from server price 500 — not client-tampered
       return {
         ok: true,
         status: 200,

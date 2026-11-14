@@ -43,6 +43,39 @@ export function verifyRazorpaySignature(rawBody, signature, webhookSecret) {
   }
 }
 
+/** True when this payment is one of the link's payments, or shares the link's order id. */
+export function paymentMatchesPaymentLink(link, payment) {
+  if (!link || !payment) return false;
+  const payId = payment.id || payment.payment_id;
+  const payments = Array.isArray(link.payments) ? link.payments : [];
+  if (payId && payments.some((p) => {
+    const id = p && (p.payment_id || p.id);
+    return id && String(id) === String(payId);
+  })) return true;
+  const orderId = payment.order_id || payment.orderId;
+  if (orderId && link.order_id && String(link.order_id) === String(orderId)) return true;
+  return false;
+}
+
+function noteBag(notes) {
+  if (!notes || typeof notes !== 'object' || Array.isArray(notes)) return {};
+  return notes;
+}
+
+function noteString(notes, key) {
+  const value = noteBag(notes)[key];
+  if (value == null || value === '') return null;
+  return String(value);
+}
+
+function storedPlinkId(invoice) {
+  if (!invoice) return null;
+  for (const ref of [invoice.providerRef, invoice.providerOrderRef]) {
+    if (typeof ref === 'string' && ref.startsWith('plink_')) return ref;
+  }
+  return null;
+}
+
 /** Also used for Checkout.js payment verification (order|payment HMAC). */
 export function verifyPaymentSignature({ orderId, paymentId, signature, keySecret }) {
   const payload = `${orderId}|${paymentId}`;
@@ -56,6 +89,30 @@ export function verifyPaymentSignature({ orderId, paymentId, signature, keySecre
 
 export function createRazorpayProvider({ keyId, keySecret, webhookSecret = '', mode = 'test' }) {
   const cfg = { keyId, keySecret, webhookSecret, mode };
+
+  // payment.captured does not include the payment-link id. Notes may, after we
+  // patch them. Otherwise confirm the captured payment is on the invoice's plink_.
+  async function resolveCapturedOrderRef(payment, notes) {
+    const noteLink = noteString(notes, 'paymentLinkId') || noteString(notes, 'payment_link_id');
+    if (noteLink) return noteLink;
+    const orderId = payment?.order_id ? String(payment.order_id) : null;
+    const invoiceId = noteString(notes, 'invoiceId');
+    if (!invoiceId) return orderId;
+    const invoice = await SoftwareInvoice.findOne({ invoiceId }).lean();
+    const plinkId = storedPlinkId(invoice);
+    if (!plinkId) return orderId;
+    try {
+      const link = await rzFetch(`/payment_links/${encodeURIComponent(plinkId)}`, {
+        keyId: cfg.keyId,
+        keySecret: cfg.keySecret,
+      });
+      if (paymentMatchesPaymentLink(link, payment)) return plinkId;
+    } catch (e) {
+      console.error('[razorpay] payment link lookup failed:', e.message);
+    }
+    // Lookup failed, or this payment is not on that link. Do not force the plink id.
+    return orderId;
+  }
 
   return {
     name: 'razorpay',
@@ -91,6 +148,12 @@ export function createRazorpayProvider({ keyId, keySecret, webhookSecret = '', m
           dueAt: new Date(),
         });
       }
+      const notes = {
+        tenantId: library.libraryId,
+        invoiceId,
+        planId: plan?.planId || library.planId || '',
+        interval: interval || 'month',
+      };
       const link = await rzFetch('/payment_links', {
         ...cfg,
         method: 'POST',
@@ -107,14 +170,29 @@ export function createRazorpayProvider({ keyId, keySecret, webhookSecret = '', m
           reminder_enable: false,
           callback_url: returnUrl || undefined,
           callback_method: returnUrl ? 'get' : undefined,
-          notes: {
-            tenantId: library.libraryId,
-            invoiceId,
-            planId: plan?.planId || library.planId || '',
-            interval: interval || 'month',
-          },
+          notes,
         },
       });
+      // The link id does not exist until Razorpay creates the link, so it cannot
+      // be written into the create-time notes. Update the link notes afterwards.
+      // Settlement does not depend on this: payment.captured looks the link up.
+      if (link?.id) {
+        try {
+          await rzFetch(`/payment_links/${encodeURIComponent(link.id)}`, {
+            ...cfg,
+            method: 'PATCH',
+            body: {
+              notes: {
+                ...notes,
+                paymentLinkId: link.id,
+                payment_link_id: link.id,
+              },
+            },
+          });
+        } catch (e) {
+          console.error('[razorpay] could not store payment link id on the link notes:', e.message);
+        }
+      }
       await SoftwareInvoice.updateOne({ invoiceId }, { $set: { providerRef: link.id, providerOrderRef: link.id } });
       return { url: link.short_url || link.url, reference: link.id, invoiceId, provider: 'razorpay' };
     },
@@ -188,16 +266,19 @@ export function createRazorpayProvider({ keyId, keySecret, webhookSecret = '', m
           raw: event,
         });
       }
-      if (type === 'payment.captured') {
+      if (type === 'payment.captured' || type === 'order.paid') {
         const payment = payload.payment?.entity;
-        const notes = payment?.notes || {};
+        const order = payload.order?.entity;
+        const notes = { ...noteBag(order?.notes), ...noteBag(payment?.notes) };
+        const providerOrderRef = await resolveCapturedOrderRef(payment, notes);
+        const amountPaise = payment?.amount ?? order?.amount_paid ?? order?.amount;
         return activateFromPayment({
           tenantId: notes.tenantId,
           invoiceId: notes.invoiceId,
-          providerRef: payment?.id,
-          providerOrderRef: notes.paymentLinkId || notes.payment_link_id || null,
-          currency: payment?.currency,
-          amountMinor: payment?.amount != null ? Number(payment.amount) : undefined,
+          providerRef: payment?.id || null,
+          providerOrderRef,
+          currency: payment?.currency || order?.currency,
+          amountMinor: amountPaise != null ? Number(amountPaise) : undefined,
           raw: event,
         });
       }

@@ -113,13 +113,16 @@ function validateFinancials(invoice, { gatewayMinor, currency, provider, source,
       }
     }
     // Provider ref guard must NOT skip when the event's refs are null/undefined.
-    // If the invoice already has a stored order/payment ref, the event must match it.
-    if (invoice.providerRef) {
-      const matchesRef = providerRef != null && providerRef !== ''
-        && String(invoice.providerRef) === String(providerRef);
-      const matchesOrder = providerOrderRef != null && providerOrderRef !== ''
-        && String(invoice.providerRef) === String(providerOrderRef);
-      if (!matchesRef && !matchesOrder) {
+    // A stored payment id or a stored order/payment-link id has to match one
+    // incoming ref. Unrelated pay_ ids still reject.
+    const storedRefs = [invoice.providerRef, invoice.providerOrderRef]
+      .filter((v) => v != null && String(v) !== '')
+      .map((v) => String(v));
+    if (storedRefs.length) {
+      const incoming = [providerRef, providerOrderRef]
+        .filter((v) => v != null && String(v) !== '')
+        .map((v) => String(v));
+      if (!incoming.some((ref) => storedRefs.includes(ref))) {
         return { error: 'provider_reference_mismatch', expected };
       }
     }

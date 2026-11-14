@@ -6,7 +6,7 @@ import { createApp } from './app.js';
 import { ensureSuperAdmin } from './seed.js';
 import { registerJob, startScheduler } from './jobs.js';
 import { runDailyFinanceJob } from './finance.js';
-import { Library } from './models.js';
+import { Library, User, ensureUserEmailIndex } from './models.js';
 import { runDailyNotificationJob } from './notifications.js';
 import { ensureSupportGlobalNumberIndex } from './support.js';
 import { runReminderJob, runReceiptRetryJob } from './reminders.js';
@@ -27,6 +27,10 @@ async function connectWithRetry() {
     await refreshPaymentProvider().catch(e => console.error('[payments] provider load failed:', redact(e.message)));
     // Creates the global ticket-number unique index only when existing data has no duplicates.
     await ensureSupportGlobalNumberIndex().catch(e => console.error('[support] number index check failed:', redact(e.message)));
+    // Replaces a legacy unique-only users.email_1 when that is safe. Never deletes users or libraries.
+    // Back up production before deploying this (connectDB + createBackup, not `npm run backup`).
+    await ensureUserEmailIndex().catch(e => console.error('[users] email index check failed:', redact(e.message)));
+    await User.createIndexes().catch(e => console.error('[users] index build failed:', redact(e.message)));
     registerJob('recurring-expenses', () => runDailyFinanceJob(Library));
     registerJob('notifications', () => runDailyNotificationJob(Library)); // after bills are generated
     registerJob('whatsapp-reminders', () => runReminderJob()); // no-op unless Evolution API is configured

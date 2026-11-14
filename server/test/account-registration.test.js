@@ -5,7 +5,8 @@ import { setup, teardown, call, ctx, login } from './helpers.js';
 import { outbox } from '../src/mailer.js';
 import { setSmsProvider, smsProvider } from '../src/messaging.js';
 import { resetRateLimits } from '../src/accounts.js';
-import { User, Library } from '../src/models.js';
+import { User, Library, ensureUserEmailIndex, userEmailIndexReport, userEmailIndexShape } from '../src/models.js';
+import { SignupOtp } from '../src/signup.js';
 import { signToken } from '../src/auth.js';
 import { hashPassword } from '../src/services.js';
 
@@ -200,6 +201,168 @@ test('PROF: sensitive library contact edits need owner+reauth; confirmation PDF/
   const history = await call('GET', '/api/account/registration-confirmation/history', { token: ctx.tokens.a });
   assert.equal(history.status, 200);
   assert.equal(Array.isArray(history.body.delivery.history), true);
+});
+
+test('ensureUserEmailIndex repairs a unique-only email index and two mobile-only signups succeed', async () => {
+  const coll = User.collection;
+  const blanks = await coll.find({ $or: [{ email: { $exists: false } }, { email: null }, { email: '' }] }).project({ _id: 1 }).toArray();
+  const parked = [];
+  try {
+    try { await coll.dropIndex('email_1'); } catch { /* already absent */ }
+    for (const row of blanks) {
+      parked.push(row._id);
+      await coll.updateOne({ _id: row._id }, { $set: { email: `parked.${row._id}@test.local` } });
+    }
+    await coll.createIndex({ email: 1 }, { unique: true, name: 'email_1' });
+    const legacy = (await coll.indexes()).find((ix) => ix.name === 'email_1');
+    assert.equal(userEmailIndexShape(legacy), 'unique-only');
+
+    const mobileA = '9123400101';
+    const mobileB = '9123400102';
+    const startA = await call('POST', '/api/auth/signup/start-mobile', { body: { mobile: mobileA } });
+    assert.equal(startA.status, 200);
+    const codeA = smsCode(mobileA);
+    const okA = await call('POST', '/api/auth/signup/complete-mobile', {
+      body: { mobile: mobileA, code: codeA, name: 'First Mobile', libraryName: 'First Mobile Library', password: 'OwnerPass-123', planId: 'free' },
+    });
+    assert.equal(okA.status, 200);
+    const rawA = await coll.findOne({ _id: (await User.findOne({ mobile: mobileA }).select('_id'))._id }, { projection: { email: 1 } });
+    assert.equal(Object.prototype.hasOwnProperty.call(rawA, 'email'), false);
+
+    const startB = await call('POST', '/api/auth/signup/start-mobile', { body: { mobile: mobileB } });
+    assert.equal(startB.status, 200);
+    const codeB = smsCode(mobileB);
+    const usersBefore = await User.countDocuments();
+    const fail = await call('POST', '/api/auth/signup/complete-mobile', {
+      body: { mobile: mobileB, code: codeB, name: 'Second Mobile', libraryName: 'Orphan Mobile Library', password: 'OwnerPass-123', planId: 'free' },
+    });
+    assert.equal(fail.status, 409);
+    assert.equal(fail.body.error, 'This email or mobile number is already used. Sign in instead.');
+    const failJson = JSON.stringify(fail.body);
+    assert.equal(/E11000|dup key|email_1|library_management/i.test(failJson), false);
+    assert.equal(await User.countDocuments(), usersBefore);
+    assert.equal(await Library.countDocuments({ name: 'Orphan Mobile Library' }), 0);
+    const otpB = await SignupOtp.findOne({ mobile: mobileB, channel: 'mobile' }).sort({ createdAt: -1 }).lean();
+    assert.equal(otpB.usedAt ?? null, null);
+
+    const repaired = await ensureUserEmailIndex({ log: () => {} });
+    assert.equal(repaired.changed, true);
+    assert.equal(userEmailIndexShape((await coll.indexes()).find((ix) => ix.name === 'email_1')), 'partial');
+
+    const retry = await call('POST', '/api/auth/signup/complete-mobile', {
+      body: { mobile: mobileB, code: codeB, name: 'Second Mobile', libraryName: 'Second Mobile Library', password: 'OwnerPass-123', planId: 'free' },
+    });
+    assert.equal(retry.status, 200);
+    const again = await call('POST', '/api/auth/signup/complete-mobile', {
+      body: { mobile: mobileB, code: codeB, name: 'Second Mobile', libraryName: 'Second Mobile Library', password: 'OwnerPass-123', planId: 'free' },
+    });
+    assert.equal(again.status, 400);
+    assert.equal(again.body.code, 'code_used');
+    assert.match(again.body.error, /Resend/);
+
+    const mobileC = '9123400103';
+    assert.equal((await call('POST', '/api/auth/signup/start-mobile', { body: { mobile: mobileC } })).status, 200);
+    const codeC = smsCode(mobileC);
+    const third = await call('POST', '/api/auth/signup/complete-mobile', {
+      body: { mobile: mobileC, code: codeC, name: 'Third Mobile', libraryName: 'Third Mobile Library', password: 'OwnerPass-123', planId: 'free' },
+    });
+    assert.equal(third.status, 200);
+    const rawBC = await coll.find({ mobile: { $in: [mobileB, mobileC] } }).project({ email: 1 }).toArray();
+    assert.equal(rawBC.length, 2);
+    assert.equal(rawBC.every((row) => !Object.prototype.hasOwnProperty.call(row, 'email')), true);
+  } finally {
+    await ensureUserEmailIndex({ log: () => {} });
+    for (const id of parked) await coll.updateOne({ _id: id }, { $unset: { email: '' } });
+  }
+});
+
+test('ensureUserEmailIndex refuses to drop email_1 when non-empty emails collide', async () => {
+  const coll = User.collection;
+  const inserted = [];
+  try {
+    try { await coll.dropIndex('email_1'); } catch { /* already absent */ }
+    const shared = 'dup.index@test.local';
+    inserted.push((await coll.insertOne({ email: shared, name: 'Dup A', role: 'partner', authProviders: ['password'] })).insertedId);
+    inserted.push((await coll.insertOne({ email: shared, name: 'Dup B', role: 'partner', authProviders: ['password'] })).insertedId);
+    await coll.createIndex({ email: 1 }, { name: 'email_1' });
+    const warnings = [];
+    const result = await ensureUserEmailIndex({ log: (line) => warnings.push(String(line)) });
+    assert.equal(result.changed, false);
+    assert.equal(result.reason, 'duplicates');
+    const ix = (await coll.indexes()).find((row) => row.name === 'email_1');
+    assert.notEqual(ix.unique, true);
+    assert.equal(warnings.some((line) => /Refusing to change email_1/.test(line)), true);
+    assert.equal(warnings.some((line) => line.includes(shared)), false);
+    assert.equal(await User.countDocuments({ _id: { $in: inserted } }), 2);
+  } finally {
+    if (inserted.length) await coll.deleteMany({ _id: { $in: inserted } });
+    try { await coll.dropIndex('email_1'); } catch { /* absent */ }
+    const restored = await ensureUserEmailIndex({ log: () => {} });
+    assert.equal(restored.reason === 'duplicates' ? false : true, true);
+    assert.equal(userEmailIndexShape((await coll.indexes()).find((row) => row.name === 'email_1')), 'partial');
+  }
+});
+
+test('userEmailIndexReport does not count missing emails as empty strings', async () => {
+  const coll = User.collection;
+  const inserted = [];
+  try {
+    const before = await userEmailIndexReport();
+    inserted.push((await coll.insertOne({ name: 'No Email A', role: 'partner', authProviders: ['password'] })).insertedId);
+    inserted.push((await coll.insertOne({ name: 'No Email B', role: 'partner', authProviders: ['password'] })).insertedId);
+    const missing = await userEmailIndexReport();
+    assert.equal(missing.emptyStringEmails, before.emptyStringEmails);
+    assert.equal(missing.blankEmailUsers, before.blankEmailUsers + 2);
+    assert.equal(missing.duplicateNonEmptyEmailGroups, before.duplicateNonEmptyEmailGroups);
+
+    try { await coll.dropIndex('email_1'); } catch { /* absent */ }
+    const repaired = await ensureUserEmailIndex({ log: () => {} });
+    assert.equal(repaired.emptyStringEmails, before.emptyStringEmails);
+    assert.equal(repaired.changed, true);
+    assert.equal(userEmailIndexShape((await coll.indexes()).find((ix) => ix.name === 'email_1')), 'partial');
+
+    try { await coll.dropIndex('email_1'); } catch { /* absent */ }
+    await coll.deleteMany({ _id: { $in: inserted } });
+    inserted.length = 0;
+    inserted.push((await coll.insertOne({ email: '', name: 'Empty A', role: 'partner', authProviders: ['password'] })).insertedId);
+    inserted.push((await coll.insertOne({ email: '', name: 'Empty B', role: 'partner', authProviders: ['password'] })).insertedId);
+    const blanks = await userEmailIndexReport();
+    assert.equal(blanks.emptyStringEmails, before.emptyStringEmails + 2);
+    assert.equal(blanks.blankEmailUsers, before.blankEmailUsers + 2);
+    const warnings = [];
+    const refused = await ensureUserEmailIndex({ log: (line) => warnings.push(String(line)) });
+    assert.equal(refused.changed, false);
+    assert.equal(refused.reason, 'duplicates');
+    assert.equal(refused.emptyStringEmails, before.emptyStringEmails + 2);
+    assert.equal(warnings.some((line) => /@/.test(line)), false);
+    assert.equal((await coll.indexes()).some((ix) => ix.name === 'email_1'), false);
+  } finally {
+    if (inserted.length) await coll.deleteMany({ _id: { $in: inserted } });
+    try { await coll.dropIndex('email_1'); } catch { /* absent */ }
+    const restored = await ensureUserEmailIndex({ log: () => {} });
+    assert.notEqual(restored.reason, 'duplicates');
+    assert.equal(userEmailIndexShape((await coll.indexes()).find((row) => row.name === 'email_1')), 'partial');
+  }
+});
+
+test('mobile signup distinguishes a wrong code from an expired code', async () => {
+  const mobile = '9123400199';
+  assert.equal((await call('POST', '/api/auth/signup/start-mobile', { body: { mobile } })).status, 200);
+  const code = smsCode(mobile);
+  const wrong = await call('POST', '/api/auth/signup/complete-mobile', {
+    body: { mobile, code: code === '000000' ? '111111' : '000000', name: 'Wrong Code', libraryName: 'Wrong Code Library', password: 'OwnerPass-123', planId: 'free' },
+  });
+  assert.equal(wrong.status, 400);
+  assert.equal(wrong.body.code, 'wrong_code');
+  assert.equal(wrong.body.error, 'Wrong code');
+  await SignupOtp.updateOne({ mobile, channel: 'mobile', usedAt: null }, { $set: { expiresAt: new Date(Date.now() - 1000) } });
+  const expired = await call('POST', '/api/auth/signup/complete-mobile', {
+    body: { mobile, code, name: 'Wrong Code', libraryName: 'Wrong Code Library', password: 'OwnerPass-123', planId: 'free' },
+  });
+  assert.equal(expired.status, 400);
+  assert.equal(expired.body.code, 'code_expired');
+  assert.match(expired.body.error, /Resend/);
+  assert.equal(expired.body.error.includes('Wrong code'), false);
 });
 
 test('PDF writer preserves readable heading punctuation and INR text', () => {

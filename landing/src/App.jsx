@@ -6,8 +6,10 @@ import HowItWorks from './components/HowItWorks.jsx';
 import Pricing from './components/Pricing.jsx';
 import FAQ from './components/FAQ.jsx';
 import Footer, { FinalCTA } from './components/Footer.jsx';
+import { usePathname, LEGAL_ROUTES } from './router.js';
+import { LegalRoute } from './pages/LegalPages.jsx';
 
-export default function App() {
+function Home() {
   return (
     <>
       <a href="#main" className="sr-only z-[60] rounded-lg bg-gold-400 px-4 py-2 font-semibold text-ink-950 focus:not-sr-only focus:fixed focus:left-4 focus:top-4">
@@ -26,4 +28,10 @@ export default function App() {
       <Footer />
     </>
   );
+}
+
+export default function App() {
+  const path = usePathname();
+  if (LEGAL_ROUTES[path]) return <LegalRoute path={path} />;
+  return <Home />;
 }

@@ -9,6 +9,7 @@
     "dev": "node --watch src/index.js",
     "seed": "node src/seed-cli.js",
     "seed:demo": "node src/seed-cli.js --demo",
+    "demo:razorpay-owner": "node scripts/create-razorpay-demo-owner.mjs",
     "migrate:tenants": "node src/migrate-tenants.js",
     "backup": "node src/backup.js backup",
     "restore": "node src/backup.js restore",

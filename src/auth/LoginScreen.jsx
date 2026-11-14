@@ -194,7 +194,8 @@ export function LoginScreen({ onContinueOffline }) {
   const inviteLibraryName = typeof inviteInfo?.library === 'string' ? inviteInfo.library : inviteInfo?.library?.name;
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: mode === 'signup' ? 'flex-start' : 'center', justifyContent: 'center', padding: 24, background: 'var(--bg-primary, #f8fafc)' }}>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-primary, #f8fafc)' }}>
+    <div style={{ flex: 1, display: 'flex', alignItems: mode === 'signup' ? 'flex-start' : 'center', justifyContent: 'center', padding: 24 }}>
       <style>{`
         #google-signin:hover { background: #f8fafc !important; }
         #google-signin:focus-visible { outline: 2px solid var(--brand-accent, #2563eb); outline-offset: 2px; }
@@ -450,6 +451,16 @@ export function LoginScreen({ onContinueOffline }) {
           </p>
         )}
       </div>
+    </div>
+    <footer style={{ padding: '4px 16px 20px', textAlign: 'center', fontSize: 12, lineHeight: 1.7, color: 'var(--text-tertiary, #6b7280)' }}>
+      <a href="https://mylibraryos.in/privacy" style={{ color: 'inherit' }}>Privacy Policy</a>
+      <span aria-hidden="true"> · </span>
+      <a href="https://mylibraryos.in/terms" style={{ color: 'inherit' }}>Terms & Conditions</a>
+      <span aria-hidden="true"> · </span>
+      <a href="https://mylibraryos.in/refund" style={{ color: 'inherit' }}>Refund & Cancellation Policy</a>
+      <span aria-hidden="true"> · </span>
+      <a href="https://mylibraryos.in/contact" style={{ color: 'inherit' }}>Contact Us</a>
+    </footer>
     </div>
   );
 }

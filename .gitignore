@@ -48,3 +48,6 @@ dist-ssr/
 backups/
 server/backups/
 *.bak
+
+# Password file written by server/scripts/create-razorpay-demo-owner.mjs
+server/.razorpay-demo-owner.credentials

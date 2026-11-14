@@ -6,6 +6,7 @@ import { outbox } from '../src/mailer.js';
 import { resetRateLimits } from '../src/accounts.js';
 import { initialSubscription } from '../src/billing.js';
 import { Library } from '../src/models.js';
+import { SignupOtp } from '../src/signup.js';
 
 before(async () => {
   await setup('signup');

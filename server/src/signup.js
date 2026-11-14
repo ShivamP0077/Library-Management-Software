@@ -167,6 +167,54 @@ async function finishOwnerSignup({ email, mobile, name, libraryName, city, passw
   return issueSession(user, res);
 }
 
+const CODE_WRONG = { error: 'Wrong code', code: 'wrong_code' };
+const CODE_EXPIRED = { error: 'Code expired, tap Resend', code: 'code_expired' };
+const CODE_USED = { error: 'This code was already used. Tap Resend to get a new one.', code: 'code_used' };
+const CODE_LOCKED = { error: 'Too many tries. Tap Resend to get a new one.', code: 'code_locked' };
+const CODE_FALLBACK = { error: 'Invalid or expired code', code: 'invalid_code' };
+
+/** When the unused, unexpired code is missing, say whether the latest one expired, was used, or never existed. */
+async function describeMissingCode(filter) {
+  const latest = await SignupOtp.findOne(filter).sort({ createdAt: -1 });
+  if (!latest) return CODE_FALLBACK;
+  if (latest.usedAt) return CODE_USED;
+  if (!(latest.expiresAt > new Date())) return CODE_EXPIRED;
+  if (latest.attempts >= 5) return CODE_LOCKED;
+  return CODE_FALLBACK;
+}
+
+async function matchSignupCode({ filter, hash }) {
+  const rec = await SignupOtp.findOne({ ...filter, usedAt: null, expiresAt: { $gt: new Date() } }).sort({ createdAt: -1 });
+  if (!rec) return { error: await describeMissingCode(filter) };
+  if (rec.attempts >= 5) return { error: CODE_LOCKED };
+  if (rec.codeHash !== hash) {
+    rec.attempts += 1;
+    await rec.save();
+    return { error: CODE_WRONG };
+  }
+  return { rec };
+}
+
+async function releaseSignupCode(id) {
+  await SignupOtp.updateOne({ _id: id }, { $unset: { usedAt: 1 } });
+}
+
+/**
+ * Mark the code used only for the duration of account creation. A failed create puts it back.
+ * Account-exists checks must already have passed so a 409 does not burn the code.
+ */
+async function claimAndFinish(rec, finishArgs, res) {
+  const claimed = await SignupOtp.findOneAndUpdate({ _id: rec._id, usedAt: null }, { $set: { usedAt: new Date() } });
+  if (!claimed) return res.status(400).json(CODE_USED);
+  try {
+    await finishOwnerSignup({ ...finishArgs, res });
+    if (res.statusCode >= 400) await releaseSignupCode(rec._id);
+  } catch (err) {
+    await releaseSignupCode(rec._id);
+    throw err;
+  }
+}
+
 async function resolvePlan(body) {
   const interval = INTERVALS.includes(body.interval) ? body.interval : 'month';
   const plans = await signupPlans();
@@ -255,17 +303,18 @@ export function createSignupRouter({ issueSession }) {
     const resolved = await resolvePlan(b);
     if (resolved.error) return res.status(resolved.error.status).json(resolved.error.body);
 
-    const bad = () => res.status(400).json({ error: 'Invalid or expired code', code: 'invalid_code' });
-    const rec = await SignupOtp.findOne({ email, channel: 'email', usedAt: null, expiresAt: { $gt: new Date() } }).sort({ createdAt: -1 });
-    if (!rec || rec.attempts >= 5) return bad();
-    if (rec.codeHash !== sha(`${email}:${String(b.code).trim()}`)) { rec.attempts += 1; await rec.save(); return bad(); }
-    const claimed = await SignupOtp.findOneAndUpdate({ _id: rec._id, usedAt: null }, { $set: { usedAt: new Date() } });
-    if (!claimed) return bad();
-
-    return finishOwnerSignup({
+    const matched = await matchSignupCode({ filter: { email, channel: 'email' }, hash: sha(`${email}:${String(b.code).trim()}`) });
+    if (matched.error) return res.status(400).json(matched.error);
+    if (await User.exists({ email })) {
+      return res.status(409).json({ error: 'An account with this email already exists. Sign in instead.' });
+    }
+    if (mobile && await User.exists({ mobile })) {
+      return res.status(409).json({ error: 'An account with this mobile number already exists. Sign in instead.' });
+    }
+    return claimAndFinish(matched.rec, {
       email, mobile, name, libraryName, city, password: b.password, plan: resolved.plan, interval: resolved.interval,
-      via: 'email', referralCode: b.referralCode, ip: req.ip, issueSession, res,
-    });
+      via: 'email', referralCode: b.referralCode, ip: req.ip, issueSession,
+    }, res);
   }));
 
   r.post('/auth/signup/complete-mobile', wrap(async (req, res) => {
@@ -285,17 +334,18 @@ export function createSignupRouter({ issueSession }) {
     const resolved = await resolvePlan(b);
     if (resolved.error) return res.status(resolved.error.status).json(resolved.error.body);
 
-    const bad = () => res.status(400).json({ error: 'Invalid or expired code', code: 'invalid_code' });
-    const rec = await SignupOtp.findOne({ mobile, channel: 'mobile', usedAt: null, expiresAt: { $gt: new Date() } }).sort({ createdAt: -1 });
-    if (!rec || rec.attempts >= 5) return bad();
-    if (rec.codeHash !== sha(`mobile:${mobile}:${String(b.code).trim()}`)) { rec.attempts += 1; await rec.save(); return bad(); }
-    const claimed = await SignupOtp.findOneAndUpdate({ _id: rec._id, usedAt: null }, { $set: { usedAt: new Date() } });
-    if (!claimed) return bad();
-
-    return finishOwnerSignup({
+    const matched = await matchSignupCode({ filter: { mobile, channel: 'mobile' }, hash: sha(`mobile:${mobile}:${String(b.code).trim()}`) });
+    if (matched.error) return res.status(400).json(matched.error);
+    if (email && await User.exists({ email })) {
+      return res.status(409).json({ error: 'An account with this email already exists. Sign in instead.' });
+    }
+    if (await User.exists({ mobile })) {
+      return res.status(409).json({ error: 'An account with this mobile number already exists. Sign in instead.' });
+    }
+    return claimAndFinish(matched.rec, {
       email, mobile, name, libraryName, city, password: b.password, plan: resolved.plan, interval: resolved.interval,
-      via: 'mobile', referralCode: b.referralCode, ip: req.ip, issueSession, res,
-    });
+      via: 'mobile', referralCode: b.referralCode, ip: req.ip, issueSession,
+    }, res);
   }));
 
   /**

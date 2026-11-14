@@ -37,10 +37,17 @@ export function createApp() {
   }
 
   app.use((err, _req, res, _next) => {
-    const status = err.status || (err.code === 11000 ? 409 : 500);
-    const message = err.type === 'entity.too.large' ? 'Upload is too large. Notices: 8 files, 5 MB each, 10 MB total. Support: 3 files per message, 8 MB total.' : status === 500 ? 'Internal server error' : redact(err.message);
+    const mongoDup = err?.code === 11000 || err?.code === 11001 || err?.code === '11000' || err?.code === '11001'
+      || /E11000|E11001|duplicate key error|dup key/i.test(String(err?.message || ''));
+    let status = err.status || (mongoDup ? 409 : 500);
+    let message = err.type === 'entity.too.large' ? 'Upload is too large. Notices: 8 files, 5 MB each, 10 MB total. Support: 3 files per message, 8 MB total.' : status === 500 ? 'Internal server error' : redact(err.message);
+    if (mongoDup || /E11000|E11001|duplicate key error|dup key/i.test(message)) {
+      status = 409;
+      message = 'This email or mobile number is already used. Sign in instead.';
+    }
     if (status === 500) console.error('[api] error:', redact(err.message));
-    res.status(status).json({ error: message, ...(err.code && typeof err.code === 'string' ? { code: err.code } : {}), ...(err.details ? { details: err.details } : {}) });
+    const code = typeof err.code === 'string' && !/^\d+$/.test(err.code) && !/E11000|dup key/i.test(err.code) ? err.code : undefined;
+    res.status(status).json({ error: message, ...(code ? { code } : {}), ...(err.details && !mongoDup ? { details: err.details } : {}) });
   });
   return app;
 }

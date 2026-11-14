@@ -41,7 +41,18 @@ export const isPlatformRole = (role) => PLATFORM_ROLES.includes(role);
  */
 const userSchema = new mongoose.Schema({
   // Email is optional for mobile-only owners; at least one verified identifier is required.
-  email: { type: String, lowercase: true, trim: true, required: function () { return !this.mobile; } }, // unique+sparse index below
+  // Blank values must stay off the document. A unique index still stores one explicit null.
+  email: {
+    type: String,
+    lowercase: true,
+    trim: true,
+    required: function () { return !this.mobile; },
+    set: (v) => {
+      if (v == null) return undefined;
+      const s = String(v).trim();
+      return s || undefined;
+    },
+  },
   mobile: { type: String, trim: true },
   emailVerified: { type: Boolean, default: true }, // admin/legacy accounts keep working
   mobileVerified: { type: Boolean, default: false },
@@ -65,12 +76,35 @@ const userSchema = new mongoose.Schema({
   googleSub: { type: String, index: true, sparse: true },
   authProviders: { type: [String], default: [] }, // e.g. ['password', 'google']
 }, { timestamps: true });
-userSchema.index({ email: 1 }, { unique: true, sparse: true });
+// Only real string emails are unique. Sparse still indexes an explicit null, so a partial
+// filter is the one that allows many mobile-only accounts. autoIndex is off so startup can
+// replace a legacy unique-only email_1 before Mongo rejects the new definition.
+userSchema.set('autoIndex', false);
 userSchema.index({ mobile: 1 }, { unique: true, sparse: true });
+userSchema.index(
+  { email: 1 },
+  { name: 'email_1', unique: true, partialFilterExpression: { email: { $type: 'string' } } },
+);
 // Keep the legacy libraryId mirror in sync when only one of the two is supplied.
 userSchema.pre('validate', function syncTenantFields() {
   if (!this.tenantId && this.libraryId) this.tenantId = this.libraryId;
   if (!this.libraryId && this.tenantId) this.libraryId = this.tenantId;
+});
+userSchema.pre('save', function omitBlankEmail() {
+  if (this.email != null && String(this.email).trim() !== '') return;
+  if (typeof this.$unset === 'function') this.$unset('email');
+  else this.set('email', undefined);
+});
+userSchema.post('save', async function stripStoredBlankEmail() {
+  try {
+    const raw = await this.constructor.collection.findOne({ _id: this._id }, { projection: { email: 1 } });
+    if (!raw || !Object.prototype.hasOwnProperty.call(raw, 'email')) return;
+    if (raw.email == null || String(raw.email).trim() === '') {
+      await this.constructor.collection.updateOne({ _id: this._id }, { $unset: { email: '' } });
+    }
+  } catch {
+    console.error('[users] could not clear a blank email field');
+  }
 });
 userSchema.methods.toSafeJSON = function () {
   const { _id, email, mobile, emailVerified, mobileVerified, name, role, staffId, status, lastLoginAt, createdAt, authProviders } = this;
@@ -79,6 +113,76 @@ userSchema.methods.toSafeJSON = function () {
   return { id: String(_id), email: email || null, mobile: mobile || null, emailVerified: emailVerified !== false, mobileVerified: mobileVerified === true, name, role, libraryId: tenantId, tenantId, staffId: staffId || null, status, lastLoginAt, createdAt, authProviders };
 };
 export const User = mongoose.model('User', userSchema);
+
+const EMAIL_INDEX = 'email_1';
+
+export function userEmailIndexShape(ix) {
+  if (!ix?.unique || !ix.key || ix.key.email !== 1 || Object.keys(ix.key).length !== 1) return 'other';
+  const type = ix.partialFilterExpression?.email?.$type;
+  if (type === 'string' || type === 2) return 'partial';
+  if (ix.sparse && !ix.partialFilterExpression) return 'sparse';
+  if (!ix.partialFilterExpression && !ix.sparse) return 'unique-only';
+  return 'other';
+}
+
+async function userCollectionIndexes(collection) {
+  try { return await collection.indexes(); }
+  catch (e) {
+    if (e?.code === 26 || /ns does not exist/i.test(String(e?.message || ''))) return [];
+    throw e;
+  }
+}
+
+/**
+ * Counts only. Uses the native collection so Mongoose does not cast a missing
+ * email into ''. Never returns email addresses or phone numbers.
+ */
+export async function userEmailIndexReport(model = User) {
+  const collection = model.collection;
+  const [blankEmailUsers, emptyStringEmails, duplicateGroups] = await Promise.all([
+    collection.countDocuments({ $or: [{ email: { $exists: false } }, { email: null }, { email: '' }] }),
+    collection.countDocuments({ email: '' }),
+    collection.aggregate([
+      { $match: { email: { $type: 'string', $gt: '' } } },
+      { $group: { _id: '$email', n: { $sum: 1 } } },
+      { $match: { n: { $gt: 1 } } },
+      { $count: 'groups' },
+    ]).toArray(),
+  ]);
+  return {
+    blankEmailUsers,
+    emptyStringEmails,
+    duplicateNonEmptyEmailGroups: duplicateGroups[0]?.groups || 0,
+  };
+}
+
+/**
+ * Make users.email_1 a unique index of real string emails.
+ * Does nothing when that index (or the older unique+sparse index) is already in place.
+ * Refuses to drop the current index when two documents share a non-empty email, or when
+ * more than one empty string would collide with the partial unique index.
+ * Never deletes user or library documents.
+ */
+export async function ensureUserEmailIndex({ log = console.log, model = User } = {}) {
+  const indexes = await userCollectionIndexes(model.collection);
+  const existing = indexes.find((ix) => ix.name === EMAIL_INDEX || (ix.key && Object.keys(ix.key).length === 1 && ix.key.email === 1));
+  const shape = userEmailIndexShape(existing);
+  if (shape === 'partial' || shape === 'sparse') return { changed: false, reason: shape, index: shape };
+
+  const report = await userEmailIndexReport(model);
+  if (report.duplicateNonEmptyEmailGroups > 0 || report.emptyStringEmails > 1) {
+    log(`[users] Refusing to change email_1: ${report.duplicateNonEmptyEmailGroups} duplicate non-empty email group(s), ${report.emptyStringEmails} empty-string email(s). The current index was left in place.`);
+    return { changed: false, reason: 'duplicates', index: shape, ...report };
+  }
+
+  if (existing) await model.collection.dropIndex(existing.name);
+  await model.collection.createIndex(
+    { email: 1 },
+    { name: EMAIL_INDEX, unique: true, partialFilterExpression: { email: { $type: 'string' } } },
+  );
+  log('[users] email unique partial index is in place');
+  return { changed: true, reason: 'partial', index: 'partial', ...report };
+}
 
 /* ---------------------------------------------------------------------------
  * Tenant-scoped models

@@ -40,7 +40,15 @@ export async function createLibrary({ name, libraryId, contactEmail, phone, city
   }
   const code = referralCode || `LIB-${String(id).toUpperCase().replace(/[^A-Z0-9]/g, '')}`;
   const library = await Library.create({ libraryId: id, name: String(name).trim(), contactEmail, phone: phone || null, city: city || null, address: address || null, referralCode: code, referredByCode: referredByCode || null, createdBy, ...(isDefault !== undefined ? { isDefault } : {}) });
-  if (admin?.email || admin?.mobile) adminUser = await createUser({ ...admin, role: 'client_admin', tenantId: id, libraryId: id });
+  if (admin?.email || admin?.mobile) {
+    try {
+      adminUser = await createUser({ ...admin, role: 'client_admin', tenantId: id, libraryId: id });
+    } catch (err) {
+      // The owner row did not stick. Remove only the library created in this call.
+      await Library.deleteOne({ _id: library._id }).catch(() => {});
+      throw err;
+    }
+  }
   if (adminUser) { generatedPassword = adminUser.generatedPassword; adminUser = adminUser.user; }
   return { library, adminUser, generatedPassword };
 }
@@ -61,14 +69,26 @@ export async function createUser({ email, mobile, name, role, tenantId, libraryI
   const pw = password || generatedPassword;
   const tid = isPlatformRole(role) ? undefined : (tenantId || libraryId);
   const providers = authProviders || ['google', ...(pw ? ['password'] : [])];
-  const user = await User.create({
-    email: email || undefined, mobile: mobile || undefined, name: name || '', role, tenantId: tid, libraryId: tid, staffId,
+  // Omit blank identifiers entirely. Passing `undefined` is not enough: Mongoose can still
+  // persist email: null, and a unique index allows only one of those.
+  const doc = {
+    name: name || '', role, tenantId: tid, libraryId: tid, staffId,
     passwordHash: pw ? await hashPassword(pw) : undefined,
     emailVerified: emailVerified !== undefined ? emailVerified : Boolean(email),
     mobileVerified: mobileVerified === true,
     authProviders: providers,
-  });
-  return { user, generatedPassword };
+  };
+  if (email) doc.email = email;
+  if (mobile) doc.mobile = mobile;
+  try {
+    const user = await User.create(doc);
+    return { user, generatedPassword };
+  } catch (err) {
+    if (err?.code === 11000 || err?.code === 11001 || /E11000|E11001|duplicate key error/i.test(String(err?.message || ''))) {
+      throw Object.assign(new Error('This email or mobile number is already used. Sign in instead.'), { status: 409 });
+    }
+    throw err;
+  }
 }
 
 const sumField = (expr) => ({ $sum: { $convert: { input: expr, to: 'double', onError: 0, onNull: 0 } } });

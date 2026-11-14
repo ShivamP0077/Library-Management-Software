@@ -20,6 +20,7 @@ export function SignupPanel({ plans = [], googleSignup = false, mobileSignupAvai
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [busy, setBusy] = useState(false);
+  const [resendWait, setResendWait] = useState(0);
   const [error, setError] = useState('');
   const [info, setInfo] = useState(googlePendingToken ? 'Google verified. Choose a plan and name your library.' : '');
   const [sessionResult, setSessionResult] = useState(null);
@@ -33,6 +34,16 @@ export function SignupPanel({ plans = [], googleSignup = false, mobileSignupAvai
   useEffect(() => {
     if (!mobileSignupAvailable && channel === 'mobile') setChannel('email');
   }, [mobileSignupAvailable, channel]);
+
+  useEffect(() => {
+    if (step === 2 && !viaGoogle) setResendWait(60);
+  }, [step, viaGoogle]);
+
+  useEffect(() => {
+    if (resendWait <= 0) return undefined;
+    const timer = setTimeout(() => setResendWait((seconds) => seconds - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [resendWait]);
 
   useEffect(() => {
     if (googlePendingToken) {
@@ -51,6 +62,17 @@ export function SignupPanel({ plans = [], googleSignup = false, mobileSignupAvai
         : await api.signupStart(email.trim());
       setInfo(r.message || 'Code sent.');
       setStep(2);
+    });
+  };
+
+  const resendCode = () => {
+    run(async () => {
+      const r = channel === 'mobile' && mobileSignupAvailable
+        ? await api.signupStartMobile(mobile.trim())
+        : await api.signupStart(email.trim());
+      setCode('');
+      setResendWait(60);
+      setInfo(r.message ? `${r.message} A new code was sent. The old code no longer works.` : 'A new code was sent. The old code no longer works.');
     });
   };
 
@@ -168,6 +190,9 @@ export function SignupPanel({ plans = [], googleSignup = false, mobileSignupAvai
               <div className="form-group">
                 <label className="form-label" htmlFor="signup-code">6-digit code</label>
                 <input id="signup-code" className="form-input" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={e => setCode(e.target.value.replace(/\D/g, ''))} required />
+                <button type="button" className="btn btn-secondary" onClick={resendCode} disabled={busy || resendWait > 0} style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}>
+                  {resendWait > 0 ? `Resend code (${resendWait}s)` : 'Resend code'}
+                </button>
               </div>
               {channel === 'mobile' && mobileSignupAvailable && (
                 <div className="form-group">

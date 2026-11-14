@@ -397,6 +397,8 @@ export function createProfileRouter() {
     else { user.mobile = null; user.mobileVerified = false; }
     user.authProviders = (user.authProviders || []).filter(p => p !== channel);
     await user.save();
+    // save() may still persist email: null; the unique index must not keep that null.
+    if (channel === 'email') await User.collection.updateOne({ _id: user._id }, { $unset: { email: '' } });
     await audit(req, 'profile.contact_unlinked', { detail: { channel } });
     res.json({ ok: true, ...(await profileView(req)) });
   }));

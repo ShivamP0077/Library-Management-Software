@@ -247,6 +247,7 @@ export const api = {
   enquiries: (status = 'waiting') => apiRequest(`/enquiries?status=${encodeURIComponent(status)}`),
   enquiryLink: () => apiRequest('/enquiries/link'),
   regenerateEnquiryLink: () => apiRequest('/enquiries/link/regenerate', { method: 'POST', body: {} }),
+  saveEnquiryPoster: (poster) => apiRequest('/enquiries/poster', { method: 'PUT', body: poster }),
   updateEnquiry: (id, status) => apiRequest(`/enquiries/${encodeURIComponent(id)}`, { method: 'PATCH', body: { status } }),
 };
 

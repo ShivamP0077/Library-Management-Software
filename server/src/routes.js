@@ -41,7 +41,7 @@ import { createSystemWhatsappRouter } from './systemWhatsapp.js';
 import { createBillingAdminRouter } from './billingConfig.js';
 import { refreshPaymentProvider } from './paymentConfig.js';
 import { DeletionJob } from './deletionJob.js';
-import { createPublicAccountRouter, createTenantAccountRouter, auditSuperadminAccess, acceptInvite } from './accounts.js';
+import { createPublicAccountRouter, createTenantAccountRouter, auditSuperadminAccess, acceptInvite, issueLinkedGooglePasswordReset } from './accounts.js';
 import { createSeatRouter, reconcileStudents, releaseForStudents, validateSeatSync, SeatAllocation, seatMatchesAllocation, SeatConflictError } from './seats.js';
 
 const router = express.Router();
@@ -142,10 +142,12 @@ router.get('/auth/google/start', (req, res) => {
   // Issue #13: invite token may ride along. Issue #15: signup=1 starts Google owner signup.
   const invite = typeof req.query.invite === 'string' && /^[A-Za-z0-9_-]{16,200}$/.test(req.query.invite) ? req.query.invite : undefined;
   const signup = req.query.signup === '1' || req.query.signup === 'true';
+  const recovery = req.query.recovery === '1' || req.query.recovery === 'true';
   const cookieValue = Buffer.from(JSON.stringify({
     s: state, v: codeVerifier,
     ...(invite ? { i: invite } : {}),
     ...(signup ? { su: 1 } : {}),
+    ...(recovery ? { rc: 1 } : {}),
   }), 'utf8').toString('base64url');
 
   res.cookie(GOOGLE_COOKIE, cookieValue, { ...googleCookieOptions(), maxAge: 600 * 1000 });
@@ -181,6 +183,19 @@ router.get('/auth/google/callback', wrap(async (req, res) => {
     } catch (err) {
       if (err?.code === 'email_unverified') return fail('email_unverified');
       throw err;
+    }
+
+    // Linked Google recovery: prove googleSub, then let the user set a My Library OS password.
+    // This does not create an account and does not change the Google password.
+    if (cookieData.rc) {
+      const linked = await User.findOne({ googleSub: identity.sub });
+      if (!linked || linked.status !== 'Active' || !linked.googleSub || linked.googleSub !== identity.sub) return fail('google_not_linked');
+      if (!isPlatformRole(linked.role)) {
+        const lib = await Library.findOne({ libraryId: linked.tenantId || linked.libraryId }).lean();
+        if (!lib || lib.status !== 'Active') return fail('library_disabled');
+      }
+      const resetToken = await issueLinkedGooglePasswordReset(linked, req.ip);
+      return res.redirect(302, `${frontendUrl}/#google_reset=${encodeURIComponent(resetToken)}`);
     }
 
     let user = await User.findOne({ email: identity.email });

@@ -44,7 +44,7 @@ const otpSchema = new mongoose.Schema({
   attempts: { type: Number, default: 0 },
   usedAt: Date,
   ip: String,
-  channel: { type: String, enum: ['email', 'mobile'], default: 'email' },
+  channel: { type: String, enum: ['email', 'mobile', 'google'], default: 'email' },
   mobile: String,
 }, { timestamps: true });
 otpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 86400 });
@@ -62,6 +62,35 @@ export function rateLimited(key, max, windowMs) {
   return arr.length > max;
 }
 export const resetRateLimits = () => hits.clear();
+
+/** Test helper: move in-memory limiter timestamps back so a cooldown can elapse without waiting. */
+export function ageRateLimits(ms) {
+  const shift = Number(ms) || 0;
+  for (const [key, arr] of hits) hits.set(key, arr.map(t => t - shift));
+}
+
+/**
+ * After Google has proved a googleSub that is already stored on this user,
+ * issue a short-lived token so they can set a My Library OS password.
+ * The raw token is returned to the caller and stored only as a hash.
+ */
+export async function issueLinkedGooglePasswordReset(user, ip) {
+  const token = crypto.randomBytes(32).toString('base64url');
+  await PasswordResetOtp.updateMany({ userId: String(user._id), channel: 'google', usedAt: null }, { $set: { usedAt: new Date() } });
+  await PasswordResetOtp.create({
+    userId: String(user._id),
+    channel: 'google',
+    codeHash: sha(token),
+    expiresAt: new Date(Date.now() + OTP_MINUTES() * 60e3),
+    ip: ip || '',
+  });
+  await audit(
+    { user: { id: String(user._id), email: user.email, role: user.role }, ip },
+    'password.reset_requested',
+    { tenantId: user.tenantId || null, target: user.email ? mask(user.email) : 'linked-google', detail: { via: 'google' } },
+  );
+  return token;
+}
 
 const mask = (email) => email.replace(/^(.)(.*)(@.*)$/, (_, a, b, c) => a + '*'.repeat(Math.min(b.length, 6)) + c);
 
@@ -126,7 +155,7 @@ export function createPublicAccountRouter({ issueSession }) {
     const generic = { ok: true, message: 'If this email is registered, a reset code has been sent.' };
     if (!email) return res.status(400).json({ error: 'email is required' });
     if (rateLimited(`ip:${req.ip}`, 10, 15 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
-    if (rateLimited(`fp:${email}`, 1, 60e3)) return res.status(429).json({ error: 'Please wait a minute before requesting another code.' });
+    if (rateLimited(`fp:${email}`, 1, 30e3)) return res.status(429).json({ error: 'Please wait 30 seconds before requesting another code.' });
     if (await throttleHit(`forgot-email:${email}`, 5, 15 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
     const user = await User.findOne({ email }).lean();
     if (!user || user.status !== 'Active') return res.json(generic); // disabled accounts cannot recover
@@ -150,7 +179,8 @@ export function createPublicAccountRouter({ issueSession }) {
     if (!isMobile(mobile)) return res.status(400).json({ error: 'A valid mobile number is required' });
     if (!smsConfigured()) return res.status(503).json({ error: 'Mobile verification is not configured. Contact support.', code: 'mobile_otp_not_configured' });
     if (rateLimited(`fmp:${req.ip}`, 10, 15 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
-    if (await throttleHit(`forgot-mobile:${mobile}`, 3, 60e3)) return res.status(429).json({ error: 'Please wait a minute before requesting another code.' });
+    if (rateLimited(`fmp-send:${mobile}`, 1, 30e3)) return res.status(429).json({ error: 'Please wait 30 seconds before requesting another code.' });
+    if (await throttleHit(`forgot-mobile:${mobile}`, 5, 15 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
     const user = await User.findOne({ mobile }).lean();
     if (!user || user.status !== 'Active') return res.json(generic);
     if (!isPlatformRole(user.role)) {
@@ -187,6 +217,28 @@ export function createPublicAccountRouter({ issueSession }) {
     await user.save();
     await audit({ user: { id: String(user._id), email: user.email, role: user.role }, ip: req.ip }, 'password.reset_completed', { tenantId: user.tenantId || null, via: 'mobile' });
     res.json({ ok: true });
+  }));
+
+  // Linked Google proves the account, then the user sets a My Library OS password only.
+  r.post('/auth/reset-password-google', wrap(async (req, res) => {
+    const token = String(req.body?.token || '').trim();
+    const { newPassword } = req.body || {};
+    if (!token) return res.status(400).json({ error: 'A reset token is required' });
+    if (!validatePassword(newPassword)) return res.status(400).json({ error: 'New password must be at least 8 characters' });
+    if (rateLimited(`rpg:${req.ip}`, 20, 15 * 60e3)) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
+    const bad = () => res.status(400).json({ error: 'Invalid or expired reset link' });
+    const rec = await PasswordResetOtp.findOne({ channel: 'google', codeHash: sha(token), usedAt: null, expiresAt: { $gt: new Date() } });
+    if (!rec) return bad();
+    const user = await User.findById(rec.userId).select('+passwordHash');
+    if (!user || user.status !== 'Active' || !user.googleSub) return bad();
+    const claimed = await PasswordResetOtp.findOneAndUpdate({ _id: rec._id, usedAt: null }, { $set: { usedAt: new Date() } });
+    if (!claimed) return bad();
+    user.passwordHash = await hashPassword(newPassword);
+    user.authProviders = [...new Set([...(user.authProviders || []), 'password'])];
+    user.passwordChangedAt = new Date();
+    await user.save();
+    await audit({ user: { id: String(user._id), email: user.email, role: user.role }, ip: req.ip }, 'password.reset_completed', { tenantId: user.tenantId || null, via: 'google' });
+    res.json({ ok: true, message: 'Your My Library OS password was updated. Your Google password was not changed.' });
   }));
 
   r.post('/auth/reset-password', wrap(async (req, res) => {

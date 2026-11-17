@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-18 (IST)
+
+- **Password recovery for email, mobile, and linked Google, with a 30-second Resend** (branch `fix/auth-recovery-resend`, not deployed). Forgot password now asks which method to use. Email still sends a 6-digit code. Mobile sends a 6-digit WhatsApp code to the number already on the account; signing in with mobile and password does not ask for a code. Linked Google recovery only continues when that Google account is already stored on the user. It then lets the person set a My Library OS password. It does not change the Google password and does not create an account. Resend on signup, forgot password, profile re-check, contact verification, and first-password setup waits 30 seconds instead of a minute. The old expiry, five wrong-code lock, and 15-minute send caps stay. `server/scripts/ensure-user-email-index.mjs` is a dry-run unless `--apply` is passed, and it refuses any MongoDB address that is not localhost. That script was not applied. Nothing was deployed.
+
 ## 2026-11-14 (IST)
 
 - **Paid Razorpay checkouts showed as unpaid** (branch `fix/razorpay-captured-activation`, not deployed). After a real Razorpay payment the owner history showed past_due and no plan, and Super Admin billing history stayed empty. Cause 1: when Razorpay said the payment was captured, the server compared the payment id with the payment-link id and marked the invoice failed even though the amount was correct. Cause 2: the Super Admin Payments page never saved the invoice list (a missing variable). Fix: the webhook now ties a captured payment back to its payment link before activating the plan, and Super Admin history shows invoices again. A dry-run script (`server/scripts/reconcile-software-invoice.mjs`) can settle the two already-captured ₹1 invoices; it was not run. Not deployed.

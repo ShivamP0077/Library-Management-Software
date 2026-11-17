@@ -3,16 +3,17 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { setup, teardown, call, ctx, login } from './helpers.js';
 import { outbox } from '../src/mailer.js';
-import { resetRateLimits } from '../src/accounts.js';
+import { resetRateLimits, inviteAppOrigin, inviteLink } from '../src/accounts.js';
 
 const A = () => ctx.tokens.a;
 before(() => setup('lms_accounts_test'));
 after(teardown);
-const tokenFrom = (link) => link.split('#invite=')[1];
+const tokenFrom = (link) => decodeURIComponent(new URL(link).pathname.split('/invite/')[1]);
 
 test('owner invites staff with an expiring one-time link; staff joins the right tenant', async () => {
   const inv = await call('POST', '/api/invites', { token: A(), body: { email: 'new.staff@test.local', name: 'New Staff', staffId: 'ST-1' } });
   assert.equal(inv.status, 201); assert.equal(inv.body.status, 'pending');
+  assert.ok(inv.body.link.startsWith(`${inviteAppOrigin()}/invite/`), inv.body.link);
   assert.equal(outbox.at(-1).to, 'new.staff@test.local');
   assert.ok(!JSON.stringify((await call('GET', '/api/invites', { token: A() })).body).includes(tokenFrom(inv.body.link)), 'token never listed');
   const t = tokenFrom(inv.body.link);
@@ -28,6 +29,20 @@ test('owner invites staff with an expiring one-time link; staff joins the right 
   // revoked staff blocked immediately
   await call('PATCH', `/api/users/${acc.body.user.id}`, { token: A(), body: { status: 'Disabled' } });
   assert.equal((await call('GET', '/api/state', { token: staffTok })).status, 401);
+});
+
+test('invite link uses the app, and a configured app origin is kept', () => {
+  assert.equal(inviteAppOrigin({}), 'https://app.mylibraryos.in');
+  assert.equal(inviteAppOrigin({ FRONTEND_URL: '', APP_URL: '' }), 'https://app.mylibraryos.in');
+  assert.equal(inviteAppOrigin({ FRONTEND_URL: 'https://mylibraryos.in' }), 'https://app.mylibraryos.in');
+  assert.equal(inviteAppOrigin({ APP_URL: 'https://www.mylibraryos.in/' }), 'https://app.mylibraryos.in');
+  assert.equal(inviteAppOrigin({ FRONTEND_URL: 'https://api.mylibraryos.in' }), 'https://app.mylibraryos.in');
+  assert.equal(inviteAppOrigin({ FRONTEND_URL: 'https://library-os.onrender.com' }), 'https://app.mylibraryos.in');
+  assert.equal(inviteAppOrigin({ FRONTEND_URL: 'http://localhost:5173' }), 'http://localhost:5173');
+  assert.equal(inviteAppOrigin({ FRONTEND_URL: 'https://library-os-app.vercel.app/' }), 'https://library-os-app.vercel.app');
+  const link = inviteLink('tok+en', { FRONTEND_URL: 'http://localhost:5173' });
+  assert.equal(link, 'http://localhost:5173/invite/tok%2Ben');
+  assert.equal(tokenFrom(link), 'tok+en');
 });
 
 test('revoked and expired invites cannot be used', async () => {

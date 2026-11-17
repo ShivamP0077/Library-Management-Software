@@ -6,7 +6,7 @@ import { setGoogleClientFactory } from '../src/google.js';
 import { User } from '../src/models.js';
 
 const COOKIE = 'lms_g_oauth';
-const tokenFrom = (link) => link.split('#invite=')[1];
+const tokenFrom = (link) => decodeURIComponent(new URL(link).pathname.split('/invite/')[1]);
 const client = (payload) => ({
   generateAuthUrl: (o) => `https://accounts.google.com/o/oauth2/v2/auth?state=${o.state}`,
   getToken: async () => ({ tokens: { id_token: 'x' } }),

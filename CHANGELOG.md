@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-18 (IST)
+
+- **Staff invite link opens the app** (branch `fix/staff-invite-link`, not deployed). The invite email and the Team Access copy link were built as `FRONTEND_URL/#invite=…`. When that setting was empty, pointed at the API, or pointed at the marketing site (`https://mylibraryos.in`), the link missed the sign-in screen that already accepts an invite (library name, role, set password, Join with Google). The link now opens the My Library OS app. If `FRONTEND_URL` or `APP_URL` is empty, the marketing site, or an API host, it uses `https://app.mylibraryos.in`. A real app address, including `http://localhost:5173`, is still used as given. The link is `/invite/<token>` so mail and chat apps that drop the hash still keep the token. The accept page also reads `?invite=` and the old `#invite=` form. Vite and the app rewrite serve the sign-in page for `/invite/…`. Invite expiry, one-time use, and Google join are unchanged. Nothing was deployed.
+
 ## 2026-11-14 (IST)
 
 - **Paid Razorpay checkouts showed as unpaid** (branch `fix/razorpay-captured-activation`, not deployed). After a real Razorpay payment the owner history showed past_due and no plan, and Super Admin billing history stayed empty. Cause 1: when Razorpay said the payment was captured, the server compared the payment id with the payment-link id and marked the invoice failed even though the amount was correct. Cause 2: the Super Admin Payments page never saved the invoice list (a missing variable). Fix: the webhook now ties a captured payment back to its payment link before activating the plan, and Super Admin history shows invoices again. A dry-run script (`server/scripts/reconcile-software-invoice.mjs`) can settle the two already-captured ₹1 invoices; it was not run. Not deployed.

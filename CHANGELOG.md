@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-18 (IST)
+
+- **Assigning a student to a desk that does not exist is rejected** (branch `fix/seat-assign-existing-only`, not deployed). Saving a new or changed seat used to create a seat allocation even when that desk was not in the library (or existed only in another branch). The server now refuses that with the same seat-conflict error as a taken or maintenance desk (HTTP 409) and does not write the allocation. An old student row that already points at a missing desk is left as it is: saving the student list without changing that student still succeeds, and those rows are not deleted. No migration script. Nothing was deployed.
+
 ## 2026-11-14 (IST)
 
 - **Paid Razorpay checkouts showed as unpaid** (branch `fix/razorpay-captured-activation`, not deployed). After a real Razorpay payment the owner history showed past_due and no plan, and Super Admin billing history stayed empty. Cause 1: when Razorpay said the payment was captured, the server compared the payment id with the payment-link id and marked the invoice failed even though the amount was correct. Cause 2: the Super Admin Payments page never saved the invoice list (a missing variable). Fix: the webhook now ties a captured payment back to its payment link before activating the plan, and Super Admin history shows invoices again. A dry-run script (`server/scripts/reconcile-software-invoice.mjs`) can settle the two already-captured ₹1 invoices; it was not run. Not deployed.

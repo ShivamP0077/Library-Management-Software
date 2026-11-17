@@ -7,11 +7,12 @@ import { NumericInput } from './NumericInput';
 import { resolveConfigurationScope, matchesScope } from '../utils/scopeResolver';
 import { getCanonicalShifts, normalizeShiftName, resolveCanonicalShift, shiftsOverlap } from '../utils/shiftUtils';
 import toast from 'react-hot-toast';
+import { holdsDesk } from '../utils/subscriptionLifecycle.js';
+import { todayIST } from '../utils/dateUtils';
 
 // Seat numbers must be compared exactly. Trimming protects against legacy
 // whitespace while avoiding includes()/startsWith() partial matches (BUG-13).
 const normalizeSeatKey = (value) => String(value ?? '').trim();
-const isActiveStatus = (status) => status === 'Active' || status === 'Expiring Soon';
 const getSeatKey = (seat) => normalizeSeatKey(seat?.name ?? seat?.seatNumber);
 const isPhysicalSeatNo = (seatNo) => {
   const key = normalizeSeatKey(seatNo);
@@ -24,12 +25,12 @@ const getStudentShift = (student, shifts) =>
 // numbers; values are the active/expiring students assigned to that seat.
 // NOTE: Backend atomic seat assignment/unique constraints are follow-up work;
 // this only fixes what the seat map displays.
-const buildSeatOccupancy = (students, shifts, { libraryId, branchId, sectionId, shiftId }) => {
+const buildSeatOccupancy = (students, shifts, { libraryId, branchId, sectionId, shiftId, settings }) => {
   const map = new Map();
   const requestedShift = shiftId ? ((shifts || []).find(sh => sh.id === shiftId) || { id: shiftId }) : null;
 
   (students || []).forEach(student => {
-    if (!student || !isActiveStatus(student.status)) return;
+    if (!student || !holdsDesk(student, settings, todayIST())) return;
     if (!isPhysicalSeatNo(student.seatNo)) return;
     if (libraryId && student.libraryId && student.libraryId !== libraryId) return;
     if (branchId && branchId !== 'all' && student.branchId && student.branchId !== 'all' && student.branchId !== branchId) return;
@@ -615,7 +616,8 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
                 libraryId: libId,
                 branchId: branch.id,
                 sectionId: section.id,
-                shiftId: effectiveShiftId
+                shiftId: effectiveShiftId,
+                settings
               });
               const isSeatKeyOccupied = (seat) => (occupancyMap.get(getSeatKey(seat)) || []).length > 0;
 

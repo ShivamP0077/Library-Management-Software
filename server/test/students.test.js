@@ -11,7 +11,8 @@ const stu = (id, extra = {}) => ({ id, name: `S${id}`, branchId: 'B1', status: '
 
 test('status is derived consistently', () => {
   assert.equal(studentStatus({ expiryDate: '2026-01-01' }, '2026-02-01'), 'Expired');
-  assert.equal(studentStatus({ expiryDate: '2026-02-02' }, '2026-02-01'), 'Expiring Soon');
+  assert.equal(studentStatus({ expiryDate: '2026-02-02' }, '2026-02-01'), 'Active');
+  assert.equal(studentStatus({ expiryDate: '2026-02-01', graceDaysSnapshot: 5 }, '2026-02-02'), 'Grace Period');
   assert.equal(studentStatus({ expiryDate: '2026-03-01' }, '2026-02-01'), 'Active');
   assert.equal(studentStatus({ status: 'Archived', expiryDate: '2099-01-01' }), 'Archived');
 });

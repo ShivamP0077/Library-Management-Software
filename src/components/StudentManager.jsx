@@ -1107,10 +1107,10 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
         {filteredStudents.length === 0 ? (
           <div className="compact-empty" style={{ padding: '40px 16px', textAlign: 'center', color: 'var(--text-tertiary)' }}>No student records match your criteria.</div>
         ) : filteredStudents.map(student => {
-          const subStatus = getSubscriptionStatus(student, settings?.gracePeriodDays);
+          const subStatus = getSubscriptionStatus(student, settings);
           const badgeClass = subStatus.status === 'Expired' ? 'badge-expired' : (subStatus.isGrace ? 'badge-expiring' : 'badge-active');
           const checked = selectedIds.includes(student.id);
-          const missingSeat = student.seatNo !== 'Non-Fixed Seat' && student.seatNo !== 'None' && (student.status === 'Active' || student.status === 'Expiring Soon') && !getValidDesksList(student.branchId, student.sectionId).includes(student.seatNo);
+          const missingSeat = student.seatNo !== 'Non-Fixed Seat' && student.seatNo !== 'None' && subStatus.holdsDesk && !getValidDesksList(student.branchId, student.sectionId).includes(student.seatNo);
           return (
             <div key={student.id} role="row" aria-selected={isSelectionMode ? checked : undefined} className={`st-row${checked ? ' sel' : ''}`} onClick={() => isSelectionMode ? handleToggleSelect(student.id) : setSelectedStudent(student)}>
               {isSelectionMode && (

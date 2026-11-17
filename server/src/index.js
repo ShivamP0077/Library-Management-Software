@@ -12,6 +12,7 @@ import { ensureSupportGlobalNumberIndex } from './support.js';
 import { runReminderJob, runReceiptRetryJob } from './reminders.js';
 import { refreshPaymentProvider } from './paymentConfig.js';
 import { purgeExpiredDocuments } from './documentRetention.js';
+import { runSeatLifecycleJob } from './seatLifecycle.js';
 
 const PORT = Number(process.env.PORT || 4000);
 const RETRY_MS = Number(process.env.DB_RETRY_MS || 30000);
@@ -32,6 +33,7 @@ async function connectWithRetry() {
     registerJob('whatsapp-reminders', () => runReminderJob()); // no-op unless Evolution API is configured
     registerJob('whatsapp-receipt-retry', () => runReceiptRetryJob(), { intervalMs: 3 * 60 * 1000 });
     registerJob('document-retention', () => purgeExpiredDocuments(), { intervalMs: 6 * 60 * 60 * 1000 });
+    registerJob('seat-lifecycle', () => runSeatLifecycleJob(Library));
     startScheduler();
   } catch (err) {
     console.error(`[db] Connection failed (retrying in ${RETRY_MS / 1000}s):`, redact(err.message));

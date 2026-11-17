@@ -49,20 +49,78 @@ export function upstreamReason(status, data) {
   return `HTTP ${status}${msg ? ': ' + msg : ''}`;
 }
 
-export function createEvolutionClient({ baseUrl = process.env.EVOLUTION_API_URL, apiKey = process.env.EVOLUTION_API_KEY, fetchImpl = globalThis.fetch, timeoutMs = 20000 } = {}) {
+/** Hard cap so a caller cannot pass an unbounded wake/connect timeout. */
+export const WAKE_TIMEOUT_CAP_MS = 90000;
+
+const breakerFailure = (err) => {
+  if (err?.code === 'circuit_open') return false;
+  const up = err?.upstreamStatus;
+  if (up != null) return up >= 500;
+  return err?.status === 503;
+};
+
+/**
+ * After a short streak of timeouts or 5xx, open and fail fast, then allow one probe.
+ * 4xx (including 404 and 429) does not open the breaker.
+ */
+export function createCircuitBreaker({ failureThreshold = 3, openMs = 30000, now = () => Date.now() } = {}) {
+  let state = 'closed';
+  let failures = 0;
+  let openedAt = 0;
+  return {
+    snapshot: () => ({ state, failures, openedAt, failureThreshold, openMs }),
+    beforeCall() {
+      if (state !== 'open') return;
+      if (now() - openedAt >= openMs) { state = 'half_open'; return; }
+      const err = new EvolutionError('WhatsApp is temporarily unavailable', 503);
+      err.code = 'circuit_open';
+      throw err;
+    },
+    success() { state = 'closed'; failures = 0; openedAt = 0; },
+    failure(err) {
+      if (!breakerFailure(err)) {
+        if (state === 'half_open') this.success();
+        return;
+      }
+      failures += 1;
+      if (state === 'half_open' || failures >= failureThreshold) {
+        state = 'open';
+        openedAt = now();
+      }
+    },
+  };
+}
+
+export function createEvolutionClient({
+  baseUrl = process.env.EVOLUTION_API_URL,
+  apiKey = process.env.EVOLUTION_API_KEY,
+  fetchImpl = globalThis.fetch,
+  timeoutMs = 20000,
+  breaker = createCircuitBreaker({
+    failureThreshold: Number(process.env.WHATSAPP_CB_THRESHOLD || 3),
+    openMs: Number(process.env.WHATSAPP_CB_OPEN_MS || 30000),
+  }),
+} = {}) {
   const base = String(baseUrl || '').replace(/\/+$/, '');
   async function call(method, path, body, callTimeoutMs = timeoutMs) {
     if (!base || !apiKey) throw new EvolutionError('WhatsApp integration is not configured on the server', 503);
+    const ms = Math.min(WAKE_TIMEOUT_CAP_MS, Math.max(1, Number(callTimeoutMs) || timeoutMs));
+    breaker.beforeCall();
     let res;
     try {
       res = await fetchImpl(base + path, {
         method,
         headers: { 'Content-Type': 'application/json', apikey: apiKey },
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(callTimeoutMs),
+        signal: AbortSignal.timeout(ms),
       });
-    } catch {
-      throw new EvolutionError('WhatsApp service is unreachable. It may be waking up; try again in a minute.', 503);
+    } catch (e) {
+      const timedOut = e?.name === 'TimeoutError' || e?.name === 'AbortError';
+      const err = new EvolutionError(timedOut
+        ? 'WhatsApp service timed out. It may be waking up; try again in a minute.'
+        : 'WhatsApp service is unreachable. It may be waking up; try again in a minute.', 503);
+      breaker.failure(err);
+      throw err;
     }
     const text = await res.text();
     let data = null;
@@ -77,8 +135,10 @@ export function createEvolutionClient({ baseUrl = process.env.EVOLUTION_API_URL,
       err.upstreamBody = data;
       const retryAfter = Number(res.headers?.get?.('retry-after') || 0);
       if (Number.isFinite(retryAfter) && retryAfter > 0) err.retryAfterMs = Math.min(retryAfter * 1000, 60000);
+      breaker.failure(err);
       throw err;
     }
+    breaker.success();
     return data;
   }
   const enc = encodeURIComponent;
@@ -96,5 +156,7 @@ export function createEvolutionClient({ baseUrl = process.env.EVOLUTION_API_URL,
     logout: (name) => call('DELETE', `/instance/logout/${enc(name)}`),
     setWebhook: (name, url) => call('POST', `/webhook/set/${enc(name)}`, { webhook: { enabled: true, url, byEvents: false, base64: false, events: ['MESSAGES_UPDATE'] } }),
     sendText: (name, number, text) => call('POST', `/message/sendText/${enc(name)}`, { number, text }),
+    /** Shared by every method above, including ones added later (logout/delete, media). */
+    circuitSnapshot: () => breaker.snapshot(),
   };
 }

@@ -7,7 +7,8 @@ import crypto from 'crypto';
 import mongoose from 'mongoose';
 import express from 'express';
 import bcrypt from 'bcryptjs';
-import { User, Library, isPlatformRole } from './models.js';
+import { User, Library, isPlatformRole, models } from './models.js';
+import { sanitizeStaffPermissions } from '../../src/utils/staffPermissions.js';
 import { hashPassword, validatePassword } from './services.js';
 import { sendMail } from './mailer.js';
 import { sendMobileMessage, smsConfigured } from './messaging.js';
@@ -233,7 +234,12 @@ export function createTenantAccountRouter() {
     const hours = Math.min(Math.max(Number(req.body?.expiresInHours || INVITE_HOURS()), 1), 24 * 14);
     await Invite.updateMany({ tenantId: req.tenantId, email, usedAt: null, revokedAt: null }, { $set: { revokedAt: new Date() } }); // one live invite per email
     const token = crypto.randomBytes(32).toString('base64url');
-    const inv = await Invite.create({ tenantId: req.tenantId, tokenHash: sha(token), email, name: req.body?.name, role, staffId: req.body?.staffId, permissions: req.body?.permissions, expiresAt: new Date(Date.now() + hours * 3600e3), createdBy: req.user.email });
+    let permissions = req.body?.permissions;
+    if (req.body?.staffId) {
+      const linked = await models.staffMembers.findOne({ tenantId: req.tenantId, _key: String(req.body.staffId) }).lean();
+      if (linked) permissions = sanitizeStaffPermissions(permissions || linked.permissions, linked.role);
+    }
+    const inv = await Invite.create({ tenantId: req.tenantId, tokenHash: sha(token), email, name: req.body?.name, role, staffId: req.body?.staffId, permissions, expiresAt: new Date(Date.now() + hours * 3600e3), createdBy: req.user.email });
     const link = `${frontendUrl()}/#invite=${token}`;
     const lib = await Library.findOne({ libraryId: req.tenantId }).lean();
     let emailed = false;

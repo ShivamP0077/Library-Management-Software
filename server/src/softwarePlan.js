@@ -13,6 +13,7 @@ import { WalletTopup, WalletHold, Offer, OfferRedemption, ReferralCampaign, Refe
 import { walletSnapshot, walletHistory, holdWallet, releaseWalletHold } from './wallet.js';
 import { audit } from './audit.js';
 import { requireRole } from './auth.js';
+import { assertModule } from './staffAccess.js';
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const rid = (p) => `${p}_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`;
@@ -320,8 +321,16 @@ export async function checkoutSoftwarePlan(req, res) {
 
 export function createSoftwarePlanRouter() {
   const r = express.Router();
-  // Financial history and purchases belong to library owners, not staff or partner views.
-  r.use('/', requireRole('client_admin', 'superadmin'));
+  const ownerOnly = requireRole('client_admin', 'superadmin');
+  const walletGuard = (action) => (req, res, next) => {
+    assertModule(req, 'wallet', action).then(() => next()).catch(next);
+  };
+  // Subscription purchase stays owner-only. Wallet routes use the staff matrix
+  // (a Librarian is refused even when the saved permissions say Wallet).
+  r.use((req, res, next) => {
+    if (req.path === '/wallet' || req.path.startsWith('/wallet/')) return next();
+    return ownerOnly(req, res, next);
+  });
 
   r.get('/', wrap(async (req, res) => {
     const lib = await getLibrary(req.tenantId);
@@ -404,10 +413,10 @@ export function createSoftwarePlanRouter() {
 
   r.post('/checkout', wrap(checkoutSoftwarePlan));
 
-  r.get('/wallet', wrap(async (req, res) => res.json(await walletSnapshot(req.tenantId))));
-  r.get('/wallet/history', wrap(async (req, res) => res.json(await walletHistory(req.tenantId, req.query.limit))));
+  r.get('/wallet', walletGuard('view'), wrap(async (req, res) => res.json(await walletSnapshot(req.tenantId))));
+  r.get('/wallet/history', walletGuard('view'), wrap(async (req, res) => res.json(await walletHistory(req.tenantId, req.query.limit))));
 
-  r.post('/wallet/topups', wrap(async (req, res) => {
+  r.post('/wallet/topups', walletGuard('collect'), wrap(async (req, res) => {
     const key = String(req.get('Idempotency-Key') || req.body?.idempotencyKey || '').trim();
     if (!key) return res.status(400).json({ error: 'Idempotency-Key header is required', code: 'idempotency_key_required' });
     const amountMinor = Math.round(Number(req.body?.amountMinor ?? minor(req.body?.amount)));

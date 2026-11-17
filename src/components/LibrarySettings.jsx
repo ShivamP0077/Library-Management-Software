@@ -15,7 +15,8 @@ import { TeamAccess } from './TeamAccess';
 import { resolveConfigurationScope, matchesScope } from '../utils/scopeResolver';
 import { 
   STAFF_MODULES, STAFF_ACTIONS, STAFF_ROLES, 
-  createEmptyPermissions, getDefaultPermissionsForRole, countAllowedActions 
+  createEmptyPermissions, getDefaultPermissionsForRole, countAllowedActions,
+  FINANCIAL_MODULE_IDS, FINANCIAL_MATRIX, applyAllowAllFinancial, isWalletBlockedRole, emptyModuleActions,
 } from '../utils/staffPermissions';
 import { getCanonicalSeatTypes } from '../utils/seatTypeUtils';
 import { cycleConfig, effectiveCycleConfig, normalizePlanBillingCycle, CYCLE_MODE_LABELS } from '../utils/billingCycle';
@@ -187,6 +188,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
   const [editingSectionId, setEditingSectionId] = useState(null);
   const [editingBranchId, setEditingBranchId] = useState(null);
   const [permSearch, setPermSearch] = useState('');
+  const [allowAllFinancial, setAllowAllFinancial] = useState(false);
 
   // Seat Type Editing State
   const [newSeatTypeName, setNewSeatTypeName] = useState('');
@@ -698,14 +700,22 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
     const cloned = {};
     STAFF_MODULES.forEach(mod => {
       cloned[mod.id] = {
+        ...emptyModuleActions(),
         view: Boolean(currentPerms[mod.id]?.view),
         create: Boolean(currentPerms[mod.id]?.create),
         edit: Boolean(currentPerms[mod.id]?.edit),
         delete: Boolean(currentPerms[mod.id]?.delete),
         approve: Boolean(currentPerms[mod.id]?.approve),
-        manage: Boolean(currentPerms[mod.id]?.manage)
+        manage: Boolean(currentPerms[mod.id]?.manage),
+        print: Boolean(currentPerms[mod.id]?.print),
+        share: Boolean(currentPerms[mod.id]?.share),
+        export: Boolean(currentPerms[mod.id]?.export),
+        collect: Boolean(currentPerms[mod.id]?.collect),
+        ...(mod.id === 'reports' ? { netProfit: Boolean(currentPerms.reports?.netProfit) } : {}),
       };
     });
+    if (isWalletBlockedRole(staff.role)) cloned.wallet = emptyModuleActions();
+    setAllowAllFinancial(Boolean(currentPerms.allowAllFinancial));
     setTempPermissions(cloned);
     setIsPermMatrixModalOpen(true);
   };
@@ -766,9 +776,38 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
     toast.success(`Loaded preset permissions for "${roleName}"`);
   };
 
+  const handleAllowAllFinancial = (on) => {
+    const staff = staffMembers.find(s => s.id === targetPermStaffId);
+    const role = staff?.role;
+    setAllowAllFinancial(on);
+    if (!on) return;
+    const next = applyAllowAllFinancial(tempPermissions, role);
+    const cloned = { ...tempPermissions };
+    FINANCIAL_MODULE_IDS.forEach(id => { cloned[id] = next[id]; });
+    setTempPermissions(cloned);
+  };
+
+  const handleToggleFinancial = (moduleId, keys) => {
+    const staff = staffMembers.find(s => s.id === targetPermStaffId);
+    if (moduleId === 'wallet' && isWalletBlockedRole(staff?.role)) return;
+    setAllowAllFinancial(false);
+    setTempPermissions(prev => {
+      const modObj = { ...emptyModuleActions(), ...(prev[moduleId] || {}) };
+      const nextVal = !keys.every(k => modObj[k]);
+      keys.forEach(k => { modObj[k] = nextVal; });
+      if (nextVal) modObj.view = true;
+      if (moduleId === 'reports') {
+        /* net profit stays its own switch */
+      }
+      return { ...prev, [moduleId]: modObj };
+    });
+  };
+
   const handleSavePermMatrix = () => {
     if (!targetPermStaffId) return;
-    const ok = updateStaffMember(targetPermStaffId, { permissions: tempPermissions });
+    const ok = updateStaffMember(targetPermStaffId, {
+      permissions: { ...tempPermissions, allowAllFinancial },
+    });
     if (ok) {
       setIsPermMatrixModalOpen(false);
       setTargetPermStaffId(null);
@@ -2316,13 +2355,89 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                     style={{ fontSize: '12px', padding: '4px 10px', width: '160px' }}
                   />
                   <div style={{ fontSize: '12px', fontWeight: 600, color: '#4338ca', background: '#e0e7ff', padding: '4px 10px', borderRadius: '6px', whiteSpace: 'nowrap' }}>
-                    {countAllowedActions(tempPermissions)} of 72 allowed
+                    {countAllowedActions(tempPermissions)} actions allowed
                   </div>
                 </div>
               </div>
 
               {/* Matrix Scrollable Table */}
               <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }}>
+                <div style={{ marginBottom: '16px', padding: '12px 14px', border: '1px solid #c7d2fe', borderRadius: '10px', background: '#eef2ff' }}>
+                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' }}>
+                    <input
+                      id="allow-all-financial"
+                      type="checkbox"
+                      checked={allowAllFinancial}
+                      onChange={e => handleAllowAllFinancial(e.target.checked)}
+                      style={{ marginTop: '3px' }}
+                    />
+                    <span>
+                      <span style={{ fontWeight: 700, color: '#312e81' }}>Allow all financial permissions</span>
+                      <span style={{ display: 'block', fontSize: '12px', color: '#4338ca', marginTop: '2px' }}>
+                        Turns on every money action this role is allowed to have: collections, expenses, reports, export, and Wallet.
+                        Librarians never get Wallet, even with this on.
+                      </span>
+                    </span>
+                  </label>
+                  {(() => {
+                    const st = staffMembers.find(s => s.id === targetPermStaffId);
+                    const blocked = isWalletBlockedRole(st?.role);
+                    return (
+                      <div style={{ marginTop: '12px', overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                          <thead>
+                            <tr>
+                              <th style={{ textAlign: 'left', padding: '4px' }}>Financial area</th>
+                              {FINANCIAL_MATRIX.map(col => <th key={col.id} style={{ padding: '4px' }}>{col.label}</th>)}
+                              <th style={{ padding: '4px' }}>Net Profit</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {STAFF_MODULES.filter(m => FINANCIAL_MODULE_IDS.includes(m.id)).map(mod => {
+                              const modPerms = tempPermissions[mod.id] || {};
+                              const locked = mod.id === 'wallet' && blocked;
+                              return (
+                                <tr key={mod.id}>
+                                  <td style={{ padding: '4px', fontWeight: 600 }}>{mod.name}{locked ? ' (not for Librarians)' : ''}</td>
+                                  {FINANCIAL_MATRIX.map(col => {
+                                    const on = col.keys.every(k => modPerms[k]);
+                                    return (
+                                      <td key={col.id} style={{ textAlign: 'center' }}>
+                                        <input
+                                          type="checkbox"
+                                          aria-label={`${mod.name} ${col.label}`}
+                                          checked={locked ? false : on}
+                                          disabled={locked}
+                                          onChange={() => handleToggleFinancial(mod.id, col.keys)}
+                                        />
+                                      </td>
+                                    );
+                                  })}
+                                  <td style={{ textAlign: 'center' }}>
+                                    {mod.id === 'reports' ? (
+                                      <input
+                                        type="checkbox"
+                                        aria-label="Net Profit"
+                                        checked={Boolean(modPerms.netProfit)}
+                                        onChange={() => {
+                                          setAllowAllFinancial(false);
+                                          setTempPermissions(prev => ({
+                                            ...prev,
+                                            reports: { ...emptyModuleActions(), ...(prev.reports || {}), netProfit: !prev.reports?.netProfit },
+                                          }));
+                                        }}
+                                      />
+                                    ) : '—'}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    );
+                  })()}
+                </div>
                 <table className="data-grid" style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#f8fafc', position: 'sticky', top: 0, zIndex: 2 }}>
@@ -2335,7 +2450,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                     </tr>
                   </thead>
                   <tbody>
-                    {STAFF_MODULES.filter(m => !permSearch || m.name.toLowerCase().includes(permSearch.toLowerCase()) || m.description.toLowerCase().includes(permSearch.toLowerCase())).map(mod => {
+                    {STAFF_MODULES.filter(m => !permSearch || m.name.toLowerCase().includes(permSearch.toLowerCase()) || String(m.desc || m.description || '').toLowerCase().includes(permSearch.toLowerCase())).map(mod => {
                       const modPerms = tempPermissions[mod.id] || {};
                       return (
                         <tr key={mod.id}>

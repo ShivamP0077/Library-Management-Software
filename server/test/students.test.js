@@ -1,4 +1,4 @@
-// STU-01 + §3.1: status, capacity (active+expired), history, archive/restore, confirmed permanent delete.
+// STU-01 + §3.1: status, capacity (Active + Grace), history, archive/restore, confirmed permanent delete.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { setup, teardown, call, ctx } from './helpers.js';
@@ -17,10 +17,10 @@ test('status is derived consistently', () => {
   assert.equal(studentStatus({ status: 'Archived', expiryDate: '2099-01-01' }), 'Archived');
 });
 
-test('capacity counts active + expired, blocks growth past limit and restore over limit', async () => {
+test('capacity counts active students, blocks growth past limit and restore over limit', async () => {
   assert.equal((await call('PATCH', '/api/admin/libraries/lib-a', { token: ctx.tokens.sa, body: { studentLimit: 2 } })).status, 200);
-  assert.equal((await call('PUT', '/api/students', { token: A(), body: [stu('1'), stu('2', { expiryDate: '2020-01-01' })] })).status, 200);
-  const over = await call('PUT', '/api/students', { token: A(), body: [stu('1'), stu('2', { expiryDate: '2020-01-01' }), stu('3')] });
+  assert.equal((await call('PUT', '/api/students', { token: A(), body: [stu('1'), stu('2')] })).status, 200);
+  const over = await call('PUT', '/api/students', { token: A(), body: [stu('1'), stu('2'), stu('3')] });
   assert.equal(over.status, 409); assert.equal(over.body.code, 'capacity_exceeded');
   assert.equal((await call('POST', '/api/students', { token: A(), body: stu('4') })).status, 409);
   // archive #2 → frees a slot (archived not counted)

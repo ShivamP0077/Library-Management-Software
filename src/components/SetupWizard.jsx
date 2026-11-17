@@ -3,6 +3,7 @@ import { useLibrary } from '../context/LibraryContext';
 import { motion } from 'framer-motion';
 import { Building2, Plus, Trash2, CheckCircle, Clock, Copy, Eye, FileText, CheckCircle2, ShieldCheck, X } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { deskGrowthMessage } from '../utils/planLimitCopy';
 import { NumericInput } from './NumericInput';
 import { resolveConfigurationScope, matchesScope } from '../utils/scopeResolver';
 import { buildDurationPricing } from '../utils/pricingCalculator';
@@ -205,7 +206,7 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
   }, [generatorMode, simplePrefix, simpleStart, simpleEnd, rowConfigMode, rowNamesInput, seatsPerRow, customRows]);
 
   // Bulk add seats with duplicate detection within the resolved scope
-  const handleAddGeneratedSeats = () => {
+  const handleAddGeneratedSeats = async () => {
     if (previewSeats.length === 0) return toast.error("No valid seats generated to add.");
 
     const currentScopeSeatTypes = tempSeatTypes.filter(st => matchesScope(st, scope.resolvedBranchId, scope.resolvedSectionId));
@@ -241,6 +242,8 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
       }
     });
 
+    const blocked = await deskGrowthMessage(tempSeats.length, addedCount);
+    if (blocked) return toast.error(blocked);
     setTempSeats(newSeatsList);
     if (addedCount > 0) toast.success(`Generated and added ${addedCount} physical seats for ${scope.scopeDisplayName}.`);
     if (duplicates.length > 0) toast(`Skipped ${duplicates.length} duplicate seat names in this section.`);

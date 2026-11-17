@@ -8,7 +8,7 @@ import { createLibrary, createUser, computeMetrics, hashPassword, validatePasswo
 import { verifyGoogleIdToken, googleEnabled, googleConfig, buildAuthUrl, exchangeCode } from './google.js';
 import { createWhatsappRouter, createWhatsappWebhookRouter } from './whatsapp.js';
 import { createFinanceRouter, validatePaymentBatch, normalizeStudentPaymentDates, applyPaidOn, applyPaymentReference } from './finance.js';
-import { createStudentRouter, recordStudentDiff, recordArchiveDiff, checkCapacity } from './students.js';
+import { createStudentRouter, recordStudentDiff, recordArchiveDiff, checkCapacity, countsTowardStudentLimit } from './students.js';
 import { audit, AuditLog } from './audit.js';
 import { enforceAmountEdits, amountSettingsChanged, isOwnerRole } from './amountPermission.js';
 import { createNotificationRouter } from './notifications.js';
@@ -35,14 +35,14 @@ import { normalizeEmail, normalizeMobile, EMAIL_RE } from './identity.js';
 import { createSubscriptionRouter } from './subscription.js';
 import { requireActiveSubscription, requireFeature, refreshSubscriptionStatus, accessFor, toClientAccess } from './subscriptionAccess.js';
 import { createPublicEnquiryRouter, createTenantEnquiryRouter } from './enquiry.js';
-import { createPlanAdminRouter, SoftwarePlan, checkBranchLimit, checkStaffLimit } from './plans.js';
+import { createPlanAdminRouter, SoftwarePlan, checkBranchLimit, checkStaffLimit, checkDeskLimit } from './plans.js';
 import { createPaymentsAdminRouter } from './paymentsAdmin.js';
 import { createSystemWhatsappRouter } from './systemWhatsapp.js';
 import { createBillingAdminRouter } from './billingConfig.js';
 import { refreshPaymentProvider } from './paymentConfig.js';
 import { DeletionJob } from './deletionJob.js';
 import { createPublicAccountRouter, createTenantAccountRouter, auditSuperadminAccess, acceptInvite } from './accounts.js';
-import { createSeatRouter, reconcileStudents, releaseForStudents, validateSeatSync, SeatAllocation, seatMatchesAllocation, SeatConflictError } from './seats.js';
+import { createSeatRouter, reconcileStudents, releaseForStudents, validateSeatSync, SeatAllocation, seatMatchesAllocation, SeatConflictError, withResourceLock } from './seats.js';
 import { billingSettings } from './seatLifecycle.js';
 import { stampPeriodSnapshots } from '../../src/utils/subscriptionLifecycle.js';
 
@@ -612,16 +612,30 @@ tenant.get('/:col/:key', colParam, wrap(async (req, res) => {
 }));
 
 tenant.post('/:col', colParam, wrap(async (req, res) => {
+  const run = () => createOne(req, res);
+  if (req.params.col === 'seats') return withResourceLock(req.tenantId, '__plan_desks__', run);
+  if (req.params.col === 'students') return withResourceLock(req.tenantId, '__plan_students__', run);
+  return run();
+}));
+
+async function createOne(req, res) {
   const body = stripMeta(req.body);
   const _key = keyOf(req.params.col, body);
   if (!_key) return res.status(400).json({ error: `Missing key field (${COLLECTIONS[req.params.col].keys.join(' or ')})` });
   if (await req.Model.exists({ tenantId: req.tenantId, _key })) return res.status(409).json({ error: 'Already exists' });
   if (req.params.col === 'students') {
-    const n = await req.Model.countDocuments({ tenantId: req.tenantId });
-    await checkCapacity(req.tenantId, n + 1, n);
+    const billing = await billingSettings(req.tenantId);
+    const existing = await req.Model.find({ tenantId: req.tenantId }).lean();
+    const prev = existing.filter(s => countsTowardStudentLimit(s, { settings: billing })).length;
     normalizeStudentPaymentDates(body, null);
-    stampPeriodSnapshots(body, null, await billingSettings(req.tenantId));
-    await reconcileStudents(req.tenantId, [body], { actor: req.user.email });
+    stampPeriodSnapshots(body, null, billing);
+    const next = prev + (countsTowardStudentLimit(body, { settings: billing }) ? 1 : 0);
+    await checkCapacity(req.tenantId, next, prev);
+    await reconcileStudents(req.tenantId, [body], { actor: req.user.email, settings: billing });
+  }
+  if (req.params.col === 'seats') {
+    const n = await req.Model.countDocuments({ tenantId: req.tenantId });
+    await checkDeskLimit(req.tenantId, n + 1, n);
   }
   if (req.params.col === 'payments') { validatePaymentBatch([body]); await enforceAmountEdits(req, [body]); }
   if (req.params.col === 'branches') { const n = await req.Model.countDocuments({ tenantId: req.tenantId }); await checkBranchLimit(req.tenantId, n + 1, n); }
@@ -629,7 +643,7 @@ tenant.post('/:col', colParam, wrap(async (req, res) => {
   if (req.params.col === 'students') await recordStudentDiff(req.tenantId, new Map(), [{ ...body, id: _key }], req.user.email);
   if (req.params.col === 'payments') await sendReceiptsAfterSave(req.tenantId, [{ ...body, _key }]);
   res.status(201).json(clean(d));
-}));
+}
 
 tenant.put('/:col/:key', colParam, wrap(async (req, res) => {
   if (req.params.col === 'students') {
@@ -672,6 +686,13 @@ tenant.delete('/:col/:key', colParam, wrap(async (req, res) => {
 // Bulk sync: make this library's collection match the array the UI holds
 // (upsert all, delete this library's docs that are no longer present).
 tenant.put('/:col', colParam, wrap(async (req, res) => {
+  const run = () => replaceCollection(req, res);
+  if (req.params.col === 'seats') return withResourceLock(req.tenantId, '__plan_desks__', run);
+  if (req.params.col === 'students') return withResourceLock(req.tenantId, '__plan_students__', run);
+  return run();
+}));
+
+async function replaceCollection(req, res) {
   if (!Array.isArray(req.body)) return res.status(400).json({ error: 'Body must be an array' });
   const col = req.params.col;
   // A locked library can still PUT config collections. Never let an empty local cache wipe saved rows.
@@ -689,7 +710,12 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
     }
   }
   const prevArchived = col === 'archivedStudents' ? await req.Model.find({ tenantId: req.tenantId }).lean() : null;
-  if (col === 'seats') await validateSeatSync(req.tenantId, req.body.map(stripMeta));
+  if (col === 'seats') {
+    await validateSeatSync(req.tenantId, req.body.map(stripMeta));
+    const prev = await req.Model.countDocuments({ tenantId: req.tenantId });
+    const next = new Set(req.body.map(stripMeta).map(b => keyOf(col, b)).filter(Boolean)).size;
+    await checkDeskLimit(req.tenantId, next, prev);
+  }
   let newPayments = null;
   let prevPayByKey = new Map();
   if (col === 'payments') {
@@ -718,7 +744,9 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
         raw.expiredPeriodDaysSnapshot = s.expiredPeriodDaysSnapshot;
       }
     }
-    await checkCapacity(req.tenantId, new Set(incoming.map(b => keyOf(col, b))).size, prevDocs.length);
+    const prevActive = prevDocs.filter(s => countsTowardStudentLimit(s, { settings: billing })).length;
+    const nextActive = incoming.filter(s => countsTowardStudentLimit(s, { settings: billing })).length;
+    await checkCapacity(req.tenantId, nextActive, prevActive);
     await reconcileStudents(req.tenantId, incoming, { actor: req.user.email, previous });
     req.studentDiff = { previous, incoming };
     const keep = new Set(incoming.map(b => keyOf(col, b)));
@@ -749,7 +777,7 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
   }
   if (prevArchived) await recordArchiveDiff(req, prevArchived, req.body.map(stripMeta).filter(b => keyOf(col, b)));
   res.json({ ok: true, upserted: ops.length, deleted: del.deletedCount });
-}));
+}
 
 // WhatsApp (Evolution API) is proxied server-side; mounted before the generic /:col routes
 router.use('/whatsapp', tenantScope, auditSuperadminAccess, requireActiveSubscription, requireFeature('whatsapp'), createWhatsappRouter());

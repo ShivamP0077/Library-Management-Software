@@ -163,3 +163,22 @@ test('a logged-out library does not send due reminders', async () => {
   assert.equal(row.status, 'scheduled');
   assert.equal(row.attempts || 0, 0);
 });
+
+test('a deleted instance is not woken or messaged by the reminder job', async () => {
+  const before = sent.length;
+  const calls = [];
+  await ReminderSchedule.create({ tenantId: 'lib-a', key: 'gone-1', studentId: 'nobody', type: 'expiry_reminder', sendOn: today, periodKey: today, status: 'scheduled' });
+  const r = await sendDueReminders('lib-a', {
+    deps: {
+      client: {
+        findInstance: async () => { calls.push('find'); return null; },
+        wake: async () => { calls.push('wake'); return { instance: { state: 'open' } }; },
+        connectionState: async () => { calls.push('state'); return { instance: { state: 'open' } }; },
+        sendText: async () => { calls.push('send'); sent.push({ leaked: true }); },
+      },
+    },
+  });
+  assert.equal(r.disconnected, true);
+  assert.deepEqual(calls, ['find']);
+  assert.equal(sent.length, before);
+});

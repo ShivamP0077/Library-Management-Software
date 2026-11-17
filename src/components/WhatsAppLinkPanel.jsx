@@ -25,9 +25,9 @@ const StatusBadge = ({ state }) => {
       </span>
     );
   }
-  return (
+    return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#f1f5f9', color: 'var(--text-secondary)', border: '1px solid var(--border-light)', borderRadius: '999px', padding: '4px 12px', fontSize: '12px', fontWeight: 600 }}>
-      Not connected
+      Disconnected
     </span>
   );
 };
@@ -207,8 +207,13 @@ export function WhatsAppLinkPanel({
     if (!window.confirm(disconnectConfirm)) return;
     setBusy('logout');
     try {
-      await disconnect();
-      setStatus(prev => ({ ...(prev || {}), state: 'disconnected', number: null, profileName: null }));
+      const out = await disconnect();
+      let next = { state: out?.state || 'disconnected', number: null, profileName: null };
+      try {
+        const data = await fetchStatus({ fresh: true });
+        if (data && data.state !== 'connected') next = { ...data, number: null, profileName: null };
+      } catch { /* logout already succeeded; keep the verified disconnect result */ }
+      setStatus(prev => ({ ...(prev || {}), ...next, number: null, profileName: null }));
       setQr(null);
       setPairingCode(null);
       setQrDeadline(null);

@@ -147,20 +147,45 @@ export function isTransientError(e) {
 
 /** Evolution reports a logged-out library as `close` (also accept the words we show in the app). */
 export function isLoggedOutState(state) {
-  return ['close', 'closed', 'disconnected', 'logout', 'logged_out'].includes(String(state || '').toLowerCase());
+  return ['close', 'closed', 'disconnected', 'logout', 'logged_out', 'not_created'].includes(String(state || '').toLowerCase());
 }
+
+const isMissingInstance = (e) => e?.status === 404 || e?.upstreamStatus === 404;
 
 /**
  * Read the library session when the client can. `null` means unknown (no reader, or the read failed)
  * and must not be treated as logged out — a cold start often 429s before it can answer.
  */
 export async function readSessionState(client, instance) {
-  const reader = client?.connectionState || client?.wake;
+  // Prefer fetchInstances. connectionState/wake on a leftover Baileys session can reconnect it.
+  if (typeof client?.findInstance === 'function') {
+    try {
+      const inst = await client.findInstance(instance);
+      if (!inst) return 'not_created';
+      const raw = inst.connectionStatus || inst.instance?.state || null;
+      if (isLoggedOutState(raw)) return raw;
+      if (typeof client.connectionState === 'function') {
+        try {
+          const st = await client.connectionState(instance);
+          return st?.instance?.state ?? raw;
+        } catch (e) {
+          if (isMissingInstance(e)) return 'not_created';
+          return raw;
+        }
+      }
+      return raw;
+    } catch (e) {
+      if (isMissingInstance(e)) return 'not_created';
+      return null;
+    }
+  }
+  const reader = client?.connectionState;
   if (!reader) return null;
   try {
     const st = await reader(instance);
     return st?.instance?.state ?? null;
-  } catch {
+  } catch (e) {
+    if (isMissingInstance(e)) return 'not_created';
     return null;
   }
 }
@@ -169,7 +194,16 @@ export async function readSessionState(client, instance) {
 export async function deliver(log, { libraryId, number, body }, { client, Message = WhatsappMessage, delaysMs = SEND_RETRY_MS, sleep: sleepFn = sleep } = {}) {
   const instance = instanceNameFor(libraryId);
   let sessionState = null;
-  if (client.wake) {
+  if (typeof client.findInstance === 'function') {
+    try {
+      const inst = await client.findInstance(instance);
+      if (!inst) sessionState = 'not_created';
+      else if (isLoggedOutState(inst.connectionStatus)) sessionState = inst.connectionStatus;
+    } catch (e) {
+      if (isMissingInstance(e)) sessionState = 'not_created';
+    }
+  }
+  if (!isLoggedOutState(sessionState) && client.wake) {
     // After a cold start Evolution answers 429 and then reports "connecting" while it restores the WhatsApp
     // session; sending before it is "open" fails. Wait (bounded) for the session to be open.
     // A logged-out session (`close`) is not a cold start: stop and do not send.
@@ -183,6 +217,7 @@ export async function deliver(log, { libraryId, number, body }, { client, Messag
         console.log(`[whatsapp] ${instance} state ${sessionState}, waiting before send`);
       } catch (e) {
         wakeErr = e;
+        if (isMissingInstance(e)) { sessionState = 'not_created'; break; }
         console.error(`[whatsapp] wake failed for ${instance} (status ${e?.upstreamStatus || e?.status}): ${e?.message}`);
       }
       if (delaysMs.length) await sleepFn(whatsappBackoff(w, { retryAfterMs: wakeErr?.retryAfterMs }));
@@ -345,6 +380,8 @@ export function createInstanceController({ client, wakeDelaysMs = [3000, 6000, 1
   async function disconnect(name) {
     statusCache.delete(name);
     try { await client.logout(name); } catch (e) { if (e.status !== 404) throw e; }
+    try { await client.deleteInstance(name); } catch (e) { if (e.status !== 404) throw e; }
+    statusCache.delete(name);
     return { state: 'disconnected' };
   }
 

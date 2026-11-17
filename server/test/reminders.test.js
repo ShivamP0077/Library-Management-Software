@@ -8,7 +8,11 @@ import { todayIn } from '../src/finance.js';
 
 const A = () => ctx.tokens.a;
 const sent = [];
-const client = { sendText: async (inst, to, body) => { sent.push({ inst, to, body }); return { key: { id: `m${sent.length}` } }; } };
+const client = {
+  wake: async () => ({ instance: { state: 'open' } }),
+  sendText: async (inst, to, body) => { sent.push({ inst, to, body }); return { key: { id: `m${sent.length}` } }; },
+  sendMedia: async (inst, payload) => { sent.push({ inst, to: payload.number, body: payload.caption, media: payload.media, fileName: payload.fileName, mimetype: payload.mimetype }); return { key: { id: `m${sent.length}` } }; },
+};
 const addDays = (d, n) => new Date(Date.parse(d + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
 const today = todayIn();
 

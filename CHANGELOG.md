@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-18 (IST)
+
+- **Payment row opens the receipt, and WhatsApp sends the PDF** (branch `fix/receipt-row-and-whatsapp-pdf`, not deployed). On a student's Payments tab, clicking a paid receipt row opens the same print receipt window used on the Payments page (Print, Download, Share). Voided, unpaid and refund rows stay as they are and do not open that paid slip. When the library's WhatsApp is in use, a WhatsApp button beside the amount asks you to confirm the student's number and sends the receipt PDF. The server now sends that PDF through Evolution (`/message/sendMedia/:instance`) instead of a text-only message. The same log row and dedupe key are reused if the send failed and you try again, and a failed or disconnected send is not shown as sent. No second payment is created. Nothing was deployed.
+
 ## 2026-11-14 (IST)
 
 - **Paid Razorpay checkouts showed as unpaid** (branch `fix/razorpay-captured-activation`, not deployed). After a real Razorpay payment the owner history showed past_due and no plan, and Super Admin billing history stayed empty. Cause 1: when Razorpay said the payment was captured, the server compared the payment id with the payment-link id and marked the invoice failed even though the amount was correct. Cause 2: the Super Admin Payments page never saved the invoice list (a missing variable). Fix: the webhook now ties a captured payment back to its payment link before activating the plan, and Super Admin history shows invoices again. A dry-run script (`server/scripts/reconcile-software-invoice.mjs`) can settle the two already-captured ₹1 invoices; it was not run. Not deployed.

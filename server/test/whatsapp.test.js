@@ -32,6 +32,10 @@ test('client sends apikey header server-side and maps errors', async () => {
   const c = createEvolutionClient({ baseUrl: 'https://evo.test/', apiKey: 'k', fetchImpl });
   await c.sendText('libos-a', '919876543210', 'hi');
   assert.equal(calls[0].url, 'https://evo.test/message/sendText/libos-a');
+  await c.sendMedia('libos-a', { number: '919876543210', mediatype: 'document', mimetype: 'application/pdf', fileName: 'R1.pdf', media: 'QQ==', caption: 'hi' });
+  assert.equal(calls[1].url, 'https://evo.test/message/sendMedia/libos-a');
+  assert.equal(calls[1].opts.headers.apikey, 'k');
+  assert.equal(JSON.parse(calls[1].opts.body).mimetype, 'application/pdf');
   assert.equal(calls[0].opts.headers.apikey, 'k');
   assert.deepEqual(JSON.parse(calls[0].opts.body), { number: '919876543210', text: 'hi' });
   const bad = createEvolutionClient({ baseUrl: 'https://evo.test', apiKey: 'k', fetchImpl: async () => ({ ok: false, status: 401, text: async () => '{"error":"Unauthorized"}' }) });

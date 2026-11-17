@@ -38,6 +38,7 @@ import { createPublicEnquiryRouter, createTenantEnquiryRouter } from './enquiry.
 import { createPlanAdminRouter, SoftwarePlan, checkBranchLimit, checkStaffLimit } from './plans.js';
 import { createPaymentsAdminRouter } from './paymentsAdmin.js';
 import { createSystemWhatsappRouter } from './systemWhatsapp.js';
+import { createAssistedResetRouter } from './assistedReset.js';
 import { createBillingAdminRouter } from './billingConfig.js';
 import { refreshPaymentProvider } from './paymentConfig.js';
 import { DeletionJob } from './deletionJob.js';
@@ -305,6 +306,7 @@ admin.use(createSupportAdminRouter());
 admin.use(createPlanAdminRouter());
 admin.use(createPaymentsAdminRouter()); // Issue #19
 admin.use(createSystemWhatsappRouter()); // system WhatsApp sender (libos-system)
+admin.use(createAssistedResetRouter()); // Super Admin step-up password reset
 admin.use(createBillingAdminRouter()); // Issue #19 explicit tax/currency policy
 admin.use(createSoftwarePlanAdminRouter()); // Issue #19 offers + referral campaigns
 
@@ -431,13 +433,9 @@ admin.patch('/users/:id', wrap(async (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
   if (req.body?.status) user.status = req.body.status === 'Disabled' ? 'Disabled' : 'Active';
   if (req.body?.name !== undefined) user.name = req.body.name;
-  if (req.body?.password) {
-    if (!validatePassword(req.body.password)) return res.status(400).json({ error: 'Password must be at least 8 characters' });
-    user.passwordHash = await hashPassword(req.body.password);
-    user.authProviders = [...new Set([...(user.authProviders || []), 'password'])];
-  }
+  if (req.body?.password) return res.status(400).json({ error: 'Set a password with assisted password reset.', code: 'assisted_reset_required' });
   await user.save();
-  await audit(req, req.body?.password ? 'superadmin.password_set' : 'superadmin.user_update', { tenantId: user.tenantId || null, target: user.email, detail: { status: req.body?.status } });
+  await audit(req, 'superadmin.user_update', { tenantId: user.tenantId || null, target: user.email, detail: { status: req.body?.status } });
   res.json(user.toSafeJSON());
 }));
 

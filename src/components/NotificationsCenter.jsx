@@ -6,6 +6,7 @@ import { openNotificationLink } from '../utils/notificationLinks';
 import { DocPreview } from './DocPreview';
 import { useLibrary } from '../context/LibraryContext';
 import { todayIST } from '../utils/dateUtils';
+import { compressImageDataUrl } from '../utils/compressImage';
 import {
   dismissalStorageKey, normalizeDismissals, partitionActions, restoreItem, skipItem, snoozeItem,
 } from '../utils/actionDismissals';
@@ -35,7 +36,15 @@ const validateNoticeFile = (file) => {
   if (file.size > MAX_NOTICE_BYTES) throw new Error(`${file.name} is larger than 5 MB`);
 };
 const readNoticeFile = (file) => new Promise((ok, bad) => {
-  const r = new FileReader(); r.onload = () => ok({ name: file.name, data: r.result }); r.onerror = bad; r.readAsDataURL(file);
+  const r = new FileReader();
+  r.onload = async () => {
+    try {
+      const out = await compressImageDataUrl(String(r.result || ''), { fileName: file.name, purpose: 'notice' });
+      ok({ name: file.name, data: out.dataUrl, type: out.fileType || file.type, size: out.fileSize || file.size });
+    } catch (err) { bad(err); }
+  };
+  r.onerror = bad;
+  r.readAsDataURL(file);
 });
 const FileThumb = ({ file }) => {
   const [url, setUrl] = useState(null);

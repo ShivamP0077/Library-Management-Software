@@ -146,6 +146,9 @@ const docSchema = new mongoose.Schema({
   fileName: String,
   fileType: String,
   fileSize: Number,
+  // Set by the local student-document compression migration. Optional so older rows stay valid.
+  compressedAt: Date,
+  originalFileSize: Number,
   status: String,
   uploadedAt: Date,
   createdBy: String,

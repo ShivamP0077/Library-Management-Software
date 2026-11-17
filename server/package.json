@@ -16,6 +16,9 @@
     "backup:verify": "node src/backup.js verify",
     "export:schema": "node scripts/export-schema.js",
     "report:copied-dry-run": "node scripts/copied-data-dry-run.mjs",
+    "docs:compress": "node scripts/compress-student-documents.mjs",
+    "docs:compress:apply": "APPLY=1 node scripts/compress-student-documents.mjs",
+    "docs:compress:rollback": "node scripts/rollback-student-documents.mjs",
     "support:numbering": "node scripts/support-global-numbering.mjs"
   },
   "keywords": [],
@@ -31,7 +34,8 @@
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.11.2",
     "morgan": "^1.12.1",
-    "nodemailer": "^10.3.1"
+    "nodemailer": "^10.3.1",
+    "sharp": "^0.34.5"
   },
   "engines": {
     "node": ">=18"

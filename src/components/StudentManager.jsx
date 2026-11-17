@@ -478,12 +478,14 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
         const meta = await uploadAttachmentFile({
           file,
           key: storageKey,
-          save: (key, data) => saveDocumentBlobNow(key, data, {
+          docType: docName,
+          docTypeId,
+          save: (key, data, encoded) => saveDocumentBlobNow(key, data, {
             studentId: selectedStudent.id,
             docTypeId,
             fileName: file.name,
-            fileType: file.type,
-            fileSize: file.size,
+            fileType: encoded?.fileType || file.type,
+            fileSize: encoded?.fileSize ?? file.size,
             status: 'Submitted',
           }),
         });

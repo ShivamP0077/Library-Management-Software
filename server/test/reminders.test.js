@@ -145,3 +145,21 @@ test('skipped receipt rows record why (no_phone)', async () => {
   const msg = await WhatsappMessage.findOne({ libraryId: 'lib-a', dedupeKey: 'receipt:R-10' }).lean();
   assert.equal(msg.status, 'skipped'); assert.equal(msg.reason, 'no_phone');
 });
+
+test('a logged-out library does not send due reminders', async () => {
+  const before = sent.length;
+  await ReminderSchedule.create({ tenantId: 'lib-a', key: 'disc-1', studentId: 'nobody', type: 'expiry_reminder', sendOn: today, periodKey: today, status: 'scheduled' });
+  const r = await sendDueReminders('lib-a', {
+    deps: {
+      client: {
+        connectionState: async () => ({ instance: { state: 'close' } }),
+        sendText: async () => { sent.push({ leaked: true }); },
+      },
+    },
+  });
+  assert.equal(r.disconnected, true);
+  assert.equal(sent.length, before);
+  const row = await ReminderSchedule.findOne({ tenantId: 'lib-a', key: 'disc-1' }).lean();
+  assert.equal(row.status, 'scheduled');
+  assert.equal(row.attempts || 0, 0);
+});

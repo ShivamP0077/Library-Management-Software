@@ -12,7 +12,7 @@ import { audit } from './audit.js';
 import { rateLimited } from './accounts.js';
 import { throttleHit } from './throttle.js';
 import { SoftwarePlan, pubPlan } from './plans.js';
-import { initialSubscription, INTERVALS, paymentProvider } from './billing.js';
+import { initialSubscription, INTERVALS, paymentProvider, priceQuote } from './billing.js';
 import { trialIdentityUsed, recordTrialIdentifiers, TRIAL_USED_MESSAGE } from './trialUsage.js';
 import { googleEnabled, verifyGoogleIdToken } from './google.js';
 import { EMAIL_RE, normalizeEmail, normalizeMobile, isMobile, maskIdentifier } from './identity.js';
@@ -172,8 +172,8 @@ async function resolvePlan(body) {
   const plans = await signupPlans();
   const plan = body.planId ? plans.find(p => p.planId === body.planId) : null;
   if (plans.length && !plan) return { error: { status: 400, body: { error: 'Choose a plan', code: 'plan_required' } } };
-  if (plan && interval === 'year' && !plan.priceYearly && plan.priceMonthly > 0) {
-    return { error: { status: 400, body: { error: 'This plan has no yearly price' } } };
+  if (plan && interval !== 'month' && !priceQuote(plan, interval)?.available) {
+    return { error: { status: 400, body: { error: interval === 'year' ? 'This plan has no yearly price' : 'This plan has no price for that duration' } } };
   }
   return { plan, interval, plans };
 }

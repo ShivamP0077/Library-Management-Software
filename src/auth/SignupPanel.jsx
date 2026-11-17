@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../utils/api';
 import { SignupPlanPicker } from './SignupPlanPicker';
+import { intervalOffered } from '../utils/softwarePlanForm';
 
 export function SignupPanel({ plans = [], googleSignup = false, mobileSignupAvailable = false, paymentsConfigured = false, googlePendingToken = '', onDone, onBack }) {
   const [step, setStep] = useState(googlePendingToken ? 2 : 1); // 1 verify, 2 details, 3 payment
@@ -185,7 +186,7 @@ export function SignupPanel({ plans = [], googleSignup = false, mobileSignupAvai
             onSelect={(id) => {
               setPlanId(id);
               const next = plans.find(p => p.planId === id);
-              if (interval === 'year' && !next?.priceYearly) setInterval('month');
+              if (!intervalOffered(next, interval)) setInterval('month');
             }}
           />
           <div className="form-group"><label className="form-label" htmlFor="signup-name">Your name</label><input id="signup-name" className="form-input" autoComplete="name" value={name} onChange={e => setName(e.target.value)} required={!viaGoogle} /></div>

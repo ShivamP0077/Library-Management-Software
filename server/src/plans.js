@@ -3,6 +3,7 @@ import express from 'express';
 import mongoose from 'mongoose';
 import { Library, User } from './models.js';
 import { audit } from './audit.js';
+import { INTERVALS, assertDurationDiscounts, priceQuote } from './billing.js';
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const limitField = { type: Number, default: null }; // null = unlimited
@@ -18,17 +19,80 @@ export const SoftwarePlan = mongoose.models.SoftwarePlan || mongoose.model('Soft
   branchLimit: limitField,
   features: { type: [String], default: [] },
   trialDays: { type: Number, default: 0 },
+  /** Per-duration discount. Missing means infer from priceMonthly / priceYearly on read. */
+  durationPricing: { type: mongoose.Schema.Types.Mixed },
+  recommended: { type: Boolean, default: false },
   active: { type: Boolean, default: true }, // archived plans stay on existing libraries
   public: { type: Boolean, default: true }, // offered at owner signup
   sortOrder: { type: Number, default: 0 },
   updatedBy: String,
 }, { timestamps: true }));
 
-export const pubPlan = (p) => p && ({
-  planId: p.planId, name: p.name, description: p.description, priceMonthly: p.priceMonthly, priceYearly: p.priceYearly,
-  studentLimit: p.studentLimit, staffLimit: p.staffLimit, branchLimit: p.branchLimit, features: p.features || [],
-  trialDays: p.trialDays || 0, active: p.active, public: p.public, sortOrder: p.sortOrder || 0,
-});
+const limitText = (n, one, many) => (n > 0 ? `${Number(n).toLocaleString('en-IN')} ${Number(n) === 1 ? one : many}` : `Unlimited ${many}`);
+
+/** Feature order: desks (only if the field exists), branches, staff, optional student cap, WhatsApp, then the rest. */
+export function planHighlights(p) {
+  if (!p) return [];
+  const lines = [];
+  if (Object.prototype.hasOwnProperty.call(p, 'deskLimit') && p.deskLimit !== undefined) {
+    lines.push(limitText(p.deskLimit, 'desk', 'desks'));
+  }
+  lines.push(limitText(p.branchLimit, 'branch', 'branches'));
+  lines.push(limitText(p.staffLimit, 'staff member', 'staff'));
+  if (p.studentLimit > 0) lines.push(limitText(p.studentLimit, 'student', 'students'));
+  const rest = [];
+  let whatsapp = null;
+  for (const feature of p.features || []) {
+    const text = String(feature || '').trim();
+    if (!text) continue;
+    if (!whatsapp && /whatsapp/i.test(text)) whatsapp = text;
+    else rest.push(text);
+  }
+  if (whatsapp) lines.push(whatsapp);
+  lines.push(...rest);
+  return lines;
+}
+
+export const pubPlan = (p) => {
+  if (!p) return p;
+  const intervals = INTERVALS.map(interval => priceQuote(p, interval)).filter(Boolean);
+  return {
+    planId: p.planId, name: p.name, description: p.description, priceMonthly: p.priceMonthly, priceYearly: p.priceYearly,
+    studentLimit: p.studentLimit, staffLimit: p.staffLimit, branchLimit: p.branchLimit,
+    ...(Object.prototype.hasOwnProperty.call(p, 'deskLimit') && p.deskLimit !== undefined ? { deskLimit: p.deskLimit } : {}),
+    features: p.features || [],
+    highlights: planHighlights(p),
+    trialDays: p.trialDays || 0,
+    recommended: !!p.recommended,
+    durationPricing: p.durationPricing || null,
+    intervals,
+    active: p.active, public: p.public, sortOrder: p.sortOrder || 0,
+  };
+};
+
+/** Public catalogue shape: prices and plan copy only. */
+export function publicCataloguePlan(p) {
+  const pub = pubPlan(p);
+  if (!pub) return pub;
+  return {
+    planId: pub.planId,
+    name: pub.name,
+    description: pub.description || '',
+    priceMonthly: pub.priceMonthly,
+    priceYearly: pub.priceYearly,
+    studentLimit: pub.studentLimit,
+    staffLimit: pub.staffLimit,
+    branchLimit: pub.branchLimit,
+    ...(pub.deskLimit !== undefined ? { deskLimit: pub.deskLimit } : {}),
+    features: pub.features,
+    highlights: pub.highlights,
+    trialDays: pub.trialDays,
+    recommended: pub.recommended,
+    intervals: (pub.intervals || []).filter(row => row.available),
+    active: true,
+    public: true,
+  };
+}
 
 const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
 const optLimit = (v, name) => {
@@ -59,8 +123,40 @@ export function planInput(body = {}, { creating } = {}) {
     set.features = list.map(f => String(f).trim()).filter(Boolean).slice(0, 30).map(f => f.slice(0, 120));
   }
   for (const k of ['active', 'public']) if (body[k] !== undefined) set[k] = !!body[k];
+  if (body.recommended !== undefined) set.recommended = !!body.recommended;
   if (body.sortOrder !== undefined) set.sortOrder = Number(body.sortOrder) || 0;
+  if (body.durationPricing !== undefined) set.durationPricing = normaliseDurationPricing(body.durationPricing);
   return set;
+}
+
+function normaliseDurationPricing(raw) {
+  if (raw == null) return null;
+  if (typeof raw !== 'object') throw bad('Invalid durationPricing');
+  const out = {};
+  for (const interval of INTERVALS) {
+    const row = raw[interval];
+    if (row == null) continue;
+    if (typeof row !== 'object') throw bad(`Invalid durationPricing.${interval}`);
+    const discountType = row.discountType || 'none';
+    if (!['none', 'percent', 'fixed'].includes(discountType)) throw bad(`Invalid discount type for ${interval}`);
+    const discountValue = row.discountValue == null || row.discountValue === '' ? 0 : Number(row.discountValue);
+    if (!Number.isFinite(discountValue) || discountValue < 0) throw bad(`Discount for ${interval} cannot be negative`);
+    if (discountType === 'percent' && discountValue > 100) throw bad(`Discount for ${interval} cannot exceed 100%`);
+    out[interval] = {
+      offered: interval === 'month' ? true : row.offered !== false,
+      discountType,
+      discountValue: discountType === 'none' ? 0 : Math.round(discountValue * 100) / 100,
+    };
+  }
+  return out;
+}
+
+/** Legacy priceYearly follows the 12-month final when the editor sends duration pricing. */
+function legacyYearlyFrom(set) {
+  if (!set.durationPricing || set.priceMonthly === undefined) return undefined;
+  const quote = priceQuote({ priceMonthly: set.priceMonthly, durationPricing: set.durationPricing }, 'year');
+  if (!quote?.available || quote.finalMinor == null) return null;
+  return quote.finalMinor / 100;
 }
 
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'plan';
@@ -107,21 +203,57 @@ export function createPlanAdminRouter() {
   }));
   r.post('/plans', wrap(async (req, res) => {
     const set = planInput(req.body, { creating: true });
+    const yearly = legacyYearlyFrom(set);
+    if (yearly !== undefined) set.priceYearly = yearly;
+    assertDurationDiscounts(set);
     let planId = req.body?.planId ? slug(req.body.planId) : slug(set.name);
     if (await SoftwarePlan.exists({ planId })) {
       if (req.body?.planId) return res.status(409).json({ error: 'planId already exists' });
       planId = `${planId}-${Date.now().toString(36)}`;
+    }
+    if (set.recommended && set.active !== false && set.public !== false) {
+      await SoftwarePlan.updateMany({ active: true, public: true, recommended: true }, { $set: { recommended: false } });
     }
     const p = await SoftwarePlan.create({ ...set, planId, updatedBy: req.user.email });
     await audit(req, 'plan.created', { target: planId, detail: set });
     res.status(201).json(pubPlan(p));
   }));
   r.patch('/plans/:planId', wrap(async (req, res) => {
+    const existing = await SoftwarePlan.findOne({ planId: req.params.planId }).lean();
+    if (!existing) return res.status(404).json({ error: 'Plan not found' });
     const set = planInput(req.body);
-    const p = await SoftwarePlan.findOneAndUpdate({ planId: req.params.planId }, { $set: { ...set, updatedBy: req.user.email } }, { new: true, lean: true });
-    if (!p) return res.status(404).json({ error: 'Plan not found' });
+    if (set.active === false) {
+      const libraries = await Library.countDocuments({ planId: existing.planId });
+      if (libraries > 0 && !req.body?.confirmArchive) {
+        return res.status(409).json({
+          error: `This plan is still used by ${libraries} ${libraries === 1 ? 'library' : 'libraries'}. Confirm before archiving.`,
+          code: 'plan_in_use',
+          libraries,
+        });
+      }
+    }
+    const merged = { ...existing, ...set };
+    if (merged.durationPricing && (set.durationPricing !== undefined || set.priceMonthly !== undefined)) {
+      const yearly = legacyYearlyFrom({ priceMonthly: merged.priceMonthly, durationPricing: merged.durationPricing });
+      if (yearly !== undefined) set.priceYearly = yearly;
+    }
+    assertDurationDiscounts(merged);
+    const willRecommend = merged.recommended && merged.active !== false && merged.public !== false;
+    if (willRecommend) {
+      await SoftwarePlan.updateMany({ planId: { $ne: existing.planId }, active: true, public: true, recommended: true }, { $set: { recommended: false } });
+    }
+    const p = await SoftwarePlan.findOneAndUpdate({ planId: existing.planId }, { $set: { ...set, updatedBy: req.user.email } }, { new: true, lean: true });
     await audit(req, 'plan.updated', { target: p.planId, detail: set });
     res.json(pubPlan(p));
+  }));
+  return r;
+}
+
+export function createPublicPlanRouter() {
+  const r = express.Router();
+  r.get('/public/software-plans', wrap(async (_req, res) => {
+    const plans = await SoftwarePlan.find({ active: true, public: true }).sort({ sortOrder: 1, priceMonthly: 1 }).lean();
+    res.json({ plans: plans.map(publicCataloguePlan) });
   }));
   return r;
 }

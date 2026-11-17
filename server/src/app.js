@@ -11,7 +11,10 @@ import { createPaymentsWebhookRouter } from './paymentsWebhook.js';
 export function createApp() {
   const app = express();
   // CORS_ORIGIN: comma-separated allowed origins (e.g. https://my-app.vercel.app). Unset or * = allow all.
-  const corsOrigins = (process.env.CORS_ORIGIN || '*').split(',').map(s => s.trim().replace(/\/+$/, '')).filter(Boolean);
+  const corsOrigins = [process.env.CORS_ORIGIN || '*', process.env.MARKETING_ORIGIN, process.env.LANDING_ORIGIN]
+    .flatMap(value => String(value || '').split(','))
+    .map(s => s.trim().replace(/\/+$/, ''))
+    .filter(Boolean);
   app.use(cors({ origin: corsOrigins.includes('*') ? true : corsOrigins }));
   app.set('trust proxy', 1);
   // Issue #19: raw body for payment webhook HMAC (must be before express.json).

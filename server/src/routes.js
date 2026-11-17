@@ -35,7 +35,7 @@ import { normalizeEmail, normalizeMobile, EMAIL_RE } from './identity.js';
 import { createSubscriptionRouter } from './subscription.js';
 import { requireActiveSubscription, requireFeature, refreshSubscriptionStatus, accessFor, toClientAccess } from './subscriptionAccess.js';
 import { createPublicEnquiryRouter, createTenantEnquiryRouter } from './enquiry.js';
-import { createPlanAdminRouter, SoftwarePlan, checkBranchLimit, checkStaffLimit } from './plans.js';
+import { createPlanAdminRouter, createPublicPlanRouter, SoftwarePlan, checkBranchLimit, checkStaffLimit } from './plans.js';
 import { createPaymentsAdminRouter } from './paymentsAdmin.js';
 import { createSystemWhatsappRouter } from './systemWhatsapp.js';
 import { createBillingAdminRouter } from './billingConfig.js';
@@ -253,6 +253,7 @@ router.post('/auth/google', wrap(async (req, res) => {
 router.use(createPublicAccountRouter({ issueSession }));
 router.use(createSignupRouter({ issueSession })); // Issue #15 (off unless OWNER_SIGNUP_ENABLED=true)
 router.use(createPublicEnquiryRouter()); // public QR form; still accepts enquiries when the plan is locked
+router.use(createPublicPlanRouter()); // read-only software-plan catalogue for the marketing site
 
 // Evolution delivery webhook: no login, verified by a per-instance HMAC token.
 router.use('/whatsapp', createWhatsappWebhookRouter());

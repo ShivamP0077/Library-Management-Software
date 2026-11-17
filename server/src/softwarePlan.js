@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import express from 'express';
 import { Library } from './models.js';
 import { SoftwarePlan, pubPlan } from './plans.js';
-import { addInterval, INTERVALS, paymentProvider, planPrice } from './billing.js';
+import { addInterval, INTERVALS, intervalMonths, paymentProvider, planPrice, priceQuote } from './billing.js';
 import { getBillingConfig, publicBillingConfig, taxFor } from './billingConfig.js';
 import { SoftwareInvoice, newInvoiceId } from './payments/invoices.js';
 import { settleInvoice, failInvoice, deliverSoftwareReceipt, softwareReceiptText, invoiceFinancials } from './payments/settlement.js';
@@ -50,6 +50,7 @@ async function applyOffer({ code, baseMinor, planId, tenantId }) {
 }
 
 export async function quotePlanChange({ tenantId, planId, interval, offerCode, walletMinor: requestedWalletMinor, useWallet = true }) {
+  // Client-typed totals (amount, price, totalMinor, gatewayDueMinor) are never read.
   const cfg = await getBillingConfig();
   const config = publicBillingConfig(cfg);
   const lib = await getLibrary(tenantId);
@@ -58,8 +59,11 @@ export async function quotePlanChange({ tenantId, planId, interval, offerCode, w
   const plan = planId ? plans.find(p => p.planId === planId) : (lib.planId ? plans.find(p => p.planId === lib.planId) : null);
   if (!plan) throw Object.assign(new Error('Choose a plan'), { status: 400, code: 'plan_required' });
   const iv = INTERVALS.includes(interval) ? interval : (lib.subscription?.interval || 'month');
-  if (iv === 'year' && plan.priceYearly == null) throw Object.assign(new Error('This plan has no yearly price'), { status: 400 });
-  const targetPriceMinor = minor(planPrice(plan, iv));
+  const targetQuote = priceQuote(plan, iv);
+  if (!targetQuote?.available || targetQuote.finalMinor == null) {
+    throw Object.assign(new Error(iv === 'year' ? 'This plan has no yearly price' : 'This plan has no price for that duration'), { status: 400 });
+  }
+  const targetPriceMinor = targetQuote.finalMinor;
   const existing = lib.subscription?.toObject?.() || lib.subscription || null;
   const currentPlan = existing?.planId ? plans.find(p => p.planId === existing.planId) : null;
   const currentPriceMinor = existing ? minor(existing.price ?? planPrice(currentPlan || { priceMonthly: 0, priceYearly: 0 }, existing.interval || 'month')) : 0;
@@ -84,9 +88,8 @@ export async function quotePlanChange({ tenantId, planId, interval, offerCode, w
       changeType = 'renewal';
       baseMinor = targetPriceMinor;
     } else {
-      const periodsPerYear = (p) => (p === 'year' ? 12 : 1);
-      const targetMonthly = targetPriceMinor / periodsPerYear(iv);
-      const currentMonthly = currentPriceMinor / periodsPerYear(existing.interval || 'month');
+      const targetMonthly = targetPriceMinor / intervalMonths(iv);
+      const currentMonthly = currentPriceMinor / intervalMonths(existing.interval || 'month');
       if (targetMonthly <= currentMonthly) {
         changeType = 'downgrade';
         baseMinor = 0;
@@ -102,7 +105,7 @@ export async function quotePlanChange({ tenantId, planId, interval, offerCode, w
         // Target-plan value for those same remaining days. When intervals differ, use a daily rate.
         const targetRemaining = (existing.interval || 'month') === iv
           ? Math.round(targetPriceMinor * remainingDays / totalDays)
-          : Math.round((targetPriceMinor / (iv === 'year' ? 365 : 30)) * remainingDays);
+          : Math.round((targetPriceMinor / (iv === 'year' ? 365 : iv === 'quarter' ? 90 : 30)) * remainingDays);
         // Charge only the uplift for the unused portion, never create a refund here.
         baseMinor = Math.max(0, targetRemaining - currentUnusedCredit);
         effectiveAt = now;
@@ -136,6 +139,7 @@ export async function quotePlanChange({ tenantId, planId, interval, offerCode, w
   return {
     plan: pubPlan(plan),
     plans,
+    durationQuote: targetQuote,
     interval: iv,
     changeType,
     historyType,

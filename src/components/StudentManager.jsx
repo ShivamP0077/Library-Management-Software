@@ -26,7 +26,7 @@ import { addFilesToDocuments, removeDocumentFile, groupStudentDocuments } from '
 import { useBackClose } from '../utils/useBackClose';
 import { useStudentPhoto } from '../utils/useStudentPhoto';
 import { getCanonicalShifts, matchesShiftFilter, isShiftInPlan, resolveCanonicalShift, normalizeShiftName } from '../utils/shiftUtils';
-import { getPlanBasePrice, getPlanDefaultDuration } from '../utils/pricingCalculator';
+import { getPlanBasePrice, getPlanDefaultDuration, planPricingUnit, durationUnitWord, formatDurationLabel } from '../utils/pricingCalculator';
 import { isVoidedPayment } from '../utils/paymentVoid';
 import { clientCanEditAmount } from '../utils/amountPermission';
 import { cycleConfig, effectiveCycleConfig, cycleFor, addDays, bridgeCharge, upgradeCharge } from '../utils/billingCycle';
@@ -667,7 +667,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     
     const result = renewSubscription(selectedStudent.id, {
       planId: plan.id,
-      planName: `${plan.name} (${renewDuration} Month)`,
+      planName: `${plan.name} (${formatDurationLabel(renewDuration, planPricingUnit(plan))})`,
       shiftId: renewShiftId || plan.shiftIds?.[0] || selectedStudent.shiftId,
       shift: shifts.find(sh => sh.id === (renewShiftId || plan.shiftIds?.[0]))?.name || selectedStudent.shift,
       durationMonths: Number(renewDuration || 1),
@@ -837,7 +837,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
 
       const result = renewSubscription(id, {
         planId: planToApply.id,
-        planName: `${planToApply.name} (${renewDuration} Month)`,
+        planName: `${planToApply.name} (${formatDurationLabel(renewDuration, planPricingUnit(planToApply))})`,
         shiftId: renewShiftId || planToApply.shiftId,
         shift: shifts.find(sh => sh.id === (renewShiftId || planToApply.shiftId))?.name || planToApply.shift,
         durationMonths: Number(renewDuration || 1),
@@ -1733,7 +1733,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
                     <div className="form-group">
-                      <label className="form-label">Duration (Months)</label>
+                      <label className="form-label">Duration ({renewPlanId && renewPlanId !== 'keep_existing' ? durationUnitWord(planPricingUnit(plans.find(p => p.id === renewPlanId))) : 'Months'})</label>
                       <NumericInput className="form-input" value={renewDuration} onChange={(e) => setRenewDuration(e.target.value)} min={1} />
                     </div>
                     <div className="form-group">
@@ -1881,7 +1881,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
                     <div className="form-group">
-                      <label className="form-label">Duration (Months)</label>
+                      <label className="form-label">Duration ({durationUnitWord(planPricingUnit(validRenewalPlans.find(p => p.id === renewPlanId)))})</label>
                       <NumericInput 
                         className="form-input manual-duration-input" 
                         value={renewDuration} 

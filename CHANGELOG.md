@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-18 (IST)
+
+- **Fee plan prices follow the duration type** (branch `fix/fee-plan-duration-pricing`, not deployed). Setup Wizard Step 6 and Library Settings Add/Edit Plan share one price control. Anniversary and Calendar month keep Monthly Price and the 1 / 2 / 3 / 6 / 12 month tabs. Every N days uses Daily Price and day tabs. Yearly uses Yearly Price and year tabs. Each has add and remove. A common unit price and the per-duration discount build `durationPricing`. Reopening a plan fills the saved price, tabs, and discounts. New rows may store `durationUnit` (`month`, `day`, or `year`) and `unitPrice`. Older rows with only `durationMonths` still mean months. Admission and renewal duration labels use that unit. Stored receipt and payment amounts are left as they were. No production data was rewritten. Nothing was deployed.
+
 ## 2026-11-14 (IST)
 
 - **Paid Razorpay checkouts showed as unpaid** (branch `fix/razorpay-captured-activation`, not deployed). After a real Razorpay payment the owner history showed past_due and no plan, and Super Admin billing history stayed empty. Cause 1: when Razorpay said the payment was captured, the server compared the payment id with the payment-link id and marked the invoice failed even though the amount was correct. Cause 2: the Super Admin Payments page never saved the invoice list (a missing variable). Fix: the webhook now ties a captured payment back to its payment link before activating the plan, and Super Admin history shows invoices again. A dry-run script (`server/scripts/reconcile-software-invoice.mjs`) can settle the two already-captured ₹1 invoices; it was not run. Not deployed.

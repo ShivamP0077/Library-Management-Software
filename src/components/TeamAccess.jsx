@@ -6,6 +6,7 @@ import toast from 'react-hot-toast';
 import { useAuth } from '../auth/AuthContext';
 import { useLibrary } from '../context/LibraryContext';
 import { api } from '../utils/api';
+import { sanitizeStaffPermissions } from '../utils/staffPermissions';
 
 const ROLE_LABELS = { staff: 'Staff', client_admin: 'Co-admin', superadmin: 'Super Admin' };
 const roleLabel = (role) => ROLE_LABELS[role] || role || 'Staff';
@@ -85,11 +86,13 @@ export function TeamAccess() {
     }
     setCreating(true);
     try {
+      const linked = staffMembers.find(st => st.id === form.staffId);
       const result = await api.createInvite({
         email: form.email.trim(),
         name: form.name.trim() || undefined,
         role: form.role,
         staffId: form.staffId || undefined,
+        permissions: linked ? sanitizeStaffPermissions(linked.permissions, linked.role) : undefined,
         expiresInHours: Number(form.expiresInHours) || 72,
       });
       setCreated(result || null);
@@ -136,6 +139,7 @@ export function TeamAccess() {
       </div>
       <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 16px 0' }}>
         Invite staff or co-admins to sign in. Each link works once and expires automatically.
+        Money access, including Allow all financial permissions, comes from the linked staff record. Librarians never receive Wallet.
       </p>
 
       {/* Create invite form */}

@@ -98,9 +98,12 @@ test('custom report: sections, shared expenses once, refunds vs cancellations, c
   await call('POST', '/api/expenses', { token: A(), body: { id: 'RB-SHARED', category: 'Rent', amount: 200, date: day, branchId: 'all' } });
   await call('POST', '/api/expenses', { token: A(), body: { id: 'RB-B1', category: 'Tea', amount: 40, date: day, branchId: 'b1' } });
   await call('POST', '/api/expenses', { token: A(), body: { id: 'RB-B2', category: 'Tea', amount: 25, date: day, branchId: 'b2' } });
-  await call('PUT', '/api/students', { token: A(), body: [
+  assert.equal((await call('PUT', '/api/seats', { token: A(), body: [
+    { id: 'seat-s12', name: 'S-12', branchId: 'b1', sectionId: 'sec1' },
+  ]})).status, 200);
+  assert.equal((await call('PUT', '/api/students', { token: A(), body: [
     { id: 'RB1', name: 'Asha', seatNo: 'S-12', branchId: 'b1', sectionId: 'sec1', status: 'Active', startDate: day },
-  ]});
+  ]})).status, 200);
   await call('PUT', '/api/archivedStudents', { token: A(), body: [
     { id: 'RB-C1', name: 'Cancelled only', seatNo: 'S-2', branchId: 'b1', sectionId: 'sec1', cancellationHistory: [{ date: day, reason: 'Left town', refundAmount: 0 }] },
     { id: 'RB-C2', name: 'Cancelled refunded', seatNo: 'S-3', branchId: 'b1', sectionId: 'sec1', cancellationHistory: [{ date: day, reason: 'Refund requested', refundAmount: 100 }] },

@@ -84,7 +84,10 @@ export const AppContent = () => {
     openSupportInProfile(setActiveTab, setProfileScreen);
   }, [activeTab]);
   React.useEffect(() => {
-    if (sessionStorage.getItem('libos_checkout_pending') === '1') {
+    if (sessionStorage.getItem('libos_wallet_topup_pending') === '1') {
+      setActiveTab('profile');
+      setProfileScreen('wallet');
+    } else if (sessionStorage.getItem('libos_checkout_pending') === '1') {
       setActiveTab('profile');
       setProfileScreen('subscription');
     }
@@ -246,6 +249,7 @@ export const AppContent = () => {
                     setRenewActionStudent={setRenewActionStudent}
                     relocateActionStudent={relocateActionStudent}
                     setRelocateActionStudent={setRelocateActionStudent}
+                    onPrintReceipt={handlePrintReceipt}
                   />
                 )}
 

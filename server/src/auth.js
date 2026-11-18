@@ -10,7 +10,7 @@ const secret = () => {
 export const signToken = (user) => {
   const tenantId = user.tenantId || user.libraryId || null;
   return jwt.sign(
-    { sub: String(user._id), role: user.role, tenantId, libraryId: tenantId, email: user.email, name: user.name },
+    { sub: String(user._id), role: user.role, tenantId, libraryId: tenantId, email: user.email, name: user.name, tokenVersion: user.tokenVersion ?? 0 },
     secret(),
     { expiresIn: process.env.JWT_EXPIRES_IN || '12h' }
   );
@@ -27,6 +27,8 @@ export async function requireAuth(req, res, next) {
     if (!user || user.status !== 'Active') return res.status(401).json({ error: 'Account disabled or not found' });
     // Tokens issued before a password reset/change stop working.
     if (user.passwordChangedAt && payload.iat && payload.iat * 1000 < new Date(user.passwordChangedAt).getTime() - 1000) return res.status(401).json({ error: 'Session expired. Please sign in again.' });
+    // Missing tokenVersion on the account or the token means 0.
+    if ((payload.tokenVersion ?? 0) !== (user.tokenVersion ?? 0)) return res.status(401).json({ error: 'Session expired. Please sign in again.' });
     // The database is the source of truth for the tenant. A token minted for a
     // different tenant (e.g. after reassignment) must not be accepted.
     const tenantId = user.tenantId || user.libraryId || null;

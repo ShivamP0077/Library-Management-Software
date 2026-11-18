@@ -8,7 +8,11 @@ import { todayIn } from '../src/finance.js';
 
 const A = () => ctx.tokens.a;
 const sent = [];
-const client = { sendText: async (inst, to, body) => { sent.push({ inst, to, body }); return { key: { id: `m${sent.length}` } }; } };
+const client = {
+  wake: async () => ({ instance: { state: 'open' } }),
+  sendText: async (inst, to, body) => { sent.push({ inst, to, body }); return { key: { id: `m${sent.length}` } }; },
+  sendMedia: async (inst, payload) => { sent.push({ inst, to: payload.number, body: payload.caption, media: payload.media, fileName: payload.fileName, mimetype: payload.mimetype }); return { key: { id: `m${sent.length}` } }; },
+};
 const addDays = (d, n) => new Date(Date.parse(d + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
 const today = todayIn();
 
@@ -144,4 +148,41 @@ test('skipped receipt rows record why (no_phone)', async () => {
   await call('POST', '/api/payments', { token: A(), body: { id: 'R-10', receiptNo: 'R-10', studentId: 'S10', amount: 500, netTotal: 500, method: 'Cash', date: today } });
   const msg = await WhatsappMessage.findOne({ libraryId: 'lib-a', dedupeKey: 'receipt:R-10' }).lean();
   assert.equal(msg.status, 'skipped'); assert.equal(msg.reason, 'no_phone');
+});
+
+test('a logged-out library does not send due reminders', async () => {
+  const before = sent.length;
+  await ReminderSchedule.create({ tenantId: 'lib-a', key: 'disc-1', studentId: 'nobody', type: 'expiry_reminder', sendOn: today, periodKey: today, status: 'scheduled' });
+  const r = await sendDueReminders('lib-a', {
+    deps: {
+      client: {
+        connectionState: async () => ({ instance: { state: 'close' } }),
+        sendText: async () => { sent.push({ leaked: true }); },
+      },
+    },
+  });
+  assert.equal(r.disconnected, true);
+  assert.equal(sent.length, before);
+  const row = await ReminderSchedule.findOne({ tenantId: 'lib-a', key: 'disc-1' }).lean();
+  assert.equal(row.status, 'scheduled');
+  assert.equal(row.attempts || 0, 0);
+});
+
+test('a deleted instance is not woken or messaged by the reminder job', async () => {
+  const before = sent.length;
+  const calls = [];
+  await ReminderSchedule.create({ tenantId: 'lib-a', key: 'gone-1', studentId: 'nobody', type: 'expiry_reminder', sendOn: today, periodKey: today, status: 'scheduled' });
+  const r = await sendDueReminders('lib-a', {
+    deps: {
+      client: {
+        findInstance: async () => { calls.push('find'); return null; },
+        wake: async () => { calls.push('wake'); return { instance: { state: 'open' } }; },
+        connectionState: async () => { calls.push('state'); return { instance: { state: 'open' } }; },
+        sendText: async () => { calls.push('send'); sent.push({ leaked: true }); },
+      },
+    },
+  });
+  assert.equal(r.disconnected, true);
+  assert.deepEqual(calls, ['find']);
+  assert.equal(sent.length, before);
 });

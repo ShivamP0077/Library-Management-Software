@@ -23,7 +23,11 @@ const firstOfMonth = (dateStr) => {
 };
 
 export const ReportsManager = () => {
-  const { payments, expenses, students, branches, sections, activeBranchId, todayStr } = useLibrary();
+  const { payments, expenses, students, branches, sections, activeBranchId, todayStr, hasPermission } = useLibrary();
+  const showNetProfit = hasPermission('reports', 'netProfit');
+  const canExport = hasPermission('reports', 'export');
+  const showCollections = hasPermission('payments', 'view');
+  const showExpenses = hasPermission('expenses', 'view');
 
   const [fromDate, setFromDate] = useState(() => firstOfMonth(todayStr));
   const [toDate, setToDate] = useState(() => todayStr || new Date().toISOString().split('T')[0]);
@@ -104,7 +108,7 @@ export const ReportsManager = () => {
     { label: 'NET FEES', value: serverPnl.netFees, color: 'var(--text-primary)' },
     { label: 'ONE-TIME EXPENSES', value: serverPnl.expenses?.oneTime, color: '#ef4444' },
     { label: 'RECURRING BILLS PAID', value: serverPnl.expenses?.recurringPaid, color: '#ef4444' },
-    { label: 'NET COLLECTIONS', value: serverPnl.netCollections, color: Number(serverPnl.netCollections) >= 0 ? '#10b981' : '#ef4444' },
+    ...(showNetProfit && serverPnl.netCollections !== undefined ? [{ label: 'NET COLLECTIONS', value: serverPnl.netCollections, color: Number(serverPnl.netCollections) >= 0 ? '#10b981' : '#ef4444' }] : []),
     { label: 'RECURRING BILLS OUTSTANDING', value: serverPnl.recurringOutstanding, color: '#f59e0b' },
   ] : [];
 
@@ -189,11 +193,11 @@ export const ReportsManager = () => {
             )}
           </div>
         </div>
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+        {canExport && <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           <button type="button" className="btn btn-secondary" onClick={() => downloadCustom('csv')}><Download size={16} /> CSV</button>
           <button type="button" className="btn btn-secondary" onClick={() => downloadCustom('pdf')}><Download size={16} /> PDF</button>
           <button type="button" className="btn btn-secondary" onClick={() => downloadCustom('xlsx')}><Download size={16} /> Excel</button>
-        </div>
+        </div>}
       </div>
 
       {/* Server P&L */}
@@ -206,9 +210,9 @@ export const ReportsManager = () => {
             </h3>
             <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '4px' }}>{"This is your library's income and expenses."}</p>
           </div>
-          <button type="button" className="btn btn-secondary" onClick={handleDownloadCsv} style={{ flexShrink: 0 }}>
+          {canExport && <button type="button" className="btn btn-secondary" onClick={handleDownloadCsv} style={{ flexShrink: 0 }}>
             <Download size={16} /> Download CSV
-          </button>
+          </button>}
         </div>
 
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: '12px', flexWrap: 'wrap', marginBottom: '20px', minWidth: 0 }}>
@@ -249,25 +253,25 @@ export const ReportsManager = () => {
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '20px' }}>
           
-          <motion.div initial={{ y: 10, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1 }} style={{ padding: '24px', background: 'var(--bg-surface)', borderRadius: '12px', border: '1px solid var(--border-light)', boxShadow: '0 4px 6px rgba(16, 185, 129, 0.05)' }}>
+          {showCollections && <motion.div initial={{ y: 10, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1 }} style={{ padding: '24px', background: 'var(--bg-surface)', borderRadius: '12px', border: '1px solid var(--border-light)', boxShadow: '0 4px 6px rgba(16, 185, 129, 0.05)' }}>
             <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>TOTAL COLLECTIONS</div>
             <div style={{ fontSize: '32px', fontWeight: 800, color: '#10b981', margin: '8px 0' }}>₹{totalIncome.toLocaleString()}</div>
             <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>From {filteredPayments.length} transactions</div>
-          </motion.div>
+          </motion.div>}
 
-          <motion.div initial={{ y: 10, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.2 }} style={{ padding: '24px', background: 'var(--bg-surface)', borderRadius: '12px', border: '1px solid var(--border-light)', boxShadow: '0 4px 6px rgba(239, 68, 68, 0.05)' }}>
+          {showExpenses && <motion.div initial={{ y: 10, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.2 }} style={{ padding: '24px', background: 'var(--bg-surface)', borderRadius: '12px', border: '1px solid var(--border-light)', boxShadow: '0 4px 6px rgba(239, 68, 68, 0.05)' }}>
             <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>TOTAL EXPENSES</div>
             <div style={{ fontSize: '32px', fontWeight: 800, color: '#ef4444', margin: '8px 0' }}>₹{totalExpenses.toLocaleString()}</div>
             <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>From {filteredExpenses.length} expense logs</div>
-          </motion.div>
+          </motion.div>}
 
-          <motion.div initial={{ y: 10, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.3 }} style={{ padding: '24px', background: 'var(--bg-surface)', borderRadius: '12px', border: `1px solid ${netProfitLoss >= 0 ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`, boxShadow: `0 4px 12px ${netProfitLoss >= 0 ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)'}` }}>
+          {showNetProfit && <motion.div initial={{ y: 10, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.3 }} style={{ padding: '24px', background: 'var(--bg-surface)', borderRadius: '12px', border: `1px solid ${netProfitLoss >= 0 ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`, boxShadow: `0 4px 12px ${netProfitLoss >= 0 ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)'}` }}>
             <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-tertiary)', letterSpacing: '0.05em' }}>NET PROFIT / LOSS</div>
             <div style={{ fontSize: '32px', fontWeight: 800, color: netProfitLoss >= 0 ? '#10b981' : '#ef4444', margin: '8px 0' }}>₹{netProfitLoss.toLocaleString()}</div>
             <div style={{ fontSize: '13px', color: netProfitLoss >= 0 ? '#10b981' : '#ef4444', fontWeight: 600 }}>
               {netProfitLoss >= 0 ? '▲ Operating Surplus' : '▼ Operating Deficit'}
             </div>
-          </motion.div>
+          </motion.div>}
 
         </div>
       </div>

@@ -5,7 +5,7 @@ import { WhatsAppLinkPanel } from '../components/WhatsAppLinkPanel';
 const NOTE = 'Sign-up codes and My Library OS messages are sent from this number.';
 
 export function SystemWhatsAppAdmin() {
-  const fetchStatus = useCallback(() => api.systemWhatsappStatus(), []);
+  const fetchStatus = useCallback((opts) => api.systemWhatsappStatus(15000, { fresh: Boolean(opts?.fresh) }), []);
   const connect = useCallback(() => api.systemWhatsappConnect(), []);
   const disconnect = useCallback(() => api.systemWhatsappDisconnect(), []);
   return (

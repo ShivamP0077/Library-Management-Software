@@ -2,8 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
-import { createEvolutionClient, instanceNameFor, normalizePhone } from '../src/evolution.js';
-import { sendWhatsappMessage, canManageWhatsapp, buildReceiptText, createWhatsappRouter, WhatsappConfig, paymentReceiptsEnabled, publicWhatsappSettings } from '../src/whatsapp.js';
+import { createEvolutionClient, evolutionKeepAlivePing, instanceNameFor, normalizePhone } from '../src/evolution.js';
+import { sendWhatsappMessage, canManageWhatsapp, buildReceiptText, createWhatsappRouter, createInstanceController, deliver, readSessionState, WhatsappConfig, paymentReceiptsEnabled, publicWhatsappSettings } from '../src/whatsapp.js';
 
 const lean = (v) => ({ lean: async () => v });
 
@@ -167,7 +167,8 @@ test('routes: connect creates per-library instance and returns QR; status report
     createInstance: async (n) => { log.push(['create', n]); inst = { name: n, connectionStatus: 'connecting' }; return { qrcode: { base64: 'data:image/png;base64,AAA' } }; },
     connectionState: async () => ({ instance: { state: inst.connectionStatus } }),
     connect: async () => ({ base64: 'data:image/png;base64,QR', pairingCode: null }),
-    logout: async (n) => { log.push(['logout', n]); inst.connectionStatus = 'close'; },
+    logout: async (n) => { log.push(['logout', n]); if (inst) inst.connectionStatus = 'close'; },
+    deleteInstance: async (n) => { log.push(['delete', n]); inst = null; },
   };
   await withApp({ role: 'client_admin', email: 'o@x' }, client, async (base) => {
     let r = await (await fetch(base + '/status')).json();
@@ -181,7 +182,91 @@ test('routes: connect creates per-library instance and returns QR; status report
     assert.equal(JSON.stringify(r).includes('apikey'), false);
     r = await (await fetch(base + '/logout', { method: 'POST' })).json();
     assert.equal(r.state, 'disconnected');
+    const logoutAt = log.findIndex(l => l[0] === 'logout');
+    const deleteAt = log.findIndex(l => l[0] === 'delete');
+    assert.ok(logoutAt >= 0 && deleteAt > logoutAt);
+    r = await (await fetch(base + '/status?fresh=true')).json();
+    assert.equal(r.state, 'not_created');
+    assert.equal(r.number, null);
   });
+});
+
+test('disconnect: logout then delete; 404 ignored; other errors are not success', async () => {
+  const calls = [];
+  const missing = Object.assign(new Error('missing'), { status: 404 });
+  const down = Object.assign(new Error('upstream'), { status: 502 });
+  const ok = {
+    logout: async () => { calls.push('logout'); },
+    deleteInstance: async () => { calls.push('delete'); },
+  };
+  const sessions = createInstanceController({ client: ok, wakeDelaysMs: [] });
+  assert.equal((await sessions.disconnect('libos-a')).state, 'disconnected');
+  assert.deepEqual(calls, ['logout', 'delete']);
+
+  const both404 = createInstanceController({
+    client: { logout: async () => { throw missing; }, deleteInstance: async () => { throw missing; } },
+    wakeDelaysMs: [],
+  });
+  assert.equal((await both404.disconnect('libos-a')).state, 'disconnected');
+
+  const deleteFails = createInstanceController({
+    client: { logout: async () => {}, deleteInstance: async () => { throw down; } },
+    wakeDelaysMs: [],
+  });
+  await assert.rejects(() => deleteFails.disconnect('libos-a'), /upstream/);
+
+  const logoutFails = createInstanceController({
+    client: { logout: async () => { throw down; }, deleteInstance: async () => { throw new Error('should not delete'); } },
+    wakeDelaysMs: [],
+  });
+  await assert.rejects(() => logoutFails.disconnect('libos-a'), /upstream/);
+});
+
+test('after delete, status and deliver do not wake or send; connect creates a new instance', async () => {
+  const calls = [];
+  let inst = null;
+  const client = {
+    findInstance: async () => inst,
+    connectionState: async () => { calls.push('state'); return { instance: { state: inst?.connectionStatus || 'close' } }; },
+    wake: async () => { calls.push('wake'); return { instance: { state: 'open' } }; },
+    connect: async () => { calls.push('connect'); return { base64: 'QR' }; },
+    createInstance: async (n) => { calls.push('create'); inst = { name: n, connectionStatus: 'connecting' }; return {}; },
+    logout: async () => { calls.push('logout'); },
+    deleteInstance: async () => { calls.push('delete'); inst = null; },
+    sendText: async () => { calls.push('send'); },
+  };
+  const sessions = createInstanceController({ client, wakeDelaysMs: [], statusTtlMs: 0 });
+  await sessions.disconnect('libos-lib-a');
+  const after = await sessions.status('libos-lib-a', { fresh: true });
+  assert.equal(after.state, 'not_created');
+  assert.equal(calls.includes('wake'), false);
+  assert.equal(calls.includes('send'), false);
+  assert.equal(calls.includes('state'), false);
+  const qr = await sessions.connect('libos-lib-a');
+  assert.equal(qr.state, 'connecting');
+  assert.ok(calls.includes('create'));
+
+  const sends = [];
+  const updates = [];
+  await deliver({ _id: 'm1', attempts: 1 }, { libraryId: 'lib-a', number: '9198', body: 'hi' }, {
+    client: { findInstance: async () => null, wake: async () => { calls.push('wake2'); }, sendText: async () => { sends.push(1); } },
+    Message: { updateOne: async (_f, u) => { updates.push(u.$set); } },
+    delaysMs: [],
+  });
+  assert.equal(sends.length, 0);
+  assert.equal(calls.includes('wake2'), false);
+  assert.equal(updates.at(-1).reason, 'disconnected');
+  assert.equal(await readSessionState({ findInstance: async () => null, wake: async () => { throw new Error('woke'); } }, 'libos-lib-a'), 'not_created');
+});
+
+test('keep-alive is an HTTP GET and does not send WhatsApp', async () => {
+  const hits = [];
+  await evolutionKeepAlivePing('https://evo.test/', (url, opts) => { hits.push({ url, opts }); return Promise.resolve({ ok: true }); });
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].url, 'https://evo.test/');
+  assert.equal(hits[0].opts.method, 'GET');
+  assert.equal(JSON.stringify(hits).includes('sendText'), false);
+  assert.equal(hits[0].opts.body, undefined);
 });
 
 test('routes: staff without permission gets 403 and Evolution is never called', async () => {

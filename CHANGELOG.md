@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-18 (IST)
+
+- **Super Admin Refresh tells the truth, and admission document settings reopen with the saved values** (branch `fix/ui-feedback`, not deployed). The Super Admin Refresh button now shows "Refreshing…" and stays disabled until the library list and summary both come back. Only then does it say "Refreshed". A failed or incomplete response is an error, never a success. Opening Library Settings → admission documents fills the saved general policy, deadline days and document types again after settings load. Branding and billing already restored their fields. Nothing was deployed.
+
 ## 2026-11-14 (IST)
 
 - **Paid Razorpay checkouts showed as unpaid** (branch `fix/razorpay-captured-activation`, not deployed). After a real Razorpay payment the owner history showed past_due and no plan, and Super Admin billing history stayed empty. Cause 1: when Razorpay said the payment was captured, the server compared the payment id with the payment-link id and marked the invoice failed even though the amount was correct. Cause 2: the Super Admin Payments page never saved the invoice list (a missing variable). Fix: the webhook now ties a captured payment back to its payment link before activating the plan, and Super Admin history shows invoices again. A dry-run script (`server/scripts/reconcile-software-invoice.mjs`) can settle the two already-captured ₹1 invoices; it was not run. Not deployed.

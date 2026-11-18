@@ -1,8 +1,9 @@
 import { confirmNameMatches } from '../utils/confirmName';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Building2, Eye, LogOut, Plus, RefreshCw, Shield, UserPlus, Power, Trash2 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import { api } from '../utils/api';
+import { verifiedAdminRefresh } from '../utils/refreshFeedback';
 import { useAuth } from './AuthContext';
 import { LibraryInsights } from './LibraryInsights';
 import { PartnersAdmin } from './PartnersAdmin';
@@ -54,16 +55,35 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
     } finally { setDeleting(false); }
   };
 
-  const load = useCallback(async () => {
+  const load = useCallback(async ({ silent = false } = {}) => {
     setLoading(true);
     try {
       const [libs, sum] = await Promise.all([api.adminLibraries(), api.adminSaasSummary()]);
+      verifiedAdminRefresh(libs, sum);
       const extra = Object.fromEntries(sum.list.map(x => [x.libraryId, x]));
       setLibraries(libs.map(l => ({ ...l, ...extra[l.libraryId] })));
       setSummary(sum);
-    } catch (e) { toast.error(e.message); } finally { setLoading(false); }
+      return { ok: true };
+    } catch (e) {
+      if (!silent) toast.error(e.message || 'Could not load libraries');
+      return { ok: false, error: e };
+    } finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  const refreshInFlight = useRef(false);
+  const refreshLibraries = async () => {
+    if (refreshInFlight.current || loading) return;
+    refreshInFlight.current = true;
+    const toastId = toast.loading('Refreshing…');
+    try {
+      const result = await load({ silent: true });
+      if (result.ok) toast.success('Refreshed', { id: toastId });
+      else toast.error(result.error?.message || 'Could not refresh', { id: toastId });
+    } finally {
+      refreshInFlight.current = false;
+    }
+  };
 
   const createLibrary = async (e) => {
     e.preventDefault();
@@ -102,7 +122,7 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-secondary btn-sm" onClick={load}><RefreshCw size={14} /> <span>Refresh</span></button>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={refreshLibraries} disabled={loading} aria-busy={loading}><RefreshCw size={14} /> <span>{loading ? 'Refreshing…' : 'Refresh'}</span></button>
           <button className="btn btn-ghost btn-sm" onClick={logout}><LogOut size={14} /> <span>Sign out</span></button>
         </div>
       </header>

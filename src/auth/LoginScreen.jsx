@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { useAuth, googleOAuthErrorMessage } from './AuthContext';
 import { api } from '../utils/api';
 import { SignupPanel } from './SignupPanel';
+import { readInviteToken } from '../utils/inviteToken';
 
 const GoogleIcon = () => (
   <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
@@ -16,19 +17,6 @@ const GoogleIcon = () => (
 
 const ROLE_LABELS = { staff: 'Staff', client_admin: 'Co-admin', superadmin: 'Super Admin' };
 const roleLabel = (role) => ROLE_LABELS[role] || role || 'Staff';
-
-/** Reads `invite=<token>` from the URL fragment, if present. */
-const readInviteToken = () => {
-  if (typeof window === 'undefined') return '';
-  const hash = window.location.hash || '';
-  const match = hash.match(/invite=([^&]+)/);
-  if (!match) return '';
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return match[1];
-  }
-};
 
 export function LoginScreen({ onContinueOffline }) {
   const { loginWithPassword, completeLogin, oauthError, googleSignupPending, clearGoogleSignupPending } = useAuth();

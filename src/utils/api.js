@@ -105,6 +105,7 @@ export const api = {
   resetPassword: (email, otp, newPassword) => apiRequest('/auth/reset-password', { method: 'POST', body: { email, otp, newPassword } }),
   forgotPasswordMobile: (mobile) => apiRequest('/auth/forgot-password-mobile', { method: 'POST', body: { mobile } }),
   resetPasswordMobile: (mobile, otp, newPassword) => apiRequest('/auth/reset-password-mobile', { method: 'POST', body: { mobile, otp, newPassword } }),
+  resetPasswordGoogle: (token, newPassword) => apiRequest('/auth/reset-password-google', { method: 'POST', body: { token, newPassword } }),
   inviteInfo: (token) => apiRequest(`/auth/invite/${encodeURIComponent(token)}`),
   signupConfig: () => apiRequest('/auth/signup/config'),
   signupStart: (email) => apiRequest('/auth/signup/start', { method: 'POST', body: { email } }),

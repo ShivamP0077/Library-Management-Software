@@ -276,7 +276,7 @@ export function createProfileRouter() {
     if (channel === 'mobile' && !smsConfigured()) return res.status(503).json({ error: 'Mobile verification is not configured', code: 'mobile_otp_not_configured' });
     if (await throttleHit(`reauth:user:${user._id}`, 5, 15 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
     if (await throttleHit(`reauth:ip:${req.ip}:${user._id}`, 20, 15 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
-    if (await throttleHit(`reauth:resend:${user._id}:${channel}`, 1, 60e3)) return res.status(429).json({ error: 'Please wait a minute before requesting another code.' });
+    if (await throttleHit(`reauth:resend:${user._id}:${channel}`, 1, 30e3)) return res.status(429).json({ error: 'Please wait 30 seconds before requesting another code.' });
     const code = String(crypto.randomInt(0, 1e6)).padStart(6, '0');
     await ProfileReauthOtp.updateMany({ userId: String(user._id), usedAt: null }, { $set: { usedAt: new Date() } });
     await ProfileReauthOtp.create({ userId: String(user._id), channel, target: channel === 'mobile' ? user.mobile : user.email, codeHash: sha(`${user._id}:${channel}:${code}`), expiresAt: minutes(10) });
@@ -320,7 +320,7 @@ export function createProfileRouter() {
     if (taken) return res.status(409).json({ error: 'That contact is already linked to another account', code: 'contact_in_use' });
     if (await throttleHit(`contact-start:user:${user._id}`, 5, 15 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
     if (await throttleHit(`contact-start:ip:${req.ip}`, 20, 15 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
-    if (await throttleHit(`contact-resend:${user._id}:${channel}:${target}`, 1, 60e3)) return res.status(429).json({ error: 'Please wait a minute before requesting another code.' });
+    if (await throttleHit(`contact-resend:${user._id}:${channel}:${target}`, 1, 30e3)) return res.status(429).json({ error: 'Please wait 30 seconds before requesting another code.' });
     const code = String(crypto.randomInt(0, 1e6)).padStart(6, '0');
     await ContactVerificationOtp.updateMany({ userId: String(user._id), channel, usedAt: null }, { $set: { usedAt: new Date() } });
     await ContactVerificationOtp.create({
@@ -458,7 +458,7 @@ export function createProfileRouter() {
     if (via === 'mobile' && !smsConfigured()) return res.status(503).json({ error: 'Mobile verification is not configured. No email fallback was used.', code: 'mobile_otp_not_configured' });
     if (via === 'email' && !emailConfigured()) return res.status(503).json({ error: 'Email delivery is not configured.', code: 'email_not_configured' });
     if (await throttleHit(`pwsetup:user:${user._id}`, 5, 15 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
-    if (await throttleHit(`pwsetup:resend:${user._id}:${via}`, 1, 60e3)) return res.status(429).json({ error: 'Please wait a minute before requesting another code.' });
+    if (await throttleHit(`pwsetup:resend:${user._id}:${via}`, 1, 30e3)) return res.status(429).json({ error: 'Please wait 30 seconds before requesting another code.' });
     const code = String(crypto.randomInt(0, 1e6)).padStart(6, '0');
     await PasswordSetupOtp.updateMany({ userId: String(user._id), usedAt: null }, { $set: { usedAt: new Date() } });
     await PasswordSetupOtp.create({ userId: String(user._id), via, codeHash: sha(`${user._id}:${via}:${code}`), expiresAt: minutes(10) });

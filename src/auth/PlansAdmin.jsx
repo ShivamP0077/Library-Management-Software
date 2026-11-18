@@ -3,8 +3,9 @@ import React, { useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import { api } from '../utils/api';
 import { SaModal } from './SaModal';
+import { DURATION_ROWS, durationPayload, durationsFromPlan, emptyDurations, setMonthlyKeepingDiscounts } from '../utils/softwarePlanForm';
 
-const EMPTY = { name: '', description: '', priceMonthly: '', priceYearly: '', studentLimit: '', staffLimit: '', branchLimit: '', deskLimit: '', trialDays: '', features: '', public: true, active: true };
+const EMPTY = { name: '', description: '', priceMonthly: '', studentLimit: '', staffLimit: '', branchLimit: '', deskLimit: '', trialDays: '', features: '', public: true, active: true, recommended: false, durationPricing: emptyDurations() };
 const fmtLimit = (n) => (n ? n.toLocaleString() : 'Unlimited');
 
 export function PlansAdmin({ libraries = [], onChanged }) {
@@ -17,12 +18,22 @@ export function PlansAdmin({ libraries = [], onChanged }) {
 
   const startEdit = (p) => {
     setEditing(p ? p.planId : null);
-    setForm(p ? { ...EMPTY, ...p, priceYearly: p.priceYearly ?? '', studentLimit: p.studentLimit ?? '', staffLimit: p.staffLimit ?? '', branchLimit: p.branchLimit ?? '', deskLimit: p.deskLimit ?? '', trialDays: p.trialDays || '', features: (p.features || []).join('\n') } : EMPTY);
+    setForm(p ? { ...EMPTY, ...p, studentLimit: p.studentLimit ?? '', staffLimit: p.staffLimit ?? '', branchLimit: p.branchLimit ?? '', deskLimit: p.deskLimit ?? '', trialDays: p.trialDays || '', features: (p.features || []).join('\n'), recommended: !!p.recommended, durationPricing: durationsFromPlan(p) } : EMPTY);
     setOpen(true);
   };
   const save = async (e) => {
     e.preventDefault();
-    const body = { ...form, priceMonthly: Number(form.priceMonthly) || 0, priceYearly: form.priceYearly === '' ? null : Number(form.priceYearly), trialDays: Number(form.trialDays) || 0 };
+    const body = {
+      ...form,
+      priceMonthly: Number(form.priceMonthly) || 0,
+      trialDays: Number(form.trialDays) || 0,
+      recommended: !!form.recommended,
+      durationPricing: durationPayload(form.durationPricing),
+    };
+    delete body.priceYearly;
+    delete body.intervals;
+    delete body.highlights;
+    delete body.libraries;
     try {
       if (editing) await api.adminUpdatePlan(editing, body); else await api.adminCreatePlan(body);
       toast.success(`Plan ${editing ? 'updated' : 'created'}`);
@@ -54,14 +65,23 @@ export function PlansAdmin({ libraries = [], onChanged }) {
                 <strong>{p.name}</strong>
                 <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{!p.active ? 'Archived' : p.public ? 'On signup' : 'Hidden'}</span>
               </div>
-              <div style={{ fontSize: 18, fontWeight: 700, margin: '6px 0' }}>₹{Number(p.priceMonthly).toLocaleString()}<span style={{ fontSize: 12, fontWeight: 400 }}>/month</span>{p.priceYearly ? <span style={{ fontSize: 12, fontWeight: 400 }}> · ₹{p.priceYearly.toLocaleString()}/year</span> : null}</div>
+              <div style={{ fontSize: 18, fontWeight: 700, margin: '6px 0' }}>₹{Number(p.priceMonthly).toLocaleString()}<span style={{ fontSize: 12, fontWeight: 400 }}>/month</span>{p.recommended ? <span style={{ fontSize: 11, marginLeft: 6 }}>Recommended</span> : null}</div>
               <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Students: {fmtLimit(p.studentLimit)} · Desks: {fmtLimit(p.deskLimit)} · Staff: {fmtLimit(p.staffLimit)} · Branches: {fmtLimit(p.branchLimit)}{p.trialDays ? ` · ${p.trialDays}-day trial` : ''}</div>
               {p.features?.length > 0 && <ul style={{ fontSize: 12, margin: '6px 0 0', paddingLeft: 18 }}>{p.features.map(f => <li key={f}>{f}</li>)}</ul>}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
                 <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{p.libraries} {p.libraries === 1 ? 'library' : 'libraries'}</span>
                 <span style={{ display: 'flex', gap: 6 }}>
                   <button className="btn btn-ghost btn-sm" onClick={() => startEdit(p)}>Edit</button>
-                  <button className="btn btn-ghost btn-sm" onClick={async () => { try { await api.adminUpdatePlan(p.planId, { active: !p.active }); load(); } catch (e) { toast.error(e.message); } }}>{p.active ? 'Archive' : 'Restore'}</button>
+                  <button className="btn btn-ghost btn-sm" onClick={async () => {
+                    try {
+                      if (p.active && p.libraries > 0) {
+                        const ok = window.confirm(`${p.libraries} ${p.libraries === 1 ? 'library uses' : 'libraries use'} ${p.name}. Archive it anyway? Existing subscriptions stay on this plan.`);
+                        if (!ok) return;
+                      }
+                      await api.adminUpdatePlan(p.planId, { active: !p.active, ...(p.active && p.libraries > 0 ? { confirmArchive: true } : {}) });
+                      load();
+                    } catch (e) { toast.error(e.message); }
+                  }}>{p.active ? 'Archive' : 'Restore'}</button>
                 </span>
               </div>
             </div>
@@ -73,9 +93,11 @@ export function PlansAdmin({ libraries = [], onChanged }) {
         <form style={{ display: 'flex', flexDirection: 'column', gap: 12 }} onSubmit={save} aria-label="Plan form">
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
             {field('name', 'Name *', 'text', { required: true })}
-            {field('priceMonthly', 'Price per month (₹)')}
-            {field('priceYearly', 'Price per year (₹, optional)')}
-            {field('studentLimit', 'Maximum active students (blank = unlimited)')}
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label" htmlFor="plan-priceMonthly">Monthly price (₹)</label>
+              <input id="plan-priceMonthly" className="form-input" type="number" min={0} value={form.priceMonthly} onChange={e => setForm(f => setMonthlyKeepingDiscounts(f, e.target.value))} />
+            </div>
+            {field('studentLimit', 'Student limit (blank = unlimited)')}
             {field('deskLimit', 'Maximum physical desks (blank = unlimited)')}
             {field('staffLimit', 'Staff limit (blank = unlimited)')}
             {field('branchLimit', 'Branch limit (blank = unlimited)')}
@@ -85,6 +107,31 @@ export function PlansAdmin({ libraries = [], onChanged }) {
             <label className="form-label" htmlFor="plan-features">Features (one per line)</label>
             <textarea id="plan-features" className="form-input" rows={3} value={form.features} onChange={e => setForm(f => ({ ...f, features: e.target.value }))} />
           </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {DURATION_ROWS.map(([key, label]) => {
+              const row = form.durationPricing[key];
+              return (
+                <div key={key} style={{ display: 'grid', gridTemplateColumns: '140px 1fr 140px', gap: 8, alignItems: 'end' }}>
+                  <label style={{ fontSize: 13, display: 'flex', gap: 6, alignItems: 'center', minHeight: 38 }}>
+                    {key === 'month' ? <strong>{label}</strong> : <><input type="checkbox" checked={!!row.offered} onChange={e => setForm(f => ({ ...f, durationPricing: { ...f.durationPricing, [key]: { ...row, offered: e.target.checked } } }))} /> {label}</>}
+                  </label>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" htmlFor={`plan-discount-type-${key}`}>Discount</label>
+                    <select id={`plan-discount-type-${key}`} className="form-select" value={row.discountType} onChange={e => setForm(f => ({ ...f, durationPricing: { ...f.durationPricing, [key]: { ...f.durationPricing[key], discountType: e.target.value } } }))}>
+                      <option value="none">None</option>
+                      <option value="percent">Percentage</option>
+                      <option value="fixed">Fixed rupees</option>
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" htmlFor={`plan-discount-value-${key}`}>Value</label>
+                    <input id={`plan-discount-value-${key}`} className="form-input" type="number" min={0} value={row.discountValue} disabled={row.discountType === 'none'} onChange={e => setForm(f => ({ ...f, durationPricing: { ...f.durationPricing, [key]: { ...f.durationPricing[key], discountValue: e.target.value } } }))} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <label style={{ fontSize: 13, display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={!!form.recommended} onChange={e => setForm(f => ({ ...f, recommended: e.target.checked }))} /> Recommended</label>
           <label style={{ fontSize: 13, display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={!!form.public} onChange={e => setForm(f => ({ ...f, public: e.target.checked }))} /> Offer on owner signup</label>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
             <button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button>

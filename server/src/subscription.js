@@ -190,7 +190,7 @@ export function createSubscriptionRouter() {
     const target = await SoftwarePlan.findOne({ planId, active: true }).lean();
     if (!target) return res.status(400).json({ error: 'Unknown plan' });
     const newPrice = planPrice(target, interval);
-    if (newPrice == null) return res.status(400).json({ error: 'This plan has no yearly price' });
+    if (newPrice == null) return res.status(400).json({ error: interval === 'year' ? 'This plan has no yearly price' : 'This plan has no price for that duration' });
     const lib = await Library.findOne({ libraryId: req.tenantId }).lean();
     const sub = lib.subscription || {};
     if (lib.planId === planId && (sub.interval || 'month') === interval) return res.status(400).json({ error: 'You are already on this plan' });

@@ -208,7 +208,13 @@ async function performDelete(libraryId, { evolution, now = new Date() } = {}) {
   let whatsapp = 'skipped';
   try {
     const client = evolution || (evolutionConfigured() ? createEvolutionClient() : null);
-    if (client) { await client.logout(instanceNameFor(libraryId)); whatsapp = 'logged_out'; }
+    if (client) {
+      const name = instanceNameFor(libraryId);
+      const ignore404 = async (fn) => { try { await fn(); } catch (e) { if (e?.status !== 404) throw e; } };
+      await ignore404(() => client.logout(name));
+      if (client.deleteInstance) await ignore404(() => client.deleteInstance(name));
+      whatsapp = 'logged_out';
+    }
   } catch (e) { whatsapp = e?.status === 404 ? 'not_found' : 'failed'; }
   return { counts, whatsapp, retention, subject, deletedAt: new Date(now).toISOString() };
 }

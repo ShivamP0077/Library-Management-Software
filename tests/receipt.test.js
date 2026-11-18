@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { receiptState, receiptPeriod, receiptAmounts, receiptView, receiptPaidLine } from '../src/utils/receipt.js';
+import { readFileSync } from 'node:fs';
+import { receiptState, receiptPeriod, receiptAmounts, receiptView, receiptPaidLine, paymentRowCanOpenReceipt } from '../src/utils/receipt.js';
 
 test('#12: status is never upgraded to paid when void/failed/unpaid/partial', () => {
   assert.equal(receiptState({ status: 'Paid' }).code, 'paid');
@@ -49,4 +50,20 @@ test('#12: view exposes operator label source and branch, never a fabricated ope
   assert.equal(v.studentName, 'Ravi');
   assert.equal(v.branchName, 'Central');
   assert.equal(receiptView({}, {}).operator, 'Admin');
+});
+
+test('student payment row opens the paid receipt viewer and keeps voided or refund rows closed', () => {
+  assert.equal(paymentRowCanOpenReceipt({ receiptNo: 'R1', netTotal: 500, method: 'Cash', status: 'Paid' }), true);
+  assert.equal(paymentRowCanOpenReceipt({ receiptNo: 'R2', netTotal: 500, method: 'Cash' }), true);
+  assert.equal(paymentRowCanOpenReceipt({ receiptNo: 'R3', voided: true, status: 'Paid', netTotal: 500 }), false);
+  assert.equal(paymentRowCanOpenReceipt({ receiptNo: 'R4', status: 'Voided', netTotal: 500 }), false);
+  assert.equal(paymentRowCanOpenReceipt({ receiptNo: 'R5', status: 'Unpaid', netTotal: 500 }), false);
+  assert.equal(paymentRowCanOpenReceipt({ receiptNo: 'R6', type: 'Refund', amount: -100 }), false);
+  const src = readFileSync(new URL('../src/components/StudentManager.jsx', import.meta.url), 'utf8');
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  assert.match(src, /data-testid="student-payment-row"/);
+  assert.match(src, /onPrintReceipt\(/);
+  assert.match(src, /data-testid="student-payment-whatsapp"/);
+  assert.match(src, /whatsappSendReceipt/);
+  assert.match(app, /<StudentManager[\s\S]*onPrintReceipt=\{handlePrintReceipt\}/);
 });

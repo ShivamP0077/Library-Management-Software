@@ -106,5 +106,11 @@ export function createEvolutionClient({ baseUrl = process.env.EVOLUTION_API_URL,
     deleteInstance: (name) => call('DELETE', `/instance/delete/${enc(name)}`),
     setWebhook: (name, url) => call('POST', `/webhook/set/${enc(name)}`, { webhook: { enabled: true, url, byEvents: false, base64: false, events: ['MESSAGES_UPDATE'] } }),
     sendText: (name, number, text) => call('POST', `/message/sendText/${enc(name)}`, { number, text }),
+    /**
+     * Send a file (Evolution API v2). Receipts use mediatype "document" with a PDF.
+     * `payload` is { number, mediatype, mimetype, caption, media, fileName }.
+     * `media` is a base64 string or a URL. Same timeout and error mapping as sendText.
+     */
+    sendMedia: (name, payload) => call('POST', `/message/sendMedia/${enc(name)}`, payload),
   };
 }

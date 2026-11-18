@@ -4,6 +4,8 @@ import { Library, models } from './models.js';
 import crypto from 'crypto';
 import { createEvolutionClient, evolutionConfigured, instanceNameFor, normalizePhone, webhookTokenFor, SYSTEM_INSTANCE } from './evolution.js';
 import { receiptReferenceText } from '../../src/utils/paymentReference.js';
+import { receiptView } from '../../src/utils/receipt.js';
+import { feeReceiptPdfLines, textToPdf } from './pdf.js';
 
 /* ---------------------------------------------------------------- Models */
 export const MESSAGE_TYPES = ['otp', 'admission_receipt', 'renewal_receipt', 'fee_reminder', 'expiry_reminder', 'test', 'fee_receipt', 'renewal_reminder', 'seat_info', 'custom'];
@@ -42,6 +44,8 @@ const msgSchema = new mongoose.Schema({
   deliveredAt: Date,
   readAt: Date,
   providerMessageId: String,
+  mediaBase64: String,
+  mediaFileName: String,
   error: String,
   reason: String, // why a message was skipped: no_student, no_phone, disabled, no_consent, invalid_number
   attempts: { type: Number, default: 0 },
@@ -94,7 +98,7 @@ export async function canManageWhatsapp(user, libraryId, { Staff = models.staffM
  * per-type toggles, requires recipient consent (opt-in), prevents duplicates and logs
  * the provider result. Messages are prefixed with the library name (spec §6).
  */
-export async function sendWhatsappMessage({ libraryId, type, to, text, dedupeKey, consent = true, studentId, studentName, manual = false }, deps = {}) {
+export async function sendWhatsappMessage({ libraryId, type, to, text, dedupeKey, consent = true, studentId, studentName, manual = false, document = null }, deps = {}) {
   const { client = createEvolutionClient(), Config = WhatsappConfig, Message = WhatsappMessage, Lib = Library } = deps;
   if (!MESSAGE_TYPES.includes(type)) throw Object.assign(new Error('Unknown message type'), { status: 400 });
   if (!dedupeKey) throw Object.assign(new Error('dedupeKey is required'), { status: 400 });
@@ -116,7 +120,7 @@ export async function sendWhatsappMessage({ libraryId, type, to, text, dedupeKey
   try {
     log = await Message.findOneAndUpdate(
       { libraryId, dedupeKey, status: { $nin: DONE } },
-      { $set: { type, to: number, status: 'queued', error: null, reason: null, text: body, ...who }, $inc: { attempts: 1 } },
+      { $set: { type, to: number, status: 'queued', error: null, reason: null, text: body, ...who, ...(document ? { mediaBase64: document.base64, mediaFileName: document.fileName } : {}) }, $inc: { attempts: 1 } },
       { upsert: true, new: true }
     );
   } catch (e) {
@@ -124,7 +128,7 @@ export async function sendWhatsappMessage({ libraryId, type, to, text, dedupeKey
     const dup = await Message.findOne({ libraryId, dedupeKey }).lean();
     return { status: 'duplicate', id: String(dup?._id) };
   }
-  return deliver(log, { libraryId, number, body }, { client, Message, delaysMs: deps.retryDelaysMs });
+  return deliver(log, { libraryId, number, body, document }, { client, Message, delaysMs: deps.retryDelaysMs });
 }
 
 export const MAX_ATTEMPTS = 3;
@@ -191,7 +195,7 @@ export async function readSessionState(client, instance) {
 }
 
 /** Wake Evolution, send with backoff on transient errors, and record the outcome on the log row. */
-export async function deliver(log, { libraryId, number, body }, { client, Message = WhatsappMessage, delaysMs = SEND_RETRY_MS, sleep: sleepFn = sleep } = {}) {
+export async function deliver(log, { libraryId, number, body, document = null }, { client, Message = WhatsappMessage, delaysMs = SEND_RETRY_MS, sleep: sleepFn = sleep } = {}) {
   const instance = instanceNameFor(libraryId);
   let sessionState = null;
   if (typeof client.findInstance === 'function') {
@@ -222,8 +226,14 @@ export async function deliver(log, { libraryId, number, body }, { client, Messag
       }
       if (delaysMs.length) await sleepFn(whatsappBackoff(w, { retryAfterMs: wakeErr?.retryAfterMs }));
     }
-  } else {
+  } else if (!isLoggedOutState(sessionState)) {
     sessionState = await readSessionState(client, instance);
+  }
+  // A receipt PDF must not be reported as sent while the library WhatsApp is logged out.
+  if (document && sessionState && sessionState !== 'open') {
+    const error = 'WhatsApp is disconnected. Reconnect it before sending the receipt.';
+    await Message.updateOne({ _id: log._id }, { $set: { status: 'failed', error, transient: false, permanent: false } });
+    return { status: 'failed', error, id: String(log._id), transient: false, permanent: false };
   }
   if (isLoggedOutState(sessionState)) {
     const error = 'WhatsApp is disconnected';
@@ -234,14 +244,23 @@ export async function deliver(log, { libraryId, number, body }, { client, Messag
   let lastErr;
   for (let i = 0; i <= delaysMs.length; i++) {
     try {
-      const r = await client.sendText(instance, number, body);
+      const r = document
+        ? await client.sendMedia(instance, {
+          number,
+          mediatype: 'document',
+          mimetype: document.mimetype || 'application/pdf',
+          caption: body,
+          media: document.base64,
+          fileName: document.fileName,
+        })
+        : await client.sendText(instance, number, body);
       await Message.updateOne({ _id: log._id }, { $set: { status: 'sent', providerMessageId: r?.key?.id || null, error: null, transient: false } });
       return { status: 'sent', id: String(log._id) };
     } catch (e) {
       lastErr = e;
       console.error(`[whatsapp] send attempt ${i + 1} failed for ${instance} msg ${log._id} (status ${e?.upstreamStatus || e?.status}): ${e?.message}`);
       if (!isTransientError(e) || i === delaysMs.length) break;
-      await sleep(e?.retryAfterMs != null ? Math.min(e.retryAfterMs, 60000) : delaysMs[i]);
+      await sleepFn(e?.retryAfterMs != null ? Math.min(e.retryAfterMs, 60000) : delaysMs[i]);
     }
   }
   const transient = isTransientError(lastErr);
@@ -276,7 +295,8 @@ export async function retryFailedReceipts(deps = {}) {
       { $set: { status: 'queued' }, $inc: { attempts: 1 } }, { new: true });
     if (!log) continue; // someone else claimed it (or a manual Resend)
     out.retried++;
-    const r = await deliver(log, { libraryId: row.libraryId, number: row.to, body: row.text }, { client, Message, delaysMs: retryDelaysMs });
+    const document = row.mediaBase64 ? { base64: row.mediaBase64, fileName: row.mediaFileName || 'receipt.pdf', mimetype: 'application/pdf' } : null;
+    const r = await deliver(log, { libraryId: row.libraryId, number: row.to, body: row.text, document }, { client, Message, delaysMs: retryDelaysMs });
     r.status === 'sent' ? out.sent++ : out.failed++;
   }
   // Rows that already used every attempt are given up on.
@@ -312,6 +332,24 @@ export function buildReceiptText(payment, student) {
   if (start || end) lines.push(`Period: ${start || '—'} to ${end || '—'}`);
   else if (student?.expiryDate || student?.endDate) lines.push(`Valid till: ${student.expiryDate || student.endDate}`);
   return lines.join('\n');
+}
+
+/** PDF attachment for an admission or renewal receipt. Same facts as the print slip, as plain lines. */
+export function receiptDocument(payment, student) {
+  const view = receiptView(payment, { student });
+  const lines = [
+    view.libraryName,
+    view.studentName ? `Student: ${view.studentName}` : '',
+    view.paidOnLine,
+    (view.period?.start || view.period?.end) ? `Period: ${view.period.start || '—'} to ${view.period.end || '—'}` : '',
+    view.planName ? `Plan: ${view.planName}` : '',
+    view.seatNo ? `Seat: ${view.seatNo}` : '',
+    ...feeReceiptPdfLines(payment),
+  ].filter(Boolean);
+  const buffer = textToPdf(lines.join('\n'));
+  const rawName = String(payment?.receiptNo || payment?._key || payment?.id || 'receipt');
+  const fileName = `${rawName.replace(/[^\w.-]+/g, '_')}.pdf`;
+  return { buffer, base64: buffer.toString('base64'), fileName, mimetype: 'application/pdf' };
 }
 
 /* ---------------------------------------------------------------- Routes */
@@ -494,14 +532,16 @@ export async function sendManualMessage({ tenantId, libraryId, studentId, type, 
   if (!student) return { httpStatus: 404, error: 'Student not found' };
   if (!student.phone) return { httpStatus: 400, error: 'Student has no phone number' };
   let finalText = body;
+  let document = null;
   if (type === 'fee_receipt') {
     if (!receiptNo) return { httpStatus: 400, error: 'Pick a receipt to send' };
     const payment = await Payments.findOne({ tenantId, _key: String(receiptNo) }).lean();
     if (!payment || String(payment.studentId) !== String(studentId)) return { httpStatus: 404, error: 'Payment not found for this student' };
     if (!finalText) finalText = buildReceiptText(payment, student);
+    document = receiptDocument(payment, student);
   }
   const dedupeKey = `manual:${type}:${studentId}:${Date.now()}:${crypto.randomBytes(3).toString('hex')}`;
-  const out = await send({ libraryId, type, to: student.phone, text: finalText, dedupeKey, consent: student.whatsappOptOut !== true, studentId: String(studentId), studentName: student.name, manual: true }, { client });
+  const out = await send({ libraryId, type, to: student.phone, text: finalText, dedupeKey, consent: student.whatsappOptOut !== true, studentId: String(studentId), studentName: student.name, manual: true, document }, { client });
   return out;
 }
 
@@ -518,12 +558,16 @@ function publicMessage(m) {
 }
 
 /** Send (or resend) the receipt for one payment. Same dedupe key as auto-receipts, so a failed/skipped row is retried in place. */
-export async function sendReceipt({ tenantId, libraryId, receiptNo, type = 'admission_receipt', client }) {
-  const payment = await models.payments.findOne({ tenantId, _key: String(receiptNo) }).lean();
+export async function sendReceipt({ tenantId, libraryId, receiptNo, type = 'admission_receipt', client }, deps = {}) {
+  const Payments = deps.Payments || models.payments;
+  const Students = deps.Students || models.students;
+  const send = deps.send || sendWhatsappMessage;
+  const payment = await Payments.findOne({ tenantId, _key: String(receiptNo) }).lean();
   if (!payment) return { httpStatus: 404, error: 'Payment not found' };
-  const student = payment.studentId ? await models.students.findOne({ tenantId, _key: String(payment.studentId) }).lean() : null;
+  const student = payment.studentId ? await Students.findOne({ tenantId, _key: String(payment.studentId) }).lean() : null;
   if (!student?.phone) return { httpStatus: 400, error: 'Student has no phone number' };
-  return sendWhatsappMessage({ libraryId, type, to: student.phone, text: buildReceiptText(payment, student), dedupeKey: `receipt:${payment._key}`, consent: student.whatsappOptOut !== true, studentId: payment.studentId, studentName: student.name }, { client });
+  const document = receiptDocument(payment, student);
+  return send({ libraryId, type, to: student.phone, text: buildReceiptText(payment, student), dedupeKey: `receipt:${payment._key}`, consent: student.whatsappOptOut !== true, studentId: payment.studentId, studentName: student.name, document }, { client, ...(deps.messageDeps || {}) });
 }
 
 /* ---------------------------------------------------------------- Delivery webhook */

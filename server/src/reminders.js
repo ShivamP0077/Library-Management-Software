@@ -14,9 +14,8 @@ import express from 'express';
 import tenantGuard, { applyBulkWriteGuard } from './tenantGuard.js';
 import { models, Library } from './models.js';
 import { todayIn } from './finance.js';
-import { WhatsappConfig, sendWhatsappMessage, buildReceiptText, logSkipped, canManageWhatsapp, retryFailedReceipts, readSessionState, isLoggedOutState } from './whatsapp.js';
-import { instanceNameFor } from './evolution.js';
-import { evolutionConfigured } from './evolution.js';
+import { WhatsappConfig, sendWhatsappMessage, buildReceiptText, receiptDocument, logSkipped, canManageWhatsapp, retryFailedReceipts, readSessionState, isLoggedOutState } from './whatsapp.js';
+import { evolutionConfigured, instanceNameFor } from './evolution.js';
 import { getTemplates, renderTemplate } from './templates.js';
 
 const schema = new mongoose.Schema({
@@ -243,7 +242,7 @@ export async function autoSendReceipts(tenantId, payments, { retry = true } = {}
       continue;
     }
     try {
-      out.push(await sendWhatsappMessage({ libraryId: tenantId, type, to: s.phone, text: buildReceiptText(p, s), dedupeKey: `receipt:${key}`, consent: s.whatsappOptOut !== true, studentId: p.studentId, studentName: s.name }, receiptDeps));
+      out.push(await sendWhatsappMessage({ libraryId: tenantId, type, to: s.phone, text: buildReceiptText(p, s), dedupeKey: `receipt:${key}`, consent: s.whatsappOptOut !== true, studentId: p.studentId, studentName: s.name, document: receiptDocument(p, s) }, receiptDeps));
     } catch (e) { console.error('[receipts] send failed:', e.message); }
   }
   return out;

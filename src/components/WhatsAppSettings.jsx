@@ -69,11 +69,11 @@ const WhatsAppSettingsInner = () => {
   const [toggles, setToggles] = useState(null);
   const [savingSettings, setSavingSettings] = useState(false);
   const [linkOk, setLinkOk] = useState(false);
-  const fetchStatus = useCallback(() => api.whatsappStatus(), []);
+  const fetchStatus = useCallback((opts) => api.whatsappStatus(15000, { fresh: Boolean(opts?.fresh) }), []);
   const connectWhatsapp = useCallback(() => api.whatsappConnect(), []);
   const disconnectWhatsapp = useCallback(() => api.whatsappLogout(), []);
   const onConnected = useCallback(() => refreshWhatsappStatus(), []);
-  const onDisconnected = useCallback(() => refreshWhatsappStatus(), []);
+  const onDisconnected = useCallback(() => refreshWhatsappStatus({ force: true }), []);
   const onStatus = useCallback((data) => {
     setLinkOk(true);
     setToggles(prev => ({ ...DEFAULT_TOGGLES, ...(prev || {}), ...(data?.settings || {}) }));

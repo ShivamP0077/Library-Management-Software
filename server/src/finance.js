@@ -8,6 +8,7 @@ import express from 'express';
 import tenantGuard, { applyBulkWriteGuard } from './tenantGuard.js';
 import { models } from './models.js';
 import { normalizePaymentReferences, referenceError, trimReference } from '../../src/utils/paymentReference.js';
+import { assertModule, redactPnl, staffContext } from './staffAccess.js';
 
 export const roundRupees = (v) => Math.round(Number(v) + Number.EPSILON);
 
@@ -335,6 +336,9 @@ const byId = (req) => (mongoose.isValidObjectId(req.params.id) ? { tenantId: req
 
 export function createFinanceRouter() {
   const r = express.Router();
+  const guard = (moduleName, action) => (req, res, next) => {
+    assertModule(req, moduleName, action).then(() => next()).catch(next);
+  };
   r.get('/fees/suggest', (req, res, next) => {
     try {
       const tiers = String(req.query.tiers || '1:0').split(',').map(x => { const [months, discountPct] = x.split(':'); return { months, discountPct }; });
@@ -342,29 +346,29 @@ export function createFinanceRouter() {
     } catch (e) { next(e); }
   });
 
-  r.get('/recurring-expenses', wrap(async (req, res) => {
+  r.get('/recurring-expenses', guard('expenses', 'view'), wrap(async (req, res) => {
     res.json((await RecurringExpense.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).lean()).map(pubTemplate));
   }));
-  r.post('/recurring-expenses', wrap(async (req, res) => {
+  r.post('/recurring-expenses', guard('expenses', 'collect'), wrap(async (req, res) => {
     const t = await RecurringExpense.create({ ...templateInput(req.body || {}), tenantId: req.tenantId, createdBy: req.user.email });
     await generateInstances(req.tenantId);
     res.status(201).json(pubTemplate(t));
   }));
-  r.put('/recurring-expenses/:id', wrap(async (req, res) => {
+  r.put('/recurring-expenses/:id', guard('expenses', 'edit'), wrap(async (req, res) => {
     const f = byId(req); if (!f) return res.status(404).json({ error: 'Not found' });
     const t = await RecurringExpense.findOneAndUpdate(f, { $set: templateInput(req.body || {}, true) }, { new: true, lean: true });
     if (!t) return res.status(404).json({ error: 'Not found' });
     await generateInstances(req.tenantId);
     res.json(pubTemplate(t));
   }));
-  r.post('/recurring-expenses/:id/stop', wrap(async (req, res) => {
+  r.post('/recurring-expenses/:id/stop', guard('expenses', 'delete'), wrap(async (req, res) => {
     const f = byId(req); if (!f) return res.status(404).json({ error: 'Not found' });
     const t = await RecurringExpense.findOneAndUpdate(f, { $set: { status: 'stopped', stoppedAt: new Date() } }, { new: true, lean: true });
     t ? res.json(pubTemplate(t)) : res.status(404).json({ error: 'Not found' });
   }));
-  r.post('/recurring-expenses/generate', wrap(async (req, res) => res.json({ created: await generateInstances(req.tenantId) })));
+  r.post('/recurring-expenses/generate', guard('expenses', 'collect'), wrap(async (req, res) => res.json({ created: await generateInstances(req.tenantId) })));
 
-  r.get('/expense-instances', wrap(async (req, res) => {
+  r.get('/expense-instances', guard('expenses', 'view'), wrap(async (req, res) => {
     const q = { tenantId: req.tenantId };
     if (req.query.templateId) q.templateId = String(req.query.templateId);
     const today = todayIn();
@@ -373,11 +377,11 @@ export function createFinanceRouter() {
     if (req.query.branchId && req.query.branchId !== 'all') list = list.filter(i => i.branchId === req.query.branchId);
     res.json(list);
   }));
-  r.get('/expense-instances/:id', wrap(async (req, res) => {
+  r.get('/expense-instances/:id', guard('expenses', 'view'), wrap(async (req, res) => {
     const f = byId(req); const i = f && await ExpenseInstance.findOne(f).lean();
     i ? res.json(pubInstance(i)) : res.status(404).json({ error: 'Not found' });
   }));
-  r.patch('/expense-instances/:id', wrap(async (req, res) => {
+  r.patch('/expense-instances/:id', guard('expenses', 'edit'), wrap(async (req, res) => {
     const f = byId(req); if (!f) return res.status(404).json({ error: 'Not found' });
     const set = {};
     if (req.body?.amount !== undefined) { const a = Number(req.body.amount); if (!(a >= 0)) throw new ValidationError('Amount must be 0 or more'); set.amount = roundRupees(a); }
@@ -387,7 +391,7 @@ export function createFinanceRouter() {
     const i = await ExpenseInstance.findOneAndUpdate(f, { $set: set, $push: { history: { at: new Date(), by: req.user.email, action: 'edited', detail: Object.keys(set).join(', ') } } }, { new: true, lean: true });
     i ? res.json(pubInstance(i)) : res.status(404).json({ error: 'Not found' });
   }));
-  r.post('/expense-instances/:id/payments', wrap(async (req, res) => {
+  r.post('/expense-instances/:id/payments', guard('expenses', 'collect'), wrap(async (req, res) => {
     const f = byId(req); if (!f) return res.status(404).json({ error: 'Not found' });
     const amount = Number(req.body?.amount);
     if (!(amount > 0) || !Number.isInteger(amount)) throw new ValidationError('Payment must be a positive whole amount');
@@ -409,11 +413,15 @@ export function createFinanceRouter() {
   }));
 
   const pnlQuery = (req) => ({ from: req.query.from, to: req.query.to, branchId: req.query.branchId });
-  r.get('/reports/pnl', wrap(async (req, res) => res.json(await computePnl(req.tenantId, pnlQuery(req)))));
-  r.get('/reports/pnl.csv', wrap(async (req, res) => {
-    const p = await computePnl(req.tenantId, pnlQuery(req));
+  r.get('/reports/pnl', guard('reports', 'view'), wrap(async (req, res) => {
+    const pnl = redactPnl(await computePnl(req.tenantId, pnlQuery(req)), await staffContext(req));
+    res.json(pnl);
+  }));
+  r.get('/reports/pnl.csv', guard('reports', 'export'), wrap(async (req, res) => {
+    const p = redactPnl(await computePnl(req.tenantId, pnlQuery(req)), await staffContext(req));
     const rows = [['Line', 'Amount (INR)'], ['Fee collections', p.feeCollections], ['Refunds', -p.refunds], ['Net fees', p.netFees],
-      ['One-time expenses', -p.expenses.oneTime], ['Recurring bills paid', -p.expenses.recurringPaid], ['Net collections', p.netCollections],
+      ['One-time expenses', -p.expenses.oneTime], ['Recurring bills paid', -p.expenses.recurringPaid],
+      ...(p.netCollections === undefined ? [] : [['Net collections', p.netCollections]]),
       ['Recurring bills outstanding', p.recurringOutstanding], ['Student dues', p.studentDues], [], ['Expense category', 'Amount (INR)'],
       ...Object.entries(p.expenses.byCategory), [], ['Payment method', 'Amount (INR)'], ...Object.entries(p.byMethod)];
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');

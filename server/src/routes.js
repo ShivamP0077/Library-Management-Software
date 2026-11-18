@@ -11,6 +11,7 @@ import { createFinanceRouter, validatePaymentBatch, normalizeStudentPaymentDates
 import { createStudentRouter, recordStudentDiff, recordArchiveDiff, checkCapacity, countsTowardStudentLimit } from './students.js';
 import { audit, AuditLog } from './audit.js';
 import { enforceAmountEdits, amountSettingsChanged, isOwnerRole } from './amountPermission.js';
+import { assertModule, staffContext, assertMoneySync, prepareStaffWrite, staffAllows, canSeeNetProfit } from './staffAccess.js';
 import { createNotificationRouter } from './notifications.js';
 import { createActionDismissalRouter } from './actionDismissals.js';
 import { createInsightsRouter } from './insights.js';
@@ -499,9 +500,18 @@ tenant.patch('/users/:id', requireRole('client_admin', 'superadmin'), wrap(async
 // Full snapshot of this library (frontend loads this on start)
 tenant.get('/state', wrap(async (req, res) => {
   const out = {};
+  const ctx = await staffContext(req);
+  const allow = (moduleName, action) => ctx.unrestricted || staffAllows(ctx.permissions, ctx.role, moduleName, action);
   await Promise.all(Object.keys(COLLECTIONS).map(async col => {
+    if (col === 'payments' && !allow('payments', 'view')) return;
+    if (col === 'expenses' && !allow('expenses', 'view')) return;
     out[col] = (await models[col].find({ tenantId: req.tenantId }).sort({ _order: 1, createdAt: 1 }).lean()).map(clean);
   }));
+  out.financialAccess = {
+    payments: allow('payments', 'view'),
+    expenses: allow('expenses', 'view'),
+    netProfit: ctx.unrestricted || canSeeNetProfit(ctx.permissions, ctx.role),
+  };
   const s = await Settings.findOne({ tenantId: req.tenantId }).lean();
   out.settings = s && Object.keys(clean(s)).length > 1 ? clean(s) : null;
   out.libraryId = req.tenantId; // public API shape: tenant id is still exposed as libraryId
@@ -614,12 +624,16 @@ const colParam = (req, res, next) => {
 };
 
 tenant.get('/:col', colParam, wrap(async (req, res) => {
+  if (req.params.col === 'payments') await assertModule(req, 'payments', 'view');
+  if (req.params.col === 'expenses') await assertModule(req, 'expenses', 'view');
   const filter = { tenantId: req.tenantId };
   for (const f of ['branchId', 'status', 'studentId']) if (req.query[f]) filter[f] = String(req.query[f]);
   res.json((await req.Model.find(filter).sort({ _order: 1, createdAt: 1 }).lean()).map(clean));
 }));
 
 tenant.get('/:col/:key', colParam, wrap(async (req, res) => {
+  if (req.params.col === 'payments') await assertModule(req, 'payments', 'view');
+  if (req.params.col === 'expenses') await assertModule(req, 'expenses', 'view');
   const d = await req.Model.findOne({ tenantId: req.tenantId, _key: req.params.key }).lean();
   d ? res.json(clean(d)) : res.status(404).json({ error: 'Not found' });
 }));
@@ -632,7 +646,10 @@ tenant.post('/:col', colParam, wrap(async (req, res) => {
 }));
 
 async function createOne(req, res) {
-  const body = stripMeta(req.body);
+  if (req.params.col === 'payments') await assertModule(req, 'payments', 'collect');
+  if (req.params.col === 'expenses') await assertModule(req, 'expenses', 'collect');
+  let body = stripMeta(req.body);
+  if (req.params.col === 'staffMembers') body = (await prepareStaffWrite(req, [body], { partial: true }))[0];
   const _key = keyOf(req.params.col, body);
   if (!_key) return res.status(400).json({ error: `Missing key field (${COLLECTIONS[req.params.col].keys.join(' or ')})` });
   if (await req.Model.exists({ tenantId: req.tenantId, _key })) return res.status(409).json({ error: 'Already exists' });
@@ -670,7 +687,16 @@ tenant.put('/:col/:key', colParam, wrap(async (req, res) => {
     await reconcileStudents(req.tenantId, [merged], { actor: req.user.email, previous: new Map([[String(merged.id), prev]]) });
     await recordStudentDiff(req.tenantId, new Map([[String(merged.id), prev]]), [merged], req.user.email);
   }
-  const patch = stripMeta(req.body);
+  if (req.params.col === 'payments') {
+    const ctx = await staffContext(req);
+    if (!ctx.unrestricted && !staffAllows(ctx.permissions, ctx.role, 'payments', 'edit') && !staffAllows(ctx.permissions, ctx.role, 'payments', 'collect') && !staffAllows(ctx.permissions, ctx.role, 'payments', 'view')) {
+      await assertModule(req, 'payments', 'edit');
+    }
+    req.paymentNeedsEdit = !ctx.unrestricted && !staffAllows(ctx.permissions, ctx.role, 'payments', 'edit');
+  }
+  if (req.params.col === 'expenses') await assertModule(req, 'expenses', 'edit');
+  let patch = stripMeta(req.body);
+  if (req.params.col === 'staffMembers') patch = (await prepareStaffWrite(req, [{ ...patch, id: req.params.key }], { partial: true }))[0];
   if (req.params.col === 'payments') {
     const prev = await req.Model.findOne({ tenantId: req.tenantId, _key: req.params.key }).lean();
     applyPaymentReference(patch, { required: !prev });
@@ -679,12 +705,22 @@ tenant.put('/:col/:key', colParam, wrap(async (req, res) => {
     else validatePaymentBatch([mergedPay]);
     if (mergedPay.paidOn) { patch.paidOn = mergedPay.paidOn; patch.date = mergedPay.date; patch.enteredAt = mergedPay.enteredAt; }
     await enforceAmountEdits(req, [mergedPay], prev ? new Map([[String(prev.receiptNo ?? req.params.key), prev]]) : new Map());
+    const moneyChanged = prev && ['amount', 'discount', 'fine', 'netTotal'].some(k => Number(prev[k] ?? 0) !== Number(mergedPay[k] ?? 0));
+    if (req.paymentNeedsEdit && !moneyChanged) {
+      const err = new Error('You do not have permission for this.');
+      err.status = 403;
+      err.code = 'forbidden';
+      throw err;
+    }
   }
   const d = await req.Model.findOneAndUpdate({ tenantId: req.tenantId, _key: req.params.key }, { $set: patch }, { new: true, lean: true });
   d ? res.json(clean(d)) : res.status(404).json({ error: 'Not found' });
 }));
 
 tenant.delete('/:col/:key', colParam, wrap(async (req, res) => {
+  if (req.params.col === 'payments') await assertModule(req, 'payments', 'delete');
+  if (req.params.col === 'expenses') await assertModule(req, 'expenses', 'delete');
+  if (req.params.col === 'staffMembers') await prepareStaffWrite(req, []);
   if (req.params.col === 'seats') {
     const seat = await req.Model.findOne({ tenantId: req.tenantId, _key: req.params.key }).lean();
     const held = seat && (await SeatAllocation.find({ tenantId: req.tenantId, status: 'active' }).lean()).some(a => seatMatchesAllocation(seat, a));
@@ -722,6 +758,13 @@ async function replaceCollection(req, res) {
       }
     }
   }
+  if (col === 'payments' || col === 'expenses') {
+    const prevMoney = await req.Model.find({ tenantId: req.tenantId }).lean();
+    const incomingMoney = req.body.map(stripMeta).map(b => ({ ...b, _key: keyOf(col, b) }));
+    await assertMoneySync(req, col === 'payments' ? 'payments' : 'expenses', prevMoney, incomingMoney);
+  }
+  let bodyRows = req.body;
+  if (col === 'staffMembers') bodyRows = await prepareStaffWrite(req, req.body.map(stripMeta));
   const prevArchived = col === 'archivedStudents' ? await req.Model.find({ tenantId: req.tenantId }).lean() : null;
   if (col === 'seats') {
     await validateSeatSync(req.tenantId, req.body.map(stripMeta));
@@ -767,8 +810,8 @@ async function replaceCollection(req, res) {
   }
   const seen = new Set();
   const ops = [];
-  req.body.forEach((raw, i) => {
-    const body = stripMeta(raw);
+  bodyRows.forEach((raw, i) => {
+    const body = col === 'staffMembers' ? raw : stripMeta(raw);
     const _key = keyOf(col, body);
     if (!_key || seen.has(_key)) return;
     if (col === 'payments') {

@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import toast from 'react-hot-toast';
 import { isSubscriptionLockError } from '../utils/subscriptionLock';
 import { api, createSyncQueue, LOCKED_CONFIG_COLLECTIONS, SYNCED_COLLECTIONS } from '../utils/api';
-import { getDefaultPermissionsForRole, syncLegacyPermissions } from '../utils/staffPermissions';
+import { getDefaultPermissionsForRole, syncLegacyPermissions, staffAllows, sanitizeStaffPermissions } from '../utils/staffPermissions';
 import { isShiftInPlan, resolveCanonicalShift, getCanonicalShifts, normalizeShiftName, shiftsOverlap } from '../utils/shiftUtils';
 import { areSeatTypesEquivalent } from '../utils/seatTypeUtils';
 import { buildAdmissionVoid } from '../utils/admissionVoid.js';
@@ -767,7 +767,15 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
     sync.block([]);
     if (remote.settings) { sync.markSynced('settings', remote.settings); setSettings(remote.settings); }
     else sync.markLoaded('settings');
+    const hiddenMoney = new Set();
+    if (remote.financialAccess?.payments === false) hiddenMoney.add('payments');
+    if (remote.financialAccess?.expenses === false) hiddenMoney.add('expenses');
     SYNCED_COLLECTIONS.forEach(c => {
+      if (hiddenMoney.has(c)) {
+        sync.markSynced(c, []);
+        setters[c]([]);
+        return;
+      }
       const items = remote[c] || [];
       // Keep the signed-in staff user when the server list is empty, but still allow later saves.
       if (c === 'staffMembers' && items.length === 0) { sync.markLoaded(c); return; }
@@ -2210,31 +2218,8 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
   // Central Staff & Action Authorization Checker
   const hasPermission = (moduleName, actionName = 'view', staff = currentStaff) => {
     if (!staff) return false;
-    // Inactive staff members cannot perform any actions
     if (staff.status === 'Inactive') return false;
-    // Admins have full access
-    if (staff.role === 'Admin') return true;
-
-    const mod = staff.permissions?.[moduleName];
-    if (mod) {
-      if (mod.manage) return true;
-      if (typeof mod[actionName] === 'boolean') return mod[actionName];
-    }
-
-    // Fallbacks for legacy boolean flags only if mod is missing
-    if (!mod) {
-      if (moduleName === 'students' && actionName === 'edit') return Boolean(staff.permissions?.canManageStudents);
-      if (moduleName === 'students' && actionName === 'view') return true;
-      if (moduleName === 'payments' && actionName === 'create') return Boolean(staff.permissions?.canProcessPayments);
-      if (moduleName === 'seats' && actionName === 'edit') return Boolean(staff.permissions?.canEditSeats);
-      if (moduleName === 'expenses' && actionName === 'create') return Boolean(staff.permissions?.canManageExpenses);
-      if (moduleName === 'reports' && actionName === 'view') return Boolean(staff.permissions?.canViewFinancials);
-      if (moduleName === 'settings' && actionName === 'edit') return Boolean(staff.permissions?.canManageSettings);
-      if (moduleName === 'admissions' && actionName === 'delete') return Boolean(staff.permissions?.canCancelAdmission);
-      if (moduleName === 'payments' && actionName === 'approve') return Boolean(staff.permissions?.canProcessRefunds);
-    }
-
-    return false;
+    return staffAllows(staff.permissions, staff.role, moduleName, actionName);
   };
 
   const cancelAdmission = (studentId, reason, refundAmount = 0) => {
@@ -2362,7 +2347,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
 
     const assignedRole = staffData.role || 'Librarian';
     const basePermissions = staffData.permissions || getDefaultPermissionsForRole(assignedRole);
-    const syncedPermissions = syncLegacyPermissions(basePermissions);
+    const syncedPermissions = sanitizeStaffPermissions(syncLegacyPermissions(basePermissions), assignedRole);
 
     const newStaff = {
       id: `st-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
@@ -2398,7 +2383,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         if (updatedData.role && updatedData.role !== st.role && !updatedData.permissions) {
           perms = getDefaultPermissionsForRole(updatedData.role);
         }
-        perms = syncLegacyPermissions(perms);
+        perms = sanitizeStaffPermissions(syncLegacyPermissions(perms), role);
 
         updatedMember = {
           ...st,

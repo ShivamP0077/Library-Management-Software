@@ -6,6 +6,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { NumericInput } from './NumericInput';
 import { resolveConfigurationScope, matchesScope } from '../utils/scopeResolver';
 import { getCanonicalShifts, normalizeShiftName, resolveCanonicalShift, shiftsOverlap } from '../utils/shiftUtils';
+import { SEAT_COLORS, SEAT_MAP_VIEWS, deskPaymentState, occupancyStatusClass, paymentStatusClass, filterPhotoTiles } from '../utils/seatMapViews';
+import { useStudentPhoto } from '../utils/useStudentPhoto';
 import toast from 'react-hot-toast';
 
 // Seat numbers must be compared exactly. Trimming protects against legacy
@@ -105,6 +107,9 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
   }, [shifts, unsyncedShiftsList, activeBranchId]);
 
   const [selectedShiftId, setSelectedShiftId] = useState('');
+  const [mapView, setMapView] = useState('occupancy');
+  const [photoQuery, setPhotoQuery] = useState('');
+  const [photoPreview, setPhotoPreview] = useState(null);
 
   // Auto-sync selectedShiftId when applicableShifts changes, preserving canonical shift name if available
   useEffect(() => {
@@ -520,6 +525,19 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
             </div>
           )}
 
+          <div className="seat-view-switcher" role="group" aria-label="Seat map view">
+            {SEAT_MAP_VIEWS.map((view) => (
+              <button
+                key={view.id}
+                type="button"
+                aria-pressed={mapView === view.id}
+                onClick={() => setMapView(view.id)}
+              >
+                {view.label}
+              </button>
+            ))}
+          </div>
+
           {/* Shift Filter Tabs (Strictly valid, active, scope-matched shifts) */}
           <div style={{ display: 'flex', gap: '4px', background: '#fff', padding: '4px', borderRadius: '8px', border: '1px solid var(--border-light)', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', flexWrap: 'wrap' }}>
             {applicableShifts.length === 0 ? (
@@ -703,34 +721,23 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
                         {activeBranchId === 'all' ? `${branch.name} — ${section.name}` : (branches.length > 1 ? `${branch.name} — ${section.name}` : section.name)}
                       </h3>
 
-                      {/* Precise Counts Breakdown */}
-                      <div style={{ display: 'flex', gap: '16px', marginTop: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <div style={{ width: '12px', height: '12px', borderRadius: '3px', background: '#22c55e' }} />
-                          <span style={{ fontSize: '12px', fontWeight: 600, color: '#15803d' }}>
-                            Vacant & Eligible ({vacantEligibleCount})
-                          </span>
-                        </div>
-
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <div style={{ width: '12px', height: '12px', borderRadius: '3px', background: '#3b82f6' }} />
-                          <span style={{ fontSize: '12px', fontWeight: 500, color: '#1d4ed8' }}>Occupied Male</span>
-                        </div>
-
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <div style={{ width: '12px', height: '12px', borderRadius: '3px', background: '#ec4899' }} />
-                          <span style={{ fontSize: '12px', fontWeight: 500, color: '#be185d' }}>Occupied Female</span>
-                        </div>
-
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <div style={{ width: '12px', height: '12px', borderRadius: '3px', background: '#eab308' }} />
-                          <span style={{ fontSize: '12px', fontWeight: 500, color: '#a16207' }}>Maintenance ({maintenanceCount})</span>
-                        </div>
-
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <div style={{ width: '12px', height: '12px', borderRadius: '3px', background: '#94a3b8' }} />
-                          <span style={{ fontSize: '12px', fontWeight: 500, color: '#475569' }}>Unavailable ({unavailableCount})</span>
-                        </div>
+                      <div className="seat-legend" aria-label={mapView === 'payment' ? 'Payment legend' : 'Occupancy legend'}>
+                        {mapView === 'payment' ? (
+                          <>
+                            <LegendSwatch color={SEAT_COLORS.payment.paid} label="Paid" />
+                            <LegendSwatch color={SEAT_COLORS.payment.unpaid} label="Unpaid" />
+                            <LegendSwatch color={SEAT_COLORS.payment.mixed} label="Mixed" />
+                            <LegendSwatch color={SEAT_COLORS.payment.unassigned} label="Unassigned" />
+                          </>
+                        ) : (
+                          <>
+                            <LegendSwatch color={SEAT_COLORS.occupancy.vacant} label={`Vacant (${vacantEligibleCount})`} />
+                            <LegendSwatch color={SEAT_COLORS.occupancy.male} label="Male" />
+                            <LegendSwatch color={SEAT_COLORS.occupancy.female} label="Female" />
+                            <LegendSwatch color={SEAT_COLORS.occupancy.maintenance} label={`Maintenance (${maintenanceCount})`} />
+                            <LegendSwatch color={SEAT_COLORS.occupancy.unavailable} label={`Unavailable (${unavailableCount})`} />
+                          </>
+                        )}
 
                         {nonFixedStats.map(ns => (
                           <div key={ns.name} style={{ background: '#f0f9ff', border: '1px solid #bae6fd', padding: '2px 8px', borderRadius: '12px', fontSize: '12px', fontWeight: 600, color: '#0369a1' }}>
@@ -842,8 +849,27 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
                     </div>
                   )}
 
+                  {mapView === 'photo' && (
+                    <input
+                      className="form-input"
+                      type="search"
+                      placeholder="Search name or desk"
+                      aria-label="Search photo tiles"
+                      value={photoQuery}
+                      onChange={(e) => setPhotoQuery(e.target.value)}
+                    />
+                  )}
+
                   {/* 3D Seat Grid Layout */}
                   <div className="seat-map-container" style={{ minHeight: '120px' }}>
+                    {mapView === 'photo' ? (
+                      <PhotoGrid
+                        seats={sectionSeats}
+                        occupancyMap={occupancyMap}
+                        query={photoQuery}
+                        onOpen={(payload) => setPhotoPreview(payload)}
+                      />
+                    ) : (
                     <div className="seat-grid-3d">
                       {sectionSeats.map((seat, idx) => {
                         const occupants = occupancyMap.get(getSeatKey(seat)) || [];
@@ -852,20 +878,15 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
                         const isDuplicate = hasOverlappingOccupants(occupants, shifts);
                         const isSelected = selectedSeatIds.includes(seat.id);
 
-                        // Color rules:
-                        // Available: Green
-                        // Occupied Male: Blue
-                        // Occupied Female: Pink
-                        // Maintenance: Yellow (overrides gender)
-                        // Unavailable: Gray (overrides gender)
-                        let statusClass = 'seat-available';
-                        if (seat.isUnavailable) {
-                          statusClass = 'seat-unavailable';
-                        } else if (seat.isMaintenance) {
-                          statusClass = 'seat-maintenance';
-                        } else if (isOccupied) {
-                          statusClass = occupant.gender === 'Female' ? 'seat-occupied-female' : 'seat-occupied-male';
-                        }
+                        const paymentState = deskPaymentState(occupants);
+                        let statusClass = mapView === 'payment'
+                          ? paymentStatusClass(paymentState)
+                          : occupancyStatusClass({
+                            isUnavailable: seat.isUnavailable,
+                            isMaintenance: seat.isMaintenance,
+                            isOccupied,
+                            gender: occupant?.gender,
+                          });
 
                         // Selected state: bold highlighted border (no solid blue fill)
                         if (isSelected) {
@@ -914,6 +935,7 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
                         );
                       })}
                     </div>
+                    )}
                   </div>
                 </div>
               );
@@ -921,6 +943,39 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
           </div>
         );
       })}
+
+      <AnimatePresence>
+        {photoPreview && (
+          <div className="modal-overlay" onClick={() => setPhotoPreview(null)}>
+            <motion.div className="modal-content" onClick={e => e.stopPropagation()} initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} style={{ maxWidth: '440px' }}>
+              <div className="modal-header">
+                <h3 style={{ fontSize: '18px', fontWeight: 600 }}>Photo preview</h3>
+                <button className="btn-ghost" onClick={() => setPhotoPreview(null)}><X size={20} /></button>
+              </div>
+              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <PhotoFace student={photoPreview.occupant} large />
+                <div>
+                  <div style={{ fontSize: '16px', fontWeight: 700 }}>{photoPreview.occupant?.name || 'Vacant'}</div>
+                  <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Desk {photoPreview.seat.name}</div>
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  {photoPreview.occupant && onSelectStudent && (
+                    <button className="btn btn-secondary" style={{ flex: 1 }} onClick={() => {
+                      onSelectStudent(photoPreview.occupant);
+                      setPhotoPreview(null);
+                    }}>Student Details</button>
+                  )}
+                  <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => {
+                    const payload = photoPreview;
+                    setPhotoPreview(null);
+                    setSelectedDesk({ seat: payload.seat, occupant: payload.occupant, occupants: payload.occupants, isDuplicate: payload.isDuplicate });
+                  }}>Seat Details</button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Desk Details Inspection Modal */}
       <AnimatePresence>
@@ -1179,3 +1234,75 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
     </motion.div>
   );
 };
+
+function LegendSwatch({ color, label }) {
+  return (
+    <div className="seat-legend-item">
+      <div style={{ width: '12px', height: '12px', borderRadius: '3px', background: color }} />
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function PhotoFace({ student, large }) {
+  const src = useStudentPhoto(student);
+  const [failed, setFailed] = useState(false);
+  if (!student) {
+    return <div className="seat-photo-empty">Vacant</div>;
+  }
+  if (src && !failed) {
+    return (
+      <img
+        src={src}
+        alt={`${student.name || 'Student'} photo`}
+        className={large ? 'seat-photo-preview-img' : 'seat-photo-img'}
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+  return <div className="seat-photo-empty">No photo</div>;
+}
+
+function PhotoGrid({ seats, occupancyMap, query, onOpen }) {
+  const tiles = [];
+  seats.forEach((seat) => {
+    const occupants = occupancyMap.get(getSeatKey(seat)) || [];
+    const isDuplicate = occupants.length > 1;
+    if (occupants.length === 0) {
+      tiles.push({ key: seat.id, seat, occupant: null, occupants, isDuplicate: false, name: 'Vacant', desk: seat.name, id: '' });
+    } else {
+      occupants.forEach((occupant, index) => {
+        tiles.push({
+          key: `${seat.id}-${occupant.id || index}`,
+          seat,
+          occupant,
+          occupants,
+          isDuplicate,
+          name: occupant.name,
+          desk: seat.name,
+          id: occupant.id,
+        });
+      });
+    }
+  });
+  const visible = filterPhotoTiles(tiles, query);
+  if (visible.length === 0) {
+    return <div style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>No desks match that search.</div>;
+  }
+  return (
+    <div className="seat-photo-grid">
+      {visible.map((tile) => (
+        <button
+          key={tile.key}
+          type="button"
+          className="seat-photo-tile"
+          onClick={() => onOpen(tile)}
+        >
+          <PhotoFace student={tile.occupant} />
+          <div className="seat-photo-name">{tile.occupant?.name || 'Vacant'}</div>
+          <div className="seat-photo-desk">Desk {tile.seat.name}</div>
+        </button>
+      ))}
+    </div>
+  );
+}

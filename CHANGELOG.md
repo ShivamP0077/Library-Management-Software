@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-18 (IST)
+
+- **Seat Map: Occupancy, Payment and Photo views** (branch `feat/seat-map-three-views`, not deployed). The numbered Seat Map keeps branch, section and shift, and the same overlap warning and desk history. A switcher above the map offers Occupancy, Payment and Photo. Occupancy cells use solid fills: male `#2563eb`, female `#db2777`, vacant `#16a34a`, maintenance `#d97706`, unavailable `#64748b`, with white seat numbers and the legend outside the cells. Payment uses paid `#16a34a`, unpaid `#dc2626`, mixed `#eab308` and unassigned `#9ca3af`. A desk with more than one occupant in the current scope is mixed only when their payment states differ. Photo shows a larger photo, the name and the desk number, an optional search, and a clear empty state when there is no photo. Clicking a tile opens a preview with Student Details and Seat Details, which use the existing student and desk screens. Who occupies a desk is unchanged: Active and Expiring Soon still hold the desk; Expired and Cancelled do not. Fixed desks, overlap checks and desk history are unchanged. No production data was rewritten. Nothing was deployed.
+
 ## 2026-11-14 (IST)
 
 - **Paid Razorpay checkouts showed as unpaid** (branch `fix/razorpay-captured-activation`, not deployed). After a real Razorpay payment the owner history showed past_due and no plan, and Super Admin billing history stayed empty. Cause 1: when Razorpay said the payment was captured, the server compared the payment id with the payment-link id and marked the invoice failed even though the amount was correct. Cause 2: the Super Admin Payments page never saved the invoice list (a missing variable). Fix: the webhook now ties a captured payment back to its payment link before activating the plan, and Super Admin history shows invoices again. A dry-run script (`server/scripts/reconcile-software-invoice.mjs`) can settle the two already-captured ₹1 invoices; it was not run. Not deployed.

@@ -2,10 +2,12 @@
 // Nothing here charges money or deletes data. Paid steps answer "payments not set up yet"
 // until a payment provider is registered with setPaymentProvider().
 import express from 'express';
-import { Library, User, models } from './models.js';
+import { Library, User, models, Settings } from './models.js';
 import { requireRole } from './auth.js';
 import { audit } from './audit.js';
 import { SoftwarePlan, pubPlan, libraryLimits } from './plans.js';
+import { countsTowardStudentLimit } from './students.js';
+import { todayIn } from './finance.js';
 import { paymentProvider, planPrice, INTERVALS, initialSubscription } from './billing.js';
 import { refreshPaymentProvider } from './paymentConfig.js';
 import { effectiveStatus } from './subscriptionAccess.js';
@@ -19,18 +21,22 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 const NOT_SET_UP = { error: 'Online payments are not set up yet. Please contact support to change to a paid plan.', code: 'payments_not_configured' };
 
 async function usageOf(tenantId) {
-  const [students, staff, branches] = await Promise.all([
-    models.students.countDocuments({ tenantId }),
+  const [studentDocs, staff, branches, desks, settings] = await Promise.all([
+    models.students.find({ tenantId }).lean(),
     User.countDocuments({ tenantId, role: 'staff' }),
     models.branches ? models.branches.countDocuments({ tenantId }) : 0,
+    models.seats.countDocuments({ tenantId }),
+    Settings.findOne({ tenantId }).lean(),
   ]);
-  return { students, staff, branches };
+  const today = todayIn();
+  const students = studentDocs.filter(s => countsTowardStudentLimit(s, { settings, today })).length;
+  return { students, staff, branches, desks };
 }
 
 /** Which limits the usage would break on `plan` (empty = fits). */
 export function overLimits(plan, usage) {
   const out = [];
-  for (const [k, lim] of [['students', plan.studentLimit], ['staff', plan.staffLimit], ['branches', plan.branchLimit]])
+  for (const [k, lim] of [['students', plan.studentLimit], ['staff', plan.staffLimit], ['branches', plan.branchLimit], ['desks', plan.deskLimit]])
     if (lim > 0 && usage[k] > lim) out.push({ kind: k, limit: lim, used: usage[k] });
   return out;
 }
@@ -189,7 +195,9 @@ export function createSubscriptionRouter() {
     const sub = lib.subscription || {};
     if (lib.planId === planId && (sub.interval || 'month') === interval) return res.status(400).json({ error: 'You are already on this plan' });
     const over = overLimits(target, await usageOf(req.tenantId));
-    if (over.length) return res.status(409).json({ error: `Your library uses more than this plan allows (${over.map(o => `${o.used} ${o.kind}, limit ${o.limit}`).join('; ')}).`, code: 'over_limit', over });
+    // Student and desk caps do not block a downgrade and never delete rows. Growth is refused later.
+    const blocking = over.filter(o => o.kind !== 'students' && o.kind !== 'desks');
+    if (blocking.length) return res.status(409).json({ error: `Your library uses more than this plan allows (${blocking.map(o => `${o.used} ${o.kind}, limit ${o.limit}`).join('; ')}).`, code: 'over_limit', over: blocking });
     const curPrice = Number(sub.price ?? 0);
     const now = new Date();
     let next;

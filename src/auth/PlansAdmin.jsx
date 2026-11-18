@@ -5,7 +5,7 @@ import { api } from '../utils/api';
 import { SaModal } from './SaModal';
 import { DURATION_ROWS, durationPayload, durationsFromPlan, emptyDurations, setMonthlyKeepingDiscounts } from '../utils/softwarePlanForm';
 
-const EMPTY = { name: '', description: '', priceMonthly: '', studentLimit: '', staffLimit: '', branchLimit: '', trialDays: '', features: '', public: true, active: true, recommended: false, durationPricing: emptyDurations() };
+const EMPTY = { name: '', description: '', priceMonthly: '', studentLimit: '', staffLimit: '', branchLimit: '', deskLimit: '', trialDays: '', features: '', public: true, active: true, recommended: false, durationPricing: emptyDurations() };
 const fmtLimit = (n) => (n ? n.toLocaleString() : 'Unlimited');
 
 export function PlansAdmin({ libraries = [], onChanged }) {
@@ -18,7 +18,7 @@ export function PlansAdmin({ libraries = [], onChanged }) {
 
   const startEdit = (p) => {
     setEditing(p ? p.planId : null);
-    setForm(p ? { ...EMPTY, ...p, studentLimit: p.studentLimit ?? '', staffLimit: p.staffLimit ?? '', branchLimit: p.branchLimit ?? '', trialDays: p.trialDays || '', features: (p.features || []).join('\n'), recommended: !!p.recommended, durationPricing: durationsFromPlan(p) } : EMPTY);
+    setForm(p ? { ...EMPTY, ...p, studentLimit: p.studentLimit ?? '', staffLimit: p.staffLimit ?? '', branchLimit: p.branchLimit ?? '', deskLimit: p.deskLimit ?? '', trialDays: p.trialDays || '', features: (p.features || []).join('\n'), recommended: !!p.recommended, durationPricing: durationsFromPlan(p) } : EMPTY);
     setOpen(true);
   };
   const save = async (e) => {
@@ -66,7 +66,7 @@ export function PlansAdmin({ libraries = [], onChanged }) {
                 <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{!p.active ? 'Archived' : p.public ? 'On signup' : 'Hidden'}</span>
               </div>
               <div style={{ fontSize: 18, fontWeight: 700, margin: '6px 0' }}>₹{Number(p.priceMonthly).toLocaleString()}<span style={{ fontSize: 12, fontWeight: 400 }}>/month</span>{p.recommended ? <span style={{ fontSize: 11, marginLeft: 6 }}>Recommended</span> : null}</div>
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Students: {fmtLimit(p.studentLimit)} · Staff: {fmtLimit(p.staffLimit)} · Branches: {fmtLimit(p.branchLimit)}{p.trialDays ? ` · ${p.trialDays}-day trial` : ''}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Students: {fmtLimit(p.studentLimit)} · Desks: {fmtLimit(p.deskLimit)} · Staff: {fmtLimit(p.staffLimit)} · Branches: {fmtLimit(p.branchLimit)}{p.trialDays ? ` · ${p.trialDays}-day trial` : ''}</div>
               {p.features?.length > 0 && <ul style={{ fontSize: 12, margin: '6px 0 0', paddingLeft: 18 }}>{p.features.map(f => <li key={f}>{f}</li>)}</ul>}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
                 <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{p.libraries} {p.libraries === 1 ? 'library' : 'libraries'}</span>
@@ -98,6 +98,7 @@ export function PlansAdmin({ libraries = [], onChanged }) {
               <input id="plan-priceMonthly" className="form-input" type="number" min={0} value={form.priceMonthly} onChange={e => setForm(f => setMonthlyKeepingDiscounts(f, e.target.value))} />
             </div>
             {field('studentLimit', 'Student limit (blank = unlimited)')}
+            {field('deskLimit', 'Maximum physical desks (blank = unlimited)')}
             {field('staffLimit', 'Staff limit (blank = unlimited)')}
             {field('branchLimit', 'Branch limit (blank = unlimited)')}
             {field('trialDays', 'Free trial days')}

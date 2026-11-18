@@ -14,9 +14,10 @@ export const SoftwarePlan = mongoose.models.SoftwarePlan || mongoose.model('Soft
   description: { type: String, trim: true, default: '' },
   priceMonthly: { type: Number, default: 0 }, // INR
   priceYearly: { type: Number, default: null },
-  studentLimit: limitField,
+  studentLimit: limitField, // Maximum Active Students (Active + Grace). Not renamed.
   staffLimit: limitField,
   branchLimit: limitField,
+  deskLimit: limitField, // Maximum Physical Desks. null = unlimited.
   features: { type: [String], default: [] },
   trialDays: { type: Number, default: 0 },
   /** Per-duration discount. Missing means infer from priceMonthly / priceYearly on read. */
@@ -30,7 +31,7 @@ export const SoftwarePlan = mongoose.models.SoftwarePlan || mongoose.model('Soft
 
 const limitText = (n, one, many) => (n > 0 ? `${Number(n).toLocaleString('en-IN')} ${Number(n) === 1 ? one : many}` : `Unlimited ${many}`);
 
-/** Feature order: desks (only if the field exists), branches, staff, optional student cap, WhatsApp, then the rest. */
+/** Feature order: desks (when the field is present), branches, staff, optional student cap, WhatsApp, then the rest. */
 export function planHighlights(p) {
   if (!p) return [];
   const lines = [];
@@ -56,12 +57,13 @@ export function planHighlights(p) {
 export const pubPlan = (p) => {
   if (!p) return p;
   const intervals = INTERVALS.map(interval => priceQuote(p, interval)).filter(Boolean);
+  const shaped = { ...p, deskLimit: p.deskLimit ?? null };
   return {
     planId: p.planId, name: p.name, description: p.description, priceMonthly: p.priceMonthly, priceYearly: p.priceYearly,
     studentLimit: p.studentLimit, staffLimit: p.staffLimit, branchLimit: p.branchLimit,
-    ...(Object.prototype.hasOwnProperty.call(p, 'deskLimit') && p.deskLimit !== undefined ? { deskLimit: p.deskLimit } : {}),
+    deskLimit: p.deskLimit ?? null,
     features: p.features || [],
-    highlights: planHighlights(p),
+    highlights: planHighlights(shaped),
     trialDays: p.trialDays || 0,
     recommended: !!p.recommended,
     durationPricing: p.durationPricing || null,
@@ -83,7 +85,7 @@ export function publicCataloguePlan(p) {
     studentLimit: pub.studentLimit,
     staffLimit: pub.staffLimit,
     branchLimit: pub.branchLimit,
-    ...(pub.deskLimit !== undefined ? { deskLimit: pub.deskLimit } : {}),
+    deskLimit: pub.deskLimit ?? null,
     features: pub.features,
     highlights: pub.highlights,
     trialDays: pub.trialDays,
@@ -116,7 +118,7 @@ export function planInput(body = {}, { creating } = {}) {
   if (creating || body.name !== undefined) { const n = String(body.name || '').trim(); if (!n) throw bad('Plan name is required'); set.name = n.slice(0, 80); }
   if (body.description !== undefined) set.description = String(body.description || '').slice(0, 500);
   for (const [k, allowNull] of [['priceMonthly', false], ['priceYearly', true]]) { const v = money(body[k], k, allowNull); if (v !== undefined) set[k] = v; }
-  for (const k of ['studentLimit', 'staffLimit', 'branchLimit']) { const v = optLimit(body[k], k); if (v !== undefined) set[k] = v; }
+  for (const k of ['studentLimit', 'staffLimit', 'branchLimit', 'deskLimit']) { const v = optLimit(body[k], k); if (v !== undefined) set[k] = v; }
   if (body.trialDays !== undefined) { const t = Number(body.trialDays) || 0; if (!(t >= 0 && t <= 365)) throw bad('Invalid trialDays'); set.trialDays = Math.round(t); }
   if (body.features !== undefined) {
     const list = Array.isArray(body.features) ? body.features : String(body.features).split('\n');
@@ -171,11 +173,23 @@ export async function libraryLimits(tenantId) {
     studentLimit: pick(lib?.studentLimit, plan?.studentLimit),
     staffLimit: pick(null, plan?.staffLimit),
     branchLimit: pick(null, plan?.branchLimit),
+    deskLimit: pick(null, plan?.deskLimit),
   };
 }
 
 export class LimitError extends Error {
-  constructor(kind, limit) { super(`Your plan allows up to ${limit} ${kind}. Upgrade the plan to add more.`); this.status = 409; this.code = `${kind}_limit`; this.limit = limit; }
+  constructor(kind, limit) {
+    const noun = kind === 'desks' ? 'physical desks' : kind;
+    const lead = kind === 'desks' ? 'Plan Limit Exceeded. ' : '';
+    super(`${lead}Your plan allows up to ${limit} ${noun}. Upgrade the plan to add more.`);
+    this.status = 409; this.code = `${kind}_limit`; this.limit = limit;
+  }
+}
+
+/** Only growth past Maximum Physical Desks is blocked. Existing desks are never removed. */
+export async function checkDeskLimit(tenantId, nextCount, prevCount) {
+  const { deskLimit } = await libraryLimits(tenantId);
+  if (deskLimit && nextCount > deskLimit && nextCount > prevCount) throw new LimitError('desks', deskLimit);
 }
 
 /** Staff logins + pending invites count against staffLimit. */

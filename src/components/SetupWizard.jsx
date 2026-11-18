@@ -3,11 +3,13 @@ import { useLibrary } from '../context/LibraryContext';
 import { motion } from 'framer-motion';
 import { Building2, Plus, Trash2, CheckCircle, Clock, Copy, Eye, FileText, CheckCircle2, ShieldCheck, X } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { deskGrowthMessage } from '../utils/planLimitCopy';
 import { NumericInput } from './NumericInput';
 import { resolveConfigurationScope, matchesScope } from '../utils/scopeResolver';
-import { buildDurationPricing } from '../utils/pricingCalculator';
+import { compileDurationPricing, defaultTiers, durationUnitForCycle, inferUnitPrice } from '../utils/pricingCalculator';
 import { cycleConfig, effectiveCycleConfig, normalizePlanBillingCycle } from '../utils/billingCycle';
 import { PlanDurationFields } from './PlanDurationFields';
+import { PlanPricingFields } from './PlanPricingFields';
 import { scopedStorage } from '../utils/tenantCache';
 // Issue #2: the wizard draft belongs to the current library only.
 const localStorage = scopedStorage;
@@ -25,37 +27,18 @@ const INITIAL_PLAN_TEMPLATES = [
   { name: "Weekend Plan" }
 ];
 
-const STANDARD_DURATIONS = [1, 2, 3, 6, 12];
-const DEFAULT_DURATION_DISCOUNTS = { 1: 0, 2: 0, 3: 5, 6: 10, 12: 15 };
-const DEFAULT_MONTHLY_PRICE = 1500;
-const DEFAULT_DURATION_PRICING = STANDARD_DURATIONS.map(months => ({
-  months,
-  discountPercent: DEFAULT_DURATION_DISCOUNTS[months] || 0
-}));
+const DEFAULT_UNIT_PRICE = 1500;
 const ALL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-const getPlanMonthlyPrice = (plan) => {
-  const stored = Number(plan?.monthlyPrice);
-  if (Number.isFinite(stored) && stored >= 0) return stored;
-
-  const oneMonth = (plan?.durationPricing || []).find(dp => dp.durationMonths === 1);
-  const inferred = Number(oneMonth?.basePrice);
-  return Number.isFinite(inferred) && inferred > 0 ? inferred : DEFAULT_MONTHLY_PRICE;
+const freshPlanPricing = (cycle) => {
+  const unit = durationUnitForCycle(cycle?.mode);
+  const patch = {
+    unitPrice: DEFAULT_UNIT_PRICE,
+    durationPricing: compileDurationPricing(DEFAULT_UNIT_PRICE, defaultTiers(unit), unit),
+  };
+  if (unit === 'month') patch.monthlyPrice = DEFAULT_UNIT_PRICE;
+  return patch;
 };
-
-const getPlanDurations = (plan) => (plan?.durationPricing || [])
-  .filter(dp => Number(dp.durationMonths) > 0)
-  .map(dp => ({
-    months: Number(dp.durationMonths),
-    discountPercent: dp.discountType === 'Percentage' ? Number(dp.discountValue) || 0 : 0
-  }))
-  .sort((a, b) => a.months - b.months);
-
-const withRecomputedPricing = (plan, monthlyPrice, durations) => ({
-  ...plan,
-  monthlyPrice,
-  durationPricing: buildDurationPricing(monthlyPrice, durations)
-});
 
 export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
   const { 
@@ -205,7 +188,7 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
   }, [generatorMode, simplePrefix, simpleStart, simpleEnd, rowConfigMode, rowNamesInput, seatsPerRow, customRows]);
 
   // Bulk add seats with duplicate detection within the resolved scope
-  const handleAddGeneratedSeats = () => {
+  const handleAddGeneratedSeats = async () => {
     if (previewSeats.length === 0) return toast.error("No valid seats generated to add.");
 
     const currentScopeSeatTypes = tempSeatTypes.filter(st => matchesScope(st, scope.resolvedBranchId, scope.resolvedSectionId));
@@ -241,6 +224,8 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
       }
     });
 
+    const blocked = await deskGrowthMessage(tempSeats.length, addedCount);
+    if (blocked) return toast.error(blocked);
     setTempSeats(newSeatsList);
     if (addedCount > 0) toast.success(`Generated and added ${addedCount} physical seats for ${scope.scopeDisplayName}.`);
     if (duplicates.length > 0) toast(`Skipped ${duplicates.length} duplicate seat names in this section.`);
@@ -1013,8 +998,7 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
                       shiftIds: currentScopeShifts.map(s => s.id),
                       branchId: scope.resolvedBranchId || undefined,
                       sectionId: scope.resolvedSectionId || undefined,
-                      monthlyPrice: DEFAULT_MONTHLY_PRICE,
-                      durationPricing: buildDurationPricing(DEFAULT_MONTHLY_PRICE, DEFAULT_DURATION_PRICING),
+                      ...freshPlanPricing(normalizePlanBillingCycle(cycleConfig(settings))),
                       billingCycle: normalizePlanBillingCycle(cycleConfig(settings)),
                       active: true
                     }]);
@@ -1035,8 +1019,7 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
             </div>
           ) : (
             currentPlans.map(p => {
-              const monthlyPrice = getPlanMonthlyPrice(p);
-              const planDurations = getPlanDurations(p);
+              const cycle = p.billingCycle?.mode ? effectiveCycleConfig(settings, p) : cycleConfig(settings);
               return (
               <div key={p.id} style={{ background: '#f8fafc', border: '1px solid var(--border-light)', borderRadius: '8px', padding: '16px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
@@ -1091,130 +1074,42 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
                 </div>
 
                 <PlanDurationFields
-                  value={p.billingCycle?.mode ? effectiveCycleConfig(settings, p) : cycleConfig(settings)}
+                  value={cycle}
                   onChange={(next) => {
-                    setTempPlans(tempPlans.map(item => item.id === p.id ? { ...item, billingCycle: normalizePlanBillingCycle(next) } : item));
+                    const prevUnit = durationUnitForCycle(cycle.mode);
+                    const nextUnit = durationUnitForCycle(next.mode);
+                    setTempPlans(tempPlans.map(item => {
+                      if (item.id !== p.id) return item;
+                      const billingCycle = normalizePlanBillingCycle(next);
+                      if (prevUnit === nextUnit) return { ...item, billingCycle };
+                      const price = inferUnitPrice(item, prevUnit);
+                      const patch = {
+                        unitPrice: price,
+                        durationPricing: compileDurationPricing(price, defaultTiers(nextUnit), nextUnit),
+                      };
+                      if (nextUnit === 'month') patch.monthlyPrice = price;
+                      else delete patch.monthlyPrice;
+                      const updated = { ...item, billingCycle, ...patch };
+                      if (nextUnit !== 'month') delete updated.monthlyPrice;
+                      return updated;
+                    }));
                   }}
                 />
 
-                {/* Duration Pricing */}
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
-                    <label className="form-label" style={{ fontSize: '11px', margin: 0 }}>Pricing & Discounts per Duration</label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--text-secondary)' }}>
-                      Monthly Price (₹)
-                      <NumericInput 
-                        className="form-input" 
-                        style={{ width: '120px', padding: '4px 8px', fontSize: '12px' }} 
-                        value={monthlyPrice} 
-                        onChange={e => {
-                          const val = Number(e.target.value) || 0;
-                          setTempPlans(prev => prev.map(item => item.id === p.id ? withRecomputedPricing(item, val, getPlanDurations(item)) : item));
-                        }} 
-                      />
-                    </label>
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' }}>
-                    {STANDARD_DURATIONS.map(months => {
-                      const active = planDurations.some(d => d.months === months);
-                      const discount = planDurations.find(d => d.months === months)?.discountPercent;
-                      return (
-                        <button
-                          type="button"
-                          key={months}
-                          className={active ? "btn btn-primary" : "btn btn-ghost"}
-                          style={{ fontSize: '11px', padding: '3px 10px', border: active ? '1px solid transparent' : '1px solid var(--border-light)' }}
-                          onClick={() => {
-                            const nextDurations = active
-                              ? planDurations.filter(d => d.months !== months)
-                              : [...planDurations, { months, discountPercent: DEFAULT_DURATION_DISCOUNTS[months] || 0 }].sort((a, b) => a.months - b.months);
-                            setTempPlans(prev => prev.map(item => item.id === p.id ? withRecomputedPricing(item, monthlyPrice, nextDurations) : item));
-                          }}
-                        >
-                          {months} Mo{active && Number(discount) > 0 ? ` · ${discount}% off` : ''}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    {(p.durationPricing || []).map((dp, idx) => (
-                      <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr 1.5fr 1.5fr auto', gap: '8px', alignItems: 'center', background: '#fff', padding: '6px 12px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
-                        <span style={{ fontSize: '12px', fontWeight: 600 }}>{dp.durationMonths} Mo</span>
-                        <NumericInput 
-                          className="form-input" 
-                          style={{ padding: '4px 8px', fontSize: '12px' }} 
-                          value={dp.basePrice} 
-                          onChange={e => {
-                            const val = Number(e.target.value);
-                            const updated = p.durationPricing.map((item, i) => i === idx ? { ...item, basePrice: val } : item);
-                            setTempPlans(tempPlans.map(item => item.id === p.id ? { ...item, durationPricing: updated } : item));
-                          }} 
-                        />
-                        <select 
-                          className="form-select" 
-                          style={{ padding: '4px 8px', fontSize: '12px' }}
-                          value={dp.discountType || 'None'} 
-                          onChange={e => {
-                            const dType = e.target.value;
-                            const built = dType === 'Percentage'
-                              ? buildDurationPricing(monthlyPrice, [{ months: dp.durationMonths, discountPercent: dp.discountValue || 0 }])[0]
-                              : null;
-                            const updated = p.durationPricing.map((item, i) => i === idx ? {
-                              ...item,
-                              discountType: dType,
-                              ...(built ? {
-                                basePrice: built.basePrice,
-                                discountValue: built.discountValue,
-                                discountAmount: built.discountAmount,
-                                netPrice: built.netPrice
-                              } : {})
-                            } : item);
-                            setTempPlans(tempPlans.map(item => item.id === p.id ? { ...item, durationPricing: updated } : item));
-                          }} 
-                        >
-                          <option value="None">No Discount</option>
-                          <option value="Percentage">% Discount</option>
-                          <option value="Fixed">₹ Discount</option>
-                        </select>
-                        <NumericInput 
-                          className="form-input" 
-                          style={{ padding: '4px 8px', fontSize: '12px' }} 
-                          value={dp.discountValue || 0} 
-                          onChange={e => {
-                            const val = Number(e.target.value);
-                            const isPercentage = (dp.discountType || 'None') === 'Percentage';
-                            const built = isPercentage
-                              ? buildDurationPricing(monthlyPrice, [{ months: dp.durationMonths, discountPercent: val }])[0]
-                              : null;
-                            const updated = p.durationPricing.map((item, i) => i === idx ? {
-                              ...item,
-                              discountValue: built ? built.discountValue : val,
-                              ...(built ? {
-                                basePrice: built.basePrice,
-                                discountAmount: built.discountAmount,
-                                netPrice: built.netPrice
-                              } : {})
-                            } : item);
-                            setTempPlans(tempPlans.map(item => item.id === p.id ? { ...item, durationPricing: updated } : item));
-                          }} 
-                        />
-                        <button type="button" className="btn btn-ghost" style={{ color: '#ef4444', padding: '2px' }} onClick={() => {
-                          const updated = p.durationPricing.filter((_, i) => i !== idx);
-                          setTempPlans(tempPlans.map(item => item.id === p.id ? { ...item, durationPricing: updated } : item));
-                        }}>
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    ))}
-                    {(p.durationPricing || []).length === 0 && (
-                      <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>
-                        Select at least one duration above.
-                      </p>
-                    )}
-                  </div>
-                </div>
+                <PlanPricingFields
+                  cycleMode={cycle.mode}
+                  unitPrice={inferUnitPrice(p, durationUnitForCycle(cycle.mode))}
+                  durationPricing={p.durationPricing}
+                  onChange={(next) => {
+                    setTempPlans(tempPlans.map(item => {
+                      if (item.id !== p.id) return item;
+                      const updated = { ...item, unitPrice: next.unitPrice, durationPricing: next.durationPricing };
+                      if (next.monthlyPrice == null) delete updated.monthlyPrice;
+                      else updated.monthlyPrice = next.monthlyPrice;
+                      return updated;
+                    }));
+                  }}
+                />
               </div>
               );
             })
@@ -1232,8 +1127,7 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
                 shiftIds: currentScopeShifts.map(s => s.id),
                 branchId: scope.resolvedBranchId || undefined,
                 sectionId: scope.resolvedSectionId || undefined,
-                monthlyPrice: DEFAULT_MONTHLY_PRICE,
-                durationPricing: buildDurationPricing(DEFAULT_MONTHLY_PRICE, DEFAULT_DURATION_PRICING),
+                ...freshPlanPricing(normalizePlanBillingCycle(cycleConfig(settings))),
                 billingCycle: normalizePlanBillingCycle(cycleConfig(settings)),
                 active: true
               }]);

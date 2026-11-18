@@ -15,7 +15,7 @@ export async function refreshWhatsappStatus({ force = false } = {}) {
   if (!force && state.checked && Date.now() - checkedAt < CACHE_MS) return state;
   // Hidden tabs must not keep hitting the provider; refresh on return via visibilitychange.
   if (typeof document !== 'undefined' && document.hidden) return state;
-  inflight = api.whatsappStatus()
+  inflight = api.whatsappStatus(15000, { fresh: force })
     .then(r => { state = { state: r?.state || 'unknown', number: r?.number || null, checked: true, allowed: true }; checkedAt = Date.now(); })
     .catch(e => { state = { state: 'unknown', checked: true, allowed: !(e?.status === 403 || e?.status === 503), error: e?.message }; checkedAt = Date.now(); })
     .finally(() => { inflight = null; emit(); });

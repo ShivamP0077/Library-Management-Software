@@ -41,12 +41,14 @@ function Subpage({ title, onBack, children }) {
 
 export function LibraryOsProfile({ screen = 'home', onScreenChange, onClose, onPaid }) {
   const { user, library, logout, subscriptionAccess } = useAuth();
-  const { settings, branches, activeBranchId, setActiveBranchId } = useLibrary();
+  const { settings, branches, activeBranchId, setActiveBranchId, currentStaff, hasPermission } = useLibrary();
   const [dark, setDark] = useState(() => readTheme() === 'dark');
   const [langOpen, setLangOpen] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
   const [walletOpen, setWalletOpen] = useState(false);
   const canPay = user?.role === 'client_admin' || user?.role === 'superadmin';
+  const librarianBlocked = currentStaff?.role === 'Librarian';
+  const showWallet = !librarianBlocked && (canPay || hasPermission?.('wallet', 'view'));
   const planLocked = isLibraryLocked(subscriptionAccess, user);
   const name = user?.name || 'Owner';
   const initial = (name || user?.email || 'M').trim().charAt(0).toUpperCase();
@@ -115,7 +117,7 @@ export function LibraryOsProfile({ screen = 'home', onScreenChange, onClose, onP
 
       <section className="os-card">
         <Row icon={CreditCard} tint="#dbeafe" label="Subscription" onClick={() => go('subscription')} />
-        <Row icon={Wallet} tint="#fef3c7" label="Wallet" onClick={() => { if (canPay) setWalletOpen(true); else go('subscription'); }} />
+        {showWallet && <Row icon={Wallet} tint="#fef3c7" label="Wallet" onClick={() => { if (canPay || hasPermission?.('wallet', 'view')) setWalletOpen(true); else go('subscription'); }} />}
         <Row icon={KeyRound} tint="#e7e5e4" label="Change Password" onClick={() => setPwOpen(true)} />
         <Row icon={Phone} tint="#dcfce7" label="Contact Us" onClick={() => go('contact')} />
         <Row icon={Shield} tint="#ede9fe" label="Privacy Policy" onClick={() => go('privacy')} />

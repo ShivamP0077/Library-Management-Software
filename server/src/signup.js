@@ -200,7 +200,7 @@ export function createSignupRouter({ issueSession }) {
     const email = normalizeEmail(req.body?.email);
     if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'A valid email is required' });
     if (rateLimited(`su-ip:${req.ip}`, 10, 15 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
-    if (rateLimited(`su-email:${email}`, 1, 60e3)) return res.status(429).json({ error: 'Please wait a minute before requesting another code.' });
+    if (rateLimited(`su-email:${email}`, 1, 30e3)) return res.status(429).json({ error: 'Please wait 30 seconds before requesting another code.' });
     if (await throttleHit(`signup-email:${email}`, 5, 15 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
     const generic = { ok: true, message: 'We sent a 6-digit code to your email.' };
     if (await User.exists({ email })) {
@@ -220,7 +220,7 @@ export function createSignupRouter({ issueSession }) {
     if (!isMobile(mobile)) return res.status(400).json({ error: 'A valid mobile number is required' });
     if (!(smsConfigured() || await systemWhatsappReady())) return res.status(503).json({ error: 'Mobile verification is not configured. Contact support.', code: 'mobile_otp_not_configured' });
     if (rateLimited(`sump-ip:${req.ip}`, 10, 15 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
-    if (rateLimited(`su-mobile:${mobile}`, 1, 60e3)) return res.status(429).json({ error: 'Please wait a minute before requesting another code.' });
+    if (rateLimited(`su-mobile:${mobile}`, 1, 30e3)) return res.status(429).json({ error: 'Please wait 30 seconds before requesting another code.' });
     if (await throttleHit(`signup-mobile:${mobile}`, 5, 15 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
     const generic = { ok: true, message: `We sent a 6-digit code to ${maskIdentifier(mobile)}.` };
     if (await User.exists({ mobile })) {

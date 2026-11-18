@@ -50,11 +50,16 @@ test('a configured provider creates a tenant-bound invoice for a paid upgrade', 
   } finally { setPaymentProvider(null); }
 });
 
-test('downgrade blocked when usage exceeds the target plan', async () => {
+test('student overage does not block a downgrade and does not delete students', async () => {
   for (const id of ['s1', 's2']) assert.equal((await call('POST', '/api/students', { token: A(), body: { id, name: id } })).status, 201);
   const r = await call('POST', '/api/subscription/change', { token: A(), body: { planId: 'tiny' } });
-  if (r.status !== 409) assert.fail('expected 409 got ' + r.status + ' ' + JSON.stringify(r.body));
-  assert.equal(r.body.code, 'over_limit');
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.plan.planId, 'tiny');
+  assert.equal(r.body.usage.students, 2);
+  assert.equal(r.body.limits.studentLimit, 1);
+  const more = await call('POST', '/api/students', { token: A(), body: { id: 's3', name: 's3' } });
+  assert.equal(more.status, 409);
+  assert.equal(more.body.code, 'capacity_exceeded');
 });
 
 test('paid active period: downgrade is scheduled, not immediate; cancel/resume', async () => {

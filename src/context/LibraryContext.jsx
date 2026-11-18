@@ -8,6 +8,7 @@ import { areSeatTypesEquivalent } from '../utils/seatTypeUtils';
 import { buildAdmissionVoid } from '../utils/admissionVoid.js';
 import { buildRenewalVoid, markPaymentVoided } from '../utils/paymentVoid.js';
 import { todayIST, validatePaidOn, applyRenewalToStudent, formatDate } from '../utils/dateUtils';
+import { periodSnapshots, holdsDesk, NEW_LIBRARY_GRACE_DAYS, DEFAULT_EXPIRED_PERIOD_DAYS } from '../utils/subscriptionLifecycle.js';
 import { stampPaymentReference } from '../utils/paymentReference';
 import { scopedStorage, canSeedServer } from '../utils/tenantCache';
 // Issue #2: all cache reads/writes in this file go to the current library's own namespace.
@@ -37,7 +38,8 @@ const INITIAL_SETTINGS = {
     { id: "doc-other", name: "Other Document", requirement: "Not Required", active: true }
   ],
   idProofDeadlineDays: 7,
-  gracePeriodDays: 3,
+  gracePeriodDays: NEW_LIBRARY_GRACE_DAYS,
+  expiredPeriodDays: DEFAULT_EXPIRED_PERIOD_DAYS,
   billingMode: "Anniversary", // 'Anniversary' | 'CalendarMonth'
   calendarBillingDay: 1,
   isSetupComplete: false,
@@ -364,7 +366,7 @@ export const reconcileSeats = ({ savedSeats, students = [], sections = [], branc
   // Track physically occupied seat names to ensure we never drop a seat that an active student is sitting in
   const occupiedSeatNames = new Set();
   students.forEach(st => {
-    if ((st.status === 'Active' || st.status === 'Expiring Soon') && st.seatNo) {
+    if (holdsDesk(st, null, todayIST()) && st.seatNo) {
       occupiedSeatNames.add(st.seatNo);
     }
   });
@@ -444,7 +446,7 @@ export const reconcileSeats = ({ savedSeats, students = [], sections = [], branc
 
   // Ensure every active student with an allocated physical seat has that seat recovered in their branch/section
   students.forEach(st => {
-    if ((st.status === 'Active' || st.status === 'Expiring Soon') && st.seatNo && st.seatNo !== 'Non-Fixed Seat' && st.seatNo !== 'None') {
+    if (holdsDesk(st, null, todayIST()) && st.seatNo && st.seatNo !== 'Non-Fixed Seat' && st.seatNo !== 'None') {
       const targetBranch = st.branchId || defaultBranchId;
       const branchSecs = sections.filter(s => !s.branchId || s.branchId === 'all' || s.branchId === targetBranch);
       let targetSecId = st.sectionId;
@@ -488,7 +490,7 @@ export const reconcileSeats = ({ savedSeats, students = [], sections = [], branc
             const key = `${b.id}-${sec.id}-${sName}`;
             if (!seatMap[key]) {
               const isOccupiedElsewhere = students.some(st => 
-                (st.status === 'Active' || st.status === 'Expiring Soon') && 
+                holdsDesk(st, null, todayIST()) && 
                 st.seatNo === sName && 
                 st.branchId && st.branchId !== b.id
               );
@@ -1033,8 +1035,8 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       if (branchId && branchId !== 'all' && s.branchId && s.branchId !== 'all' && s.branchId !== branchId) continue;
       if (sectionId && sectionId !== 'all' && s.sectionId && s.sectionId !== sectionId) continue;
 
-      if (s.seatNo === seatName) {
-        if (s.status !== 'Active' && s.status !== 'Expiring Soon') continue;
+        if (s.seatNo === seatName) {
+        if (!holdsDesk(s, settings, todayStr)) continue;
 
         // Found active occupant of this physical seat
         if (!requestedShiftId) {
@@ -1065,7 +1067,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         const seatMatchesSec = s.seatNo && seats.some(st => (st.name || st.seatNumber) === s.seatNo && (!st.branchId || st.branchId === branchId) && (!st.sectionId || st.sectionId === sectionId));
         if (!studentSecMatches && !seatMatchesSec) return;
       }
-      if (s.status !== 'Active' && s.status !== 'Expiring Soon') return;
+      if (!holdsDesk(s, settings, todayStr)) return;
 
       const studentShift = resolveCanonicalShift(shifts, s.shiftId) || shifts.find(sh => sh.id === s.shiftId) || { id: s.shiftId, name: s.shift };
       const overlaps = reqShiftObj ? shiftsOverlap(studentShift, reqShiftObj) : true;
@@ -1090,7 +1092,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
     const allStudents = [...students, ...transientStudents];
     return allStudents.filter(s => {
       if (libId && s.libraryId && s.libraryId !== libId) return false;
-      if (s.status !== 'Active' && s.status !== 'Expiring Soon') return false;
+      if (!holdsDesk(s, settings, todayStr)) return false;
       if (seatTypeId && s.seatTypeId !== seatTypeId) return false;
       if (branchId && branchId !== 'all' && s.branchId && s.branchId !== 'all' && s.branchId !== branchId) return false;
       if (sectionId && sectionId !== 'all' && s.sectionId && s.sectionId !== sectionId) return false;
@@ -1467,7 +1469,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
 
     // 3. Students exceeding non-fixed capacity
     students.forEach(s => {
-      if (s.status !== 'Active' && s.status !== 'Expiring Soon') return;
+      if (!holdsDesk(s, settings, todayStr)) return;
       const st = seatTypes.find(t => t.id === s.seatTypeId);
       if (st && st.allocationMode === 'Non-Fixed' && st.capacityMode === 'Limited') {
         const activeCount = getCurrentActiveAdmissions(libId, s.branchId, s.sectionId, s.seatTypeId, s.shiftId);
@@ -1697,7 +1699,8 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       internalNotes: studentData.internalNotes || "",
       joinedDate: studentData.startDate || todayStr,
       billingAnchorDay: Number(String(studentData.startDate || todayStr).slice(8, 10)) || undefined,
-      renewalHistory: [newRenewal],
+      ...periodSnapshots(settings, studentData),
+      renewalHistory: [{ ...newRenewal, ...periodSnapshots(settings, studentData) }],
       seatHistory: [newSeatLog],
       paymentHistory: [stampedPayment]
     };
@@ -1834,7 +1837,8 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         internalNotes: "Bulk Admitted",
         joinedDate: studentData.startDate || todayStr,
         billingAnchorDay: Number(String(studentData.startDate || todayStr).slice(8, 10)) || undefined,
-        renewalHistory: [newRenewal],
+        ...periodSnapshots(settings, studentData),
+        renewalHistory: [{ ...newRenewal, ...periodSnapshots(settings, studentData) }],
         seatHistory: [newSeatLog],
         paymentHistory: [newPayment]
       };
@@ -1926,7 +1930,8 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
 
     setStudents(prev => prev.map(s => {
       if (s.id === studentId) {
-        return applyRenewalToStudent(s, newRenewal, newPayment, { billingAnchorDay: renewalData.billingAnchorDay });
+        const snapshots = periodSnapshots(settings, s);
+        return applyRenewalToStudent(s, { ...newRenewal, ...snapshots }, newPayment, { billingAnchorDay: renewalData.billingAnchorDay, snapshots });
       }
       return s;
     }));
@@ -2734,7 +2739,8 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         internalNotes: "Synthetic student created via Test Data Generator.",
         joinedDate: startDateStr,
         billingAnchorDay: Number(String(startDateStr).slice(8, 10)) || undefined,
-        renewalHistory: [newRenewal],
+        ...periodSnapshots(settings, { customGraceDays: undefined }),
+        renewalHistory: [{ ...newRenewal, ...periodSnapshots(settings, {}) }],
         seatHistory: [{
           changeId: `TEST-SH-${Date.now()}-${createdCount + 1}`,
           previousSeat: "None",

@@ -4,6 +4,7 @@ import { Building2, Eye, KeyRound, LogOut, Plus, RefreshCw, Shield, UserPlus, Po
 import { AssistedPasswordReset } from './AssistedPasswordReset';
 import toast, { Toaster } from 'react-hot-toast';
 import { api } from '../utils/api';
+import { SUPERADMIN_REFRESH } from '../utils/refreshCopy';
 import { useAuth } from './AuthContext';
 import { LibraryInsights } from './LibraryInsights';
 import { PartnersAdmin } from './PartnersAdmin';
@@ -56,15 +57,26 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
     } finally { setDeleting(false); }
   };
 
-  const load = useCallback(async () => {
+  const load = useCallback(async ({ toastOnError = true } = {}) => {
     setLoading(true);
     try {
       const [libs, sum] = await Promise.all([api.adminLibraries(), api.adminSaasSummary()]);
       const extra = Object.fromEntries(sum.list.map(x => [x.libraryId, x]));
       setLibraries(libs.map(l => ({ ...l, ...extra[l.libraryId] })));
       setSummary(sum);
-    } catch (e) { toast.error(e.message); } finally { setLoading(false); }
+      return true;
+    } catch (e) {
+      if (toastOnError) toast.error(e.message);
+      return false;
+    } finally { setLoading(false); }
   }, []);
+
+  const refresh = async () => {
+    const toastId = toast.loading(SUPERADMIN_REFRESH.refreshing);
+    const ok = await load({ toastOnError: false });
+    if (ok) toast.success(SUPERADMIN_REFRESH.refreshed, { id: toastId });
+    else toast.error(SUPERADMIN_REFRESH.failed, { id: toastId });
+  };
   useEffect(() => { load(); }, [load]);
 
   const createLibrary = async (e) => {
@@ -104,7 +116,7 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-secondary btn-sm" onClick={load}><RefreshCw size={14} /> <span>Refresh</span></button>
+          <button className="btn btn-secondary btn-sm" onClick={refresh}><RefreshCw size={14} /> <span>Refresh</span></button>
           <button className="btn btn-ghost btn-sm" onClick={logout}><LogOut size={14} /> <span>Sign out</span></button>
         </div>
       </header>

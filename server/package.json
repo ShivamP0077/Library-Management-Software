@@ -6,6 +6,7 @@
   "scripts": {
     "test": "NODE_ENV=test node --test --test-concurrency=1 test/*.test.js",
     "start": "node src/index.js",
+    "whatsapp:worker": "node src/whatsapp-worker.js",
     "dev": "node --watch src/index.js",
     "seed": "node src/seed-cli.js",
     "seed:demo": "node src/seed-cli.js --demo",
@@ -16,7 +17,8 @@
     "backup:verify": "node src/backup.js verify",
     "export:schema": "node scripts/export-schema.js",
     "report:copied-dry-run": "node scripts/copied-data-dry-run.mjs",
-    "support:numbering": "node scripts/support-global-numbering.mjs"
+    "support:numbering": "node scripts/support-global-numbering.mjs",
+    "snapshots:backfill": "node scripts/backfill-period-snapshots.mjs"
   },
   "keywords": [],
   "author": "",

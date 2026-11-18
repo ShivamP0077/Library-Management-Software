@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Wallet } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { ArrowLeft, CreditCard, Wallet } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api } from '../../utils/api';
 import { PAYMENT_NOT_READY_MESSAGE } from '../../utils/support';
+import { DURATION_ROWS, showsTrialOnSubscription, subscriptionCta } from '../../utils/softwarePlanForm';
 import {
   cycleLabel, daysLeftUntil, formatPlanDate, historyTypeLabel, statusPillLabel,
 } from '../../utils/subscriptionLock';
@@ -51,7 +52,7 @@ export function SubscriptionPage({ onBack, onPaid, canPay = true, locked = false
       const list = plan?.plans || [];
       setPlanInfo(plan);
       setPlans(list);
-      setInterval(sum?.billingCycle === 'year' ? 'year' : 'month');
+      setInterval(sum?.billingCycle === 'year' || sum?.billingCycle === 'quarter' ? sum.billingCycle : 'month');
       setPlanId(prev => prev || list.find(p => p.planId !== sum?.planId)?.planId || list[0]?.planId || '');
     } catch (e) {
       setError(e.message || 'Could not load your subscription');
@@ -84,8 +85,8 @@ export function SubscriptionPage({ onBack, onPaid, canPay = true, locked = false
     return () => { cancel = true; };
   }, []);
 
-  const quotePlanId = upgradeOpen ? planId : summary?.planId;
-  const quoteInterval = upgradeOpen ? interval : (summary?.billingCycle === 'year' ? 'year' : 'month');
+  const quotePlanId = planId || summary?.planId;
+  const quoteInterval = interval;
   useEffect(() => {
     if (!canPay || !quotePlanId) { setQuote(null); return undefined; }
     let cancel = false;
@@ -100,7 +101,6 @@ export function SubscriptionPage({ onBack, onPaid, canPay = true, locked = false
   const left = summary ? daysLeftUntil(summary.expiry) : 0;
   const expired = summary?.status === 'expired' || summary?.locked;
   const open = summary?.status === 'active' || summary?.status === 'trial';
-  const yearlyOk = useMemo(() => plans.some(p => p.priceYearly != null), [plans]);
   const billingNotReady = Boolean(
     planInfo?.billingConfig?.configured === false
     || quote?.billingConfig?.configured === false
@@ -113,7 +113,7 @@ export function SubscriptionPage({ onBack, onPaid, canPay = true, locked = false
     setError('');
     try {
       const returnUrl = `${window.location.origin}${window.location.pathname}#/profile`;
-      const payInterval = kind === 'upgrade' ? interval : (summary?.billingCycle === 'year' ? 'year' : 'month');
+      const payInterval = kind === 'upgrade' ? interval : (summary?.billingCycle || 'month');
       const body = { interval: payInterval, useWallet, returnUrl };
       let result;
       if (kind === 'early') result = await api.subscriptionRenewEarly(body);
@@ -165,7 +165,9 @@ export function SubscriptionPage({ onBack, onPaid, canPay = true, locked = false
               <h3 style={{ margin: '4px 0 0', fontSize: 20 }}>{summary.planName || 'No plan'}</h3>
               <div className="os-price">{inr(summary.price)}<span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)' }}> / {cycleLabel(summary.billingCycle)}</span></div>
             </div>
-            <span className={pillClass(summary.status)}>{statusPillLabel(summary.status)}</span>
+            {showsTrialOnSubscription() || (summary.status !== 'trial' && summary.status !== 'trialing')
+              ? <span className={pillClass(summary.status)}>{statusPillLabel(summary.status)}</span>
+              : null}
           </div>
           <p className="os-muted">{expiryText ? `Expires ${expiryText}` : 'No expiry date'} · {left} {left === 1 ? 'day' : 'days'} left</p>
         </section>
@@ -183,26 +185,27 @@ export function SubscriptionPage({ onBack, onPaid, canPay = true, locked = false
             {open && (
               <button type="button" className="btn btn-primary" disabled={busy || billingNotReady} onClick={() => pay('early')}>Renew early</button>
             )}
-            <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => setUpgradeOpen(v => !v)}>Upgrade plan</button>
+            <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => setUpgradeOpen(true)}>Choose a plan</button>
           </div>
           {open && <p className="os-note">Renew early adds a new period after {expiryText || 'the current expiry'}.</p>}
-          {upgradeOpen && (
-            <div className="os-plan-pick">
-              {plans.length === 0 && <div className="os-note">No plans are available.</div>}
-              {plans.map(p => (
-                <label key={p.planId} className={planId === p.planId ? 'on' : ''}>
-                  <input type="radio" name="os-plan" checked={planId === p.planId} onChange={() => setPlanId(p.planId)} />
-                  <span><strong>{p.name}</strong> · {inr(p.priceMonthly)}/month{p.priceYearly != null ? ` or ${inr(p.priceYearly)}/year` : ''}</span>
-                </label>
-              ))}
-              {yearlyOk && (
-                <label className="os-check">
-                  <input type="checkbox" checked={interval === 'year'} onChange={e => setInterval(e.target.checked ? 'year' : 'month')} />
-                  Yearly billing
-                </label>
-              )}
-              <button type="button" className="btn btn-primary" disabled={busy || !planId || billingNotReady} onClick={() => pay('upgrade')}>{busy ? 'Working…' : 'Continue with this plan'}</button>
-            </div>
+          {(
+            <PlanSelector
+              plans={plans}
+              planId={planId}
+              interval={interval}
+              onPlan={setPlanId}
+              onInterval={setInterval}
+              quote={quote}
+              busy={busy}
+              billingNotReady={billingNotReady}
+              onContinue={() => {
+                const currentInterval = summary?.billingCycle || 'month';
+                const same = planId === summary?.planId && interval === currentInterval;
+                if (same && open) pay('early');
+                else if (same) pay('renew');
+                else pay('upgrade');
+              }}
+            />
           )}
           <div className="os-card" style={{ boxShadow: 'none', border: '1px solid var(--border-light)' }}>
             <div className="os-card-pad" style={{ display: 'grid', gap: 8 }}>
@@ -216,6 +219,13 @@ export function SubscriptionPage({ onBack, onPaid, canPay = true, locked = false
               {quote && (
                 <div className="os-quote">
                   <div><span>Change</span><strong style={{ textTransform: 'capitalize' }}>{quote.changeType}</strong></div>
+                  {quote.durationQuote?.available && (
+                    <>
+                      <div><span>Original</span><span>{minorInr(quote.durationQuote.originalMinor, quote.currency)}</span></div>
+                      <div><span>Discount</span><span>-{minorInr(quote.durationQuote.discountMinor, quote.currency)}</span></div>
+                    </>
+                  )}
+                  <div><span>Tax</span><span>{minorInr(quote.taxMinor, quote.currency)}</span></div>
                   <div><span>Total</span><span>{minorInr(quote.totalMinor, quote.currency)}</span></div>
                   <div><span>Wallet applied</span><span>-{minorInr(quote.walletAppliedMinor, quote.currency)}</span></div>
                   <div><span>Pay now</span><strong>{minorInr(quote.gatewayDueMinor, quote.currency)}</strong></div>
@@ -246,6 +256,54 @@ export function SubscriptionPage({ onBack, onPaid, canPay = true, locked = false
           </div>
         )}
       </section>}
+    </div>
+  );
+}
+
+function PlanSelector({ plans, planId, interval, onPlan, onInterval, quote, busy, billingNotReady, onContinue }) {
+  const [openId, setOpenId] = useState('');
+  const inrMinor = (minor) => `₹${(Number(minor || 0) / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+  return (
+    <div className="os-plan-pick">
+      <div role="group" aria-label="Billing duration" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+        {DURATION_ROWS.map(([value, label]) => (
+          <button key={value} type="button" className={interval === value ? 'btn btn-primary' : 'btn btn-secondary'} aria-pressed={interval === value} onClick={() => onInterval(value)}>{label}</button>
+        ))}
+      </div>
+      {plans.length === 0 && <div className="os-note">No plans are available.</div>}
+      {plans.map(plan => {
+        const row = (plan.intervals || []).find(item => item.interval === interval && item.available);
+        const lines = plan.highlights || [];
+        const expanded = openId === plan.planId;
+        return (
+          <div key={plan.planId} role="button" tabIndex={0} onClick={() => onPlan(plan.planId)} onKeyDown={e => { if (e.key === 'Enter') onPlan(plan.planId); }} aria-pressed={planId === plan.planId} style={{ textAlign: 'left', borderRadius: 12, padding: 12, border: planId === plan.planId ? '2px solid var(--brand-accent, #2563eb)' : '1px solid var(--border-light)', background: '#fff' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <CreditCard size={18} aria-hidden />
+              <strong>{plan.name}</strong>
+              {plan.recommended ? <span style={{ fontSize: 11, fontWeight: 700 }}>Recommended</span> : null}
+            </div>
+            {row ? (
+              <div style={{ marginTop: 6 }}>
+                <div style={{ fontSize: 22, fontWeight: 800 }}>{inrMinor(row.finalMinor)}</div>
+                {row.savingMinor > 0 && <div className="os-note">Save {inrMinor(row.savingMinor)}</div>}
+              </div>
+            ) : <div className="os-note">Not offered for this duration</div>}
+            <button
+              type="button"
+              style={{ display: 'inline-block', marginTop: 8, fontSize: 13, fontWeight: 700, background: 'none', border: 0, padding: 0, cursor: 'pointer' }}
+              onClick={(e) => { e.stopPropagation(); setOpenId(expanded ? '' : plan.planId); }}
+            >
+              {expanded ? 'Hide what is included' : 'What is included'}
+            </button>
+            {expanded && (
+              <ul style={{ margin: '8px 0 0', paddingLeft: 18 }}>
+                {lines.map(line => <li key={line}>{line}</li>)}
+              </ul>
+            )}
+          </div>
+        );
+      })}
+      <button type="button" className="btn btn-primary" disabled={busy || !planId || billingNotReady} onClick={onContinue}>{busy ? 'Working…' : subscriptionCta(quote?.changeType)}</button>
     </div>
   );
 }

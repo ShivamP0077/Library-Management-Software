@@ -8,10 +8,10 @@
 import mongoose from 'mongoose';
 import express from 'express';
 import tenantGuard, { applyBulkWriteGuard } from './tenantGuard.js';
-import { models, Library } from './models.js';
+import { models, Library, Settings } from './models.js';
 import { audit } from './audit.js';
 import { todayIn, dueReminders, ExpenseInstance, instanceStatus } from './finance.js';
-import { studentStatus } from './students.js';
+import { subscriptionLifecycle } from '../../src/utils/subscriptionLifecycle.js';
 
 export const CATEGORIES = ['summary', 'students', 'seats', 'payments', 'expenses', 'notices', 'whatsapp', 'support', 'security', 'system'];
 // Which staff module permission is needed to see a category (owner/superadmin see everything).
@@ -93,16 +93,18 @@ export async function refreshTenantAlerts(tenantId, { today = todayIn(), dailySu
 
   // Students: expiring soon / expired, and outstanding dues.
   const students = await models.students.find({ tenantId }).lean();
+  const settings = await Settings.findOne({ tenantId }).lean();
   const expKeys = new Set(), dueKeys = new Set();
   for (const s of students) {
-    const st = studentStatus(s, today);
-    if (st === 'Expiring Soon' || st === 'Expired') {
+    const life = subscriptionLifecycle(s, { today, settings });
+    const st = life.expiringSoon ? 'Expiring Soon' : life.status;
+    if (st === 'Expiring Soon' || st === 'Expired' || st === 'Grace Period') {
       const key = `student-expiry:${s._key}`; expKeys.add(key);
       const existing = await Notification.findOne({ tenantId, dedupeKey: key }).lean();
       // one alert per student per renewal period (keyed by the current expiry date)
       if (!existing || existing.status === 'resolved' || existing.body !== `Plan ends ${s.expiryDate}`) {
         await notify(tenantId, { dedupeKey: key, category: 'students', severity: st === 'Expired' ? 'important' : 'info',
-          title: st === 'Expired' ? `${s.name || 'Student'}'s plan has expired` : `${s.name || 'Student'}'s plan expires soon`, body: `Plan ends ${s.expiryDate}`, link: { tab: 'students', params: { student: s._key } } });
+          title: st === 'Expired' ? `${s.name || 'Student'}'s plan has expired` : st === 'Grace Period' ? `${s.name || 'Student'} is in the grace period` : `${s.name || 'Student'}'s plan expires soon`, body: `Plan ends ${s.expiryDate}`, link: { tab: 'students', params: { student: s._key } } });
       }
     }
     const due = Number(s.dueAmount ?? s.balanceDue ?? 0);
@@ -120,7 +122,7 @@ export async function refreshTenantAlerts(tenantId, { today = todayIn(), dailySu
     const pays = await models.payments.find({ tenantId, date: today }).lean();
     const collected = pays.reduce((a, p) => a + Math.max(0, Number(p.netTotal ?? 0)), 0);
     const pending = students.reduce((a, s) => a + Math.max(0, Number(s.dueAmount ?? s.balanceDue ?? 0)), 0);
-    const renewals = students.filter(s => studentStatus(s, today) === 'Expiring Soon').length;
+    const renewals = students.filter(s => subscriptionLifecycle(s, { today, settings }).expiringSoon).length;
     await notify(tenantId, { dedupeKey: `summary:${today}`, category: 'summary', severity: 'info', title: `Daily summary for ${today}`,
       body: `Fees collected ${rupees(collected)} (${pays.length} payments) • Pending dues ${rupees(pending)} • ${renewals} renewal(s) coming up`, link: { tab: 'reports', params: {} } });
   }

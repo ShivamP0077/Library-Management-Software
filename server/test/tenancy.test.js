@@ -51,13 +51,13 @@ test('unauthenticated requests are rejected', async () => {
 });
 
 test('client admin A creates data that is tagged with A regardless of body libraryId', async () => {
+  await call('PUT', '/api/seats', { token: tokens.a, body: [{ id: 'seat-1', name: 'A1' }, { id: 'seat-2', name: 'A2' }] });
   const r = await call('POST', '/api/students', { token: tokens.a, body: { id: 'STU-1', name: 'Alice', status: 'Active', seatNo: 'A1', libraryId: 'lib-b' } });
   assert.equal(r.status, 201);
   assert.equal(r.body.libraryId, 'lib-a');
   assert.equal(r.body.tenantId, undefined);
   const p = await call('POST', '/api/payments', { token: tokens.a, body: { receiptNo: 'REC-1', studentId: 'STU-1', netTotal: 1500 } });
   assert.equal(p.status, 201);
-  await call('PUT', '/api/seats', { token: tokens.a, body: [{ id: 'seat-1', name: 'A1' }, { id: 'seat-2', name: 'A2' }] });
   await call('POST', '/api/expenses', { token: tokens.a, body: { id: 'EXP-1', amount: 400, category: 'Rent' } });
   assert.equal((await call('PUT', '/api/documents/doc-1', { token: tokens.a, body: { data: 'data-a' } })).status, 200);
 });

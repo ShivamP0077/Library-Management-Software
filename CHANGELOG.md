@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-18 (IST)
+
+- **Wallet page and Refer & Earn share** (branch `feat/wallet-referral-page`, not deployed). My Library OS Profile → Wallet now opens its own Wallet page. Subscription still opens the Subscription page. Those two entries no longer share the mixed My Software Plan modal. The Wallet page shows the balance, preset and custom top-up amounts, a confirmation that names the library before payment, wallet history, the library's existing referral code and link, earnings, and wallet receipts (the same receipt PDF and resend as before). Copy code and copy link still work. On a phone, Share opens the device share sheet for the referral link. On a desktop, or when share is not available, Share copies the link and says so. A top-up still uses the existing wallet top-up route, Idempotency-Key and settlement. The wallet is credited only after a verified payment. Wallet ledger rows stay separate from subscription revenue. Nothing was rewritten in stored balances, invoices or ledger rows. The 1 / 3 / 12 month plan selector stays in draft PR #89. No production data was changed. Nothing was deployed.
+
 ## 2026-11-14 (IST)
 
 - **Paid Razorpay checkouts showed as unpaid** (branch `fix/razorpay-captured-activation`, not deployed). After a real Razorpay payment the owner history showed past_due and no plan, and Super Admin billing history stayed empty. Cause 1: when Razorpay said the payment was captured, the server compared the payment id with the payment-link id and marked the invoice failed even though the amount was correct. Cause 2: the Super Admin Payments page never saved the invoice list (a missing variable). Fix: the webhook now ties a captured payment back to its payment link before activating the plan, and Super Admin history shows invoices again. A dry-run script (`server/scripts/reconcile-software-invoice.mjs`) can settle the two already-captured ₹1 invoices; it was not run. Not deployed.

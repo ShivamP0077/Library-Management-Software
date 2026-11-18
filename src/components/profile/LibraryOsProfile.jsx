@@ -7,13 +7,13 @@ import {
 import pkg from '../../../package.json';
 import { useAuth } from '../../auth/AuthContext';
 import { ChangePasswordModal } from '../../auth/ChangePasswordModal';
-import { MySoftwarePlanModal } from '../../auth/MySoftwarePlanModal';
 import { useLibrary } from '../../context/LibraryContext';
 import { SupportCenter } from '../SupportCenter';
 import { applyTheme, readTheme } from '../../utils/theme';
 import { isLibraryLocked } from '../../utils/subscriptionLock';
 import { SUPPORT_EMAIL, SUPPORT_PHONE, SUPPORT_WHATSAPP, whatsappHref } from '../../utils/support';
 import { SubscriptionPage } from './SubscriptionPage';
+import { WalletPage } from './WalletPage';
 import './profile.css';
 
 function Row({ icon: Icon, tint, label, value, onClick, danger = false }) {
@@ -45,7 +45,6 @@ export function LibraryOsProfile({ screen = 'home', onScreenChange, onClose, onP
   const [dark, setDark] = useState(() => readTheme() === 'dark');
   const [langOpen, setLangOpen] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
-  const [walletOpen, setWalletOpen] = useState(false);
   const canPay = user?.role === 'client_admin' || user?.role === 'superadmin';
   const planLocked = isLibraryLocked(subscriptionAccess, user);
   const name = user?.name || 'Owner';
@@ -115,7 +114,7 @@ export function LibraryOsProfile({ screen = 'home', onScreenChange, onClose, onP
 
       <section className="os-card">
         <Row icon={CreditCard} tint="#dbeafe" label="Subscription" onClick={() => go('subscription')} />
-        <Row icon={Wallet} tint="#fef3c7" label="Wallet" onClick={() => { if (canPay) setWalletOpen(true); else go('subscription'); }} />
+        <Row icon={Wallet} tint="#fef3c7" label="Wallet" onClick={() => { if (canPay) go('wallet'); else go('subscription'); }} />
         <Row icon={KeyRound} tint="#e7e5e4" label="Change Password" onClick={() => setPwOpen(true)} />
         <Row icon={Phone} tint="#dcfce7" label="Contact Us" onClick={() => go('contact')} />
         <Row icon={Shield} tint="#ede9fe" label="Privacy Policy" onClick={() => go('privacy')} />
@@ -132,6 +131,8 @@ export function LibraryOsProfile({ screen = 'home', onScreenChange, onClose, onP
   let body = home;
   if (view === 'subscription') {
     body = <SubscriptionPage onBack={() => go('home')} onPaid={onPaid} canPay={canPay} locked={planLocked} />;
+  } else if (view === 'wallet') {
+    body = <WalletPage onBack={() => go('home')} canPay={canPay} libraryName={libraryName} />;
   } else if (view === 'contact') {
     body = (
       <Subpage title="Contact Us" onBack={() => go('home')}>
@@ -206,7 +207,6 @@ export function LibraryOsProfile({ screen = 'home', onScreenChange, onClose, onP
         </div>
       )}
       {pwOpen && <ChangePasswordModal onClose={() => setPwOpen(false)} hasPassword={!(user?.authProviders?.length && !user.authProviders.includes('password'))} />}
-      {walletOpen && <MySoftwarePlanModal onClose={() => setWalletOpen(false)} />}
     </div>,
     document.body,
   );

@@ -41,7 +41,7 @@ export function LoginScreen({ onContinueOffline }) {
   const [signup, setSignup] = useState(null);
 
   // 'login' | 'forgot' | 'invite'
-  const [mode, setMode] = useState(() => (readInviteToken() ? 'invite' : 'login'));
+  const [mode, setMode] = useState(() => (readInviteToken() ? 'invite' : ((typeof window !== 'undefined' && /[?&]referral=/.test(window.location.hash || '')) ? 'signup' : 'login')));
   const [inviteToken] = useState(readInviteToken);
 
   // Forgot password (2-step) state

@@ -139,7 +139,10 @@ export async function assignStudent(tenantId, student, { actor, force = false, r
   return withSeatLock(tenantId, seatKey, async () => {
     if (!force) {
       const seat = await findSeat(tenantId, student.branchId, student.seatNo);
-      if (seat && (seat.isMaintenance || seat.isUnavailable || seat.status === 'maintenance')) {
+      if (!seat) {
+        throw new SeatConflictError(`Seat ${student.seatNo} does not exist and cannot be allocated.`, { seatNo: student.seatNo, studentId: sid });
+      }
+      if (seat.isMaintenance || seat.isUnavailable || seat.status === 'maintenance') {
         throw new SeatConflictError(`Seat ${student.seatNo} is under maintenance and cannot be allocated.`, { seatNo: student.seatNo, studentId: sid });
       }
       const others = await SeatAllocation.find({ tenantId, seatKey, status: 'active', studentId: { $ne: sid } }).lean();

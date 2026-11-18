@@ -20,6 +20,7 @@ import {
 } from '../utils/staffPermissions';
 import { getCanonicalSeatTypes } from '../utils/seatTypeUtils';
 import { cycleConfig, effectiveCycleConfig, normalizePlanBillingCycle, CYCLE_MODE_LABELS } from '../utils/billingCycle';
+import { DEFAULT_EXPIRED_PERIOD_DAYS } from '../utils/subscriptionLifecycle.js';
 import { PlanDurationFields } from './PlanDurationFields';
 import toast from 'react-hot-toast';
 import { EnquiryQrCard } from './enquiry/EnquiryQrCard';
@@ -119,6 +120,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
     receiptFooter: settings.receiptFooter || '',
     billingCycleMode: settings.billingCycleMode || 'ANNIVERSARY',
     gracePeriodDays: settings.gracePeriodDays ?? 3,
+    expiredPeriodDays: settings.expiredPeriodDays ?? DEFAULT_EXPIRED_PERIOD_DAYS,
     calendarBillingDay: settings.calendarBillingDay ?? 1,
     cycleDays: settings.cycleDays ?? 30,
     cycleAnchorDate: settings.cycleAnchorDate || '',
@@ -140,6 +142,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
       receiptFooter: settings.receiptFooter || '',
       billingCycleMode: settings.billingCycleMode || 'ANNIVERSARY',
       gracePeriodDays: settings.gracePeriodDays ?? 3,
+    expiredPeriodDays: settings.expiredPeriodDays ?? DEFAULT_EXPIRED_PERIOD_DAYS,
     calendarBillingDay: settings.calendarBillingDay ?? 1,
       cycleDays: settings.cycleDays ?? 30,
       cycleAnchorDate: settings.cycleAnchorDate || '',
@@ -257,6 +260,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
       receiptFooter: billingFormData.receiptFooter,
       billingCycleMode: billingFormData.billingCycleMode,
       gracePeriodDays: Number(billingFormData.gracePeriodDays) || 3,
+      expiredPeriodDays: Number.isFinite(Number(billingFormData.expiredPeriodDays)) ? Number(billingFormData.expiredPeriodDays) : DEFAULT_EXPIRED_PERIOD_DAYS,
       calendarBillingDay: Number(billingFormData.calendarBillingDay) || 1,
       cycleDays: Math.max(1, Number(billingFormData.cycleDays) || 30),
       cycleAnchorDate: billingFormData.cycleAnchorDate || '',
@@ -1555,7 +1559,19 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                     onChange={e => setBillingFormData(p => ({ ...p, gracePeriodDays: Number(e.target.value) || 0 }))} 
                   />
                   <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
-                    Days after due date before subscription is marked Expired.
+                    Days after the plan end date while the desk stays held. Changing this does not move deadlines for students already admitted or renewed.
+                  </span>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label" style={{ fontSize: '12px', fontWeight: 600 }}>Expired period before auto-cancel (Days)</label>
+                  <NumericInput
+                    className="form-input"
+                    value={billingFormData.expiredPeriodDays}
+                    onChange={e => setBillingFormData(p => ({ ...p, expiredPeriodDays: Number(e.target.value) || 0 }))}
+                  />
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
+                    Days the student stays Expired after grace, with the desk already free, before automatic cancellation. New admissions and renewals use the number you save here. Students already on a plan keep the days saved when their period started.
                   </span>
                 </div>
 

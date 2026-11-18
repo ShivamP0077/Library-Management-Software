@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { MessageCircle, QrCode, LogOut, RefreshCw, CheckCircle2, Smartphone } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { friendlyWhatsappError, isWakingError } from '../utils/whatsappErrors';
+import { WHATSAPP_REFRESH, whatsappRefreshStateLabel } from '../utils/refreshCopy';
 
 const AUTO_RETRY_MAX = 3;
 const AUTO_RETRY_MS = 15000;
@@ -24,9 +25,9 @@ const StatusBadge = ({ state }) => {
       </span>
     );
   }
-  return (
+    return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#f1f5f9', color: 'var(--text-secondary)', border: '1px solid var(--border-light)', borderRadius: '999px', padding: '4px 12px', fontSize: '12px', fontWeight: 600 }}>
-      Not connected
+      Disconnected
     </span>
   );
 };
@@ -180,12 +181,39 @@ export function WhatsAppLinkPanel({
     return () => clearInterval(interval);
   }, [status?.state, qrExpired, requestQr]);
 
+  const handleRefreshStatus = async () => {
+    const toastId = toast.loading(WHATSAPP_REFRESH.checking);
+    setBusy('status');
+    try {
+      const data = await fetchStatus();
+      setStatus(prev => ({ ...(prev || {}), ...data }));
+      onStatusRef.current?.(data);
+      if (data?.state === 'connected') {
+        setQr(null);
+        setPairingCode(null);
+        setQrDeadline(null);
+        setQrExpired(false);
+      }
+      toast.success(`${whatsappRefreshStateLabel(data?.state)}. ${WHATSAPP_REFRESH.updated}`, { id: toastId });
+    } catch (err) {
+      toast.error(WHATSAPP_REFRESH.failed, { id: toastId });
+      setError(err);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const handleDisconnect = async () => {
     if (!window.confirm(disconnectConfirm)) return;
     setBusy('logout');
     try {
-      await disconnect();
-      setStatus(prev => ({ ...(prev || {}), state: 'disconnected', number: null, profileName: null }));
+      const out = await disconnect();
+      let next = { state: out?.state || 'disconnected', number: null, profileName: null };
+      try {
+        const data = await fetchStatus({ fresh: true });
+        if (data && data.state !== 'connected') next = { ...data, number: null, profileName: null };
+      } catch { /* logout already succeeded; keep the verified disconnect result */ }
+      setStatus(prev => ({ ...(prev || {}), ...next, number: null, profileName: null }));
       setQr(null);
       setPairingCode(null);
       setQrDeadline(null);
@@ -338,7 +366,20 @@ export function WhatsAppLinkPanel({
             <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0 0' }}>{subtitle}</p>
           </div>
         </div>
-        {!loading && !error && <StatusBadge state={state} />}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          {!loading && !waking && (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={busy === 'status'}
+              onClick={handleRefreshStatus}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              <RefreshCw size={14} /> {busy === 'status' ? WHATSAPP_REFRESH.checking : WHATSAPP_REFRESH.button}
+            </button>
+          )}
+          {!loading && !error && <StatusBadge state={state} />}
+        </div>
       </div>
       {renderBody()}
     </div>

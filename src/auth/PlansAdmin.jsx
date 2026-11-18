@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import { api } from '../utils/api';
 import { SaModal } from './SaModal';
 
-const EMPTY = { name: '', description: '', priceMonthly: '', priceYearly: '', studentLimit: '', staffLimit: '', branchLimit: '', trialDays: '', features: '', public: true, active: true };
+const EMPTY = { name: '', description: '', priceMonthly: '', priceYearly: '', studentLimit: '', staffLimit: '', branchLimit: '', deskLimit: '', trialDays: '', features: '', public: true, active: true };
 const fmtLimit = (n) => (n ? n.toLocaleString() : 'Unlimited');
 
 export function PlansAdmin({ libraries = [], onChanged }) {
@@ -17,7 +17,7 @@ export function PlansAdmin({ libraries = [], onChanged }) {
 
   const startEdit = (p) => {
     setEditing(p ? p.planId : null);
-    setForm(p ? { ...EMPTY, ...p, priceYearly: p.priceYearly ?? '', studentLimit: p.studentLimit ?? '', staffLimit: p.staffLimit ?? '', branchLimit: p.branchLimit ?? '', trialDays: p.trialDays || '', features: (p.features || []).join('\n') } : EMPTY);
+    setForm(p ? { ...EMPTY, ...p, priceYearly: p.priceYearly ?? '', studentLimit: p.studentLimit ?? '', staffLimit: p.staffLimit ?? '', branchLimit: p.branchLimit ?? '', deskLimit: p.deskLimit ?? '', trialDays: p.trialDays || '', features: (p.features || []).join('\n') } : EMPTY);
     setOpen(true);
   };
   const save = async (e) => {
@@ -55,7 +55,7 @@ export function PlansAdmin({ libraries = [], onChanged }) {
                 <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{!p.active ? 'Archived' : p.public ? 'On signup' : 'Hidden'}</span>
               </div>
               <div style={{ fontSize: 18, fontWeight: 700, margin: '6px 0' }}>₹{Number(p.priceMonthly).toLocaleString()}<span style={{ fontSize: 12, fontWeight: 400 }}>/month</span>{p.priceYearly ? <span style={{ fontSize: 12, fontWeight: 400 }}> · ₹{p.priceYearly.toLocaleString()}/year</span> : null}</div>
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Students: {fmtLimit(p.studentLimit)} · Staff: {fmtLimit(p.staffLimit)} · Branches: {fmtLimit(p.branchLimit)}{p.trialDays ? ` · ${p.trialDays}-day trial` : ''}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Students: {fmtLimit(p.studentLimit)} · Desks: {fmtLimit(p.deskLimit)} · Staff: {fmtLimit(p.staffLimit)} · Branches: {fmtLimit(p.branchLimit)}{p.trialDays ? ` · ${p.trialDays}-day trial` : ''}</div>
               {p.features?.length > 0 && <ul style={{ fontSize: 12, margin: '6px 0 0', paddingLeft: 18 }}>{p.features.map(f => <li key={f}>{f}</li>)}</ul>}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
                 <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{p.libraries} {p.libraries === 1 ? 'library' : 'libraries'}</span>
@@ -75,7 +75,8 @@ export function PlansAdmin({ libraries = [], onChanged }) {
             {field('name', 'Name *', 'text', { required: true })}
             {field('priceMonthly', 'Price per month (₹)')}
             {field('priceYearly', 'Price per year (₹, optional)')}
-            {field('studentLimit', 'Student limit (blank = unlimited)')}
+            {field('studentLimit', 'Maximum active students (blank = unlimited)')}
+            {field('deskLimit', 'Maximum physical desks (blank = unlimited)')}
             {field('staffLimit', 'Staff limit (blank = unlimited)')}
             {field('branchLimit', 'Branch limit (blank = unlimited)')}
             {field('trialDays', 'Free trial days')}

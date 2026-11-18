@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { X, Wallet, Download, Copy, Gift } from 'lucide-react';
+import { X, Wallet, Download } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api } from '../utils/api';
 import { PAYMENT_NOT_READY_MESSAGE } from '../utils/support';
@@ -12,8 +12,6 @@ const invoiceMoney = (value, currency) => value == null || !currency ? '—' : f
 export function MySoftwarePlanModal({ onClose }) {
   const [data, setData] = useState(null);
   const [invoices, setInvoices] = useState([]);
-  const [referral, setReferral] = useState(null);
-  const [referralError, setReferralError] = useState('');
   const [deliveringId, setDeliveringId] = useState(null);
   const [planId, setPlanId] = useState('');
   const [interval, setInterval] = useState('month');
@@ -23,18 +21,13 @@ export function MySoftwarePlanModal({ onClose }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [payBlocked, setPayBlocked] = useState(false);
-  const [topup, setTopup] = useState('1000');
   const [walletSpend, setWalletSpend] = useState(null);
-  const [walletHistory, setWalletHistory] = useState([]);
 
   const load = async () => {
     try {
-      const [r, inv, hist, refs] = await Promise.all([api.softwarePlan(), api.softwarePlanInvoices(), api.walletHistory(20).catch(() => []), api.referrals().then(value => ({ value })).catch(e => ({ error: e.message || 'Could not load referrals' }))]);
-      setReferral(refs.value || null);
-      setReferralError(refs.error || '');
+      const [r, inv] = await Promise.all([api.softwarePlan(), api.softwarePlanInvoices()]);
       setData(r);
-      setInvoices(inv || []);
-      setWalletHistory(hist || []);
+      setInvoices((inv || []).filter(row => row.kind !== 'topup'));
       const preferred = r.planId || r.plans?.[0]?.planId || '';
       setPlanId(prev => prev || preferred);
       setInterval(prev => prev || r.subscription?.interval || 'month');
@@ -75,25 +68,6 @@ export function MySoftwarePlanModal({ onClose }) {
     } finally { setBusy(false); }
   };
 
-  const startTopup = async () => {
-    setBusy(true); setError('');
-    try {
-      const amount = Number(topup);
-      if (!(amount > 0)) throw new Error('Enter a valid top-up amount');
-      const r = await api.walletTopup({ amount });
-      if (r.checkout?.url) { window.location.href = r.checkout.url; return; }
-      toast.success('Top-up started');
-    } catch (e) {
-      if (e.code === 'billing_not_configured') setPayBlocked(true);
-      setError(e.code === 'billing_not_configured' ? PAYMENT_NOT_READY_MESSAGE : e.message);
-    } finally { setBusy(false); }
-  };
-
-  const copyCode = async () => {
-    if (!referral?.code) return;
-    try { await navigator.clipboard.writeText(referral?.code || ''); toast.success('Referral code copied'); }
-    catch { toast.error('Could not copy'); }
-  };
   const deliverReceipt = async (invoiceId) => {
     if (!window.confirm('Send this receipt again using the verified delivery details for this library?')) return;
     setDeliveringId(invoiceId); setError('');
@@ -104,7 +78,7 @@ export function MySoftwarePlanModal({ onClose }) {
       if (result.delivery?.status === 'sent') toast.success(result.already ? 'Receipt was already sent' : 'Receipt sent');
       else if (result.delivery?.status === 'failed') toast.error(result.delivery.reason || 'Receipt delivery failed');
       else toast(`Receipt delivery: ${result.delivery?.status || 'not confirmed'}${result.delivery?.reason ? ` — ${result.delivery.reason}` : ''}`);
-      setInvoices(await api.softwarePlanInvoices());
+      setInvoices((await api.softwarePlanInvoices()).filter(row => row.kind !== 'topup'));
     } catch (e) { setError(e.message || 'Could not deliver receipt'); }
     finally { setDeliveringId(null); }
   };
@@ -124,7 +98,7 @@ export function MySoftwarePlanModal({ onClose }) {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <h3 style={{ margin: 0 }}>My Software Plan</h3>
-            <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--text-secondary)' }}>Subscription, wallet, offers and referrals. Separate from Billing & General.</p>
+            <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--text-secondary)' }}>Plan changes and plan invoices. Wallet and referrals are on the Wallet page.</p>
           </div>
           <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} aria-label="Close"><X size={20} /></button>
         </div>
@@ -195,55 +169,12 @@ export function MySoftwarePlanModal({ onClose }) {
             </section>
 
             <section>
-              <h4 style={{ margin: '0 0 8px' }}>Wallet top-up</h4>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                <input className="input-field" style={{ maxWidth: 160 }} inputMode="decimal" value={topup} onChange={e => setTopup(e.target.value)} />
-                <button type="button" className="btn btn-secondary btn-sm" disabled={busy || !data.providersConfigured || data.billingConfig?.configured === false} onClick={startTopup}>Top up</button>
-                <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Top-ups are separate from plan purchases. Bonus credits expire per the Super Admin policy; cash does not expire. No withdrawals or refunds.</span>
-                {!data.providersConfigured && <span style={{ fontSize: 12, color: '#b45309' }}>Top-up needs an external payment provider.</span>}
-              </div>
-            </section>
-
-            <section>
-              <h4 style={{ margin: '0 0 8px' }}>Wallet history</h4>
-              {walletHistory.length === 0 ? <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>No wallet activity yet.</div> : (
-                <div style={{ display: 'grid', gap: 4 }}>
-                  {walletHistory.slice(0, 10).map(h => (
-                    <div key={h.entryId} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12, borderBottom: '1px solid var(--border-light, #e5e7eb)', padding: '4px 0' }}>
-                      <span>{new Date(h.createdAt).toLocaleDateString()} · {h.reason || h.kind} · {h.bucket || ''}</span>
-                      <strong>{h.kind === 'credit' ? '+' : h.kind === 'debit' ? '-' : ''}{fmt(h.amountMinor, w?.currency)}</strong>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            <section>
-              <h4 style={{ margin: '0 0 8px' }}><Gift size={15} /> Refer & Earn</h4>
-              {referralError ? <div role="alert" style={{ fontSize: 13, color: '#b45309' }}>{referralError}</div> : referral ? (
-                <div style={{ fontSize: 13, display: 'grid', gap: 8 }}>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <span>Your shareable code:</span>
-                    {referral.code ? <><code style={{ background: 'var(--bg-secondary, #f1f5f9)', padding: '4px 8px', borderRadius: 6 }}>{referral.code}</code><button type="button" className="btn btn-ghost btn-sm" onClick={copyCode}><Copy size={14} /> Copy</button></> : <span>Not available</span>}
-                  </div>
-                  <div>Earned: <strong>{invoiceMoney(referral.earnedMinor, data.billingConfig?.currency)}</strong> · Referrals: {referral.referrals?.length ?? '—'}</div>
-                  {referral.referrals?.map(ref => <div key={ref.referralId} style={{ borderTop: '1px solid var(--border-light, #e5e7eb)', paddingTop: 6, overflowWrap: 'anywhere' }}>
-                    {dateIST(ref.createdAt)} · {ref.status} · Reward {invoiceMoney(ref.rewardMinor, data.billingConfig?.currency)}
-                    {ref.qualifiedAt && <div>Qualified: {dateIST(ref.qualifiedAt)}</div>}
-                    {ref.reason && <div>{ref.reason}</div>}
-                  </div>)}
-                  {referral.referrals?.length === 0 && <div style={{ color: 'var(--text-secondary)' }}>No referrals yet.</div>}
-                </div>
-              ) : <div style={{ fontSize: 13 }}>Loading referrals…</div>}
-            </section>
-
-            <section>
               <h4 style={{ margin: '0 0 8px' }}>Invoices & receipts</h4>
               {invoices.length === 0 ? <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>No invoices yet.</div> : (
                 <div style={{ display: 'grid', gap: 6 }}>
                   {invoices.map(inv => (
                     <article key={inv.invoiceId} style={{ display: 'grid', gap: 6, fontSize: 13, borderBottom: '1px solid var(--border-light, #e5e7eb)', padding: '10px 0', overflowWrap: 'anywhere', minWidth: 0 }}>
-                      <div>{dateIST(inv.createdAt)} · {inv.kind === 'topup' ? 'Wallet top-up' : inv.planId || 'Plan'} · <strong>{inv.status}</strong></div>
+                      <div>{dateIST(inv.createdAt)} · {inv.planId || 'Plan'} · <strong>{inv.status}</strong></div>
                       <div>Invoice: {inv.invoiceId} · Receipt: {inv.receiptNo || '—'}</div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 6 }}>
                         {[["Base", inv.baseMinor], ["Discount", inv.discountMinor], ["Taxable value", inv.taxableMinor], [inv.taxIncluded ? 'Tax (included)' : 'Tax (added)', inv.taxMinor], ["Total", inv.totalMinor], ["Wallet", inv.walletMinor], ["Gateway", inv.gatewayMinor]].map(([label, amount]) => <div key={label}>{label}: <strong>{invoiceMoney(amount, inv.currency)}</strong></div>)}

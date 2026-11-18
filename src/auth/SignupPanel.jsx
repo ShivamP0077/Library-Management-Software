@@ -38,6 +38,14 @@ export function SignupPanel({ plans = [], googleSignup = false, mobileSignupAvai
   }, [mobileSignupAvailable, channel]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const match = (window.location.hash || '').match(/[?&]referral=([^&]+)/);
+    if (!match) return undefined;
+    try { setReferralCode(decodeURIComponent(match[1]).toUpperCase()); } catch { /* keep the field empty */ }
+    return undefined;
+  }, []);
+
+  useEffect(() => {
     if (step === 2 && !viaGoogle) setResendWait(30);
   }, [step, viaGoogle]);
 

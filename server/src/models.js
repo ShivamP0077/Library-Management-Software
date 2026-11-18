@@ -62,6 +62,8 @@ const userSchema = new mongoose.Schema({
   status: { type: String, enum: ['Active', 'Disabled'], default: 'Active' },
   lastLoginAt: Date,
   passwordChangedAt: Date,
+  // Session generation. Missing on older accounts means 0. No backfill.
+  tokenVersion: { type: Number },
   googleSub: { type: String, index: true, sparse: true },
   authProviders: { type: [String], default: [] }, // e.g. ['password', 'google']
 }, { timestamps: true });

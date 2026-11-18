@@ -80,10 +80,10 @@ export const api = {
   me: () => apiRequest('/auth/me'),
   logout: () => setToken(null),
   // WhatsApp (finite client timeouts; the server also wakes/retries within a budget)
-  whatsappStatus: (timeoutMs = 15000) => apiRequest('/whatsapp/status', { timeoutMs }),
+  whatsappStatus: (timeoutMs = 15000, extra = {}) => apiRequest(`/whatsapp/status${extra?.fresh ? '?fresh=true' : ''}`, { timeoutMs }),
   whatsappConnect: (timeoutMs = 45000) => apiRequest('/whatsapp/connect', { method: 'POST', timeoutMs }),
   whatsappLogout: (timeoutMs = 20000) => apiRequest('/whatsapp/logout', { method: 'POST', timeoutMs }),
-  systemWhatsappStatus: (timeoutMs = 15000) => apiRequest('/admin/system-whatsapp/status', { timeoutMs }),
+  systemWhatsappStatus: (timeoutMs = 15000, extra = {}) => apiRequest(`/admin/system-whatsapp/status${extra?.fresh ? '?fresh=true' : ''}`, { timeoutMs }),
   systemWhatsappConnect: (timeoutMs = 45000) => apiRequest('/admin/system-whatsapp/connect', { method: 'POST', timeoutMs }),
   systemWhatsappDisconnect: (timeoutMs = 20000) => apiRequest('/admin/system-whatsapp/disconnect', { method: 'POST', timeoutMs }),
   whatsappSaveSettings: (body) => apiRequest('/whatsapp/settings', { method: 'PUT', body }),
@@ -105,6 +105,7 @@ export const api = {
   resetPassword: (email, otp, newPassword) => apiRequest('/auth/reset-password', { method: 'POST', body: { email, otp, newPassword } }),
   forgotPasswordMobile: (mobile) => apiRequest('/auth/forgot-password-mobile', { method: 'POST', body: { mobile } }),
   resetPasswordMobile: (mobile, otp, newPassword) => apiRequest('/auth/reset-password-mobile', { method: 'POST', body: { mobile, otp, newPassword } }),
+  resetPasswordGoogle: (token, newPassword) => apiRequest('/auth/reset-password-google', { method: 'POST', body: { token, newPassword } }),
   inviteInfo: (token) => apiRequest(`/auth/invite/${encodeURIComponent(token)}`),
   signupConfig: () => apiRequest('/auth/signup/config'),
   signupStart: (email) => apiRequest('/auth/signup/start', { method: 'POST', body: { email } }),
@@ -237,6 +238,9 @@ export const api = {
   subscriptionWithdrawDeletion: () => apiRequest('/subscription/deletion-request', { method: 'DELETE' }),
   adminDeleteLibrary: (libraryId, confirmName) => apiRequest(`/admin/libraries/${encodeURIComponent(libraryId)}`, { method: 'DELETE', body: { confirmName } }),
   adminAddLibraryUser: (libraryId, body) => apiRequest(`/admin/libraries/${encodeURIComponent(libraryId)}/users`, { method: 'POST', body }),
+  adminLibraryUsers: (libraryId) => apiRequest(`/admin/libraries/${encodeURIComponent(libraryId)}/users`),
+  adminAssistedResetStart: (body) => apiRequest('/admin/assisted-password-reset/start', { method: 'POST', body }),
+  adminAssistedResetComplete: (body) => apiRequest('/admin/assisted-password-reset/complete', { method: 'POST', body }),
   adminUpdateUser: (id, body) => apiRequest(`/admin/users/${encodeURIComponent(id)}`, { method: 'PATCH', body }),
   saveDocument: (key, data, meta = {}) => apiRequest(`/documents/${encodeURIComponent(key)}`, { method: 'PUT', body: { data, ...meta }, timeoutMs: 30000 }),
   getDocument: (key) => apiRequest(`/documents/${encodeURIComponent(key)}`, { timeoutMs: 30000 }).then(r => r?.data ?? null),
@@ -247,6 +251,7 @@ export const api = {
   enquiries: (status = 'waiting') => apiRequest(`/enquiries?status=${encodeURIComponent(status)}`),
   enquiryLink: () => apiRequest('/enquiries/link'),
   regenerateEnquiryLink: () => apiRequest('/enquiries/link/regenerate', { method: 'POST', body: {} }),
+  saveEnquiryPoster: (poster) => apiRequest('/enquiries/poster', { method: 'PUT', body: poster }),
   updateEnquiry: (id, status) => apiRequest(`/enquiries/${encodeURIComponent(id)}`, { method: 'PATCH', body: { status } }),
 };
 

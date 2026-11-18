@@ -12,7 +12,7 @@ const pay = (receiptNo, amount, extra = {}) => ({ receiptNo, studentId: 'S1', am
 
 async function staffToken(staffId, email) {
   const inv = await call('POST', '/api/invites', { token: A(), body: { email, name: staffId, staffId } });
-  const t = inv.body.link.split('#invite=')[1];
+  const t = decodeURIComponent(new URL(inv.body.link).pathname.split('/invite/')[1]);
   return (await call('POST', '/api/auth/invite/accept', { body: { token: t, password: 'StaffPass-123' } })).body.token;
 }
 

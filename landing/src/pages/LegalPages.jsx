@@ -1,6 +1,7 @@
 import Nav from '../components/Nav.jsx';
 import Footer from '../components/Footer.jsx';
 import { DEMO_EMAIL } from '../config.js';
+import { ContactExtras } from './ContactExtras.jsx';
 
 const EFFECTIVE = '14 November 2026';
 
@@ -215,6 +216,7 @@ export function ContactPage() {
       <Section title="Address">
         <p>Bangalore, Karnataka, India.</p>
       </Section>
+      <ContactExtras />
       <Section title="What we sell">
         <DigitalNote />
       </Section>

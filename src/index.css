@@ -428,17 +428,35 @@ body {
   z-index: 10;
 }
 
-/* Seat Status Colors */
-.seat-available { background: #f0fdf4; border-color: #bbf7d0; color: #16a34a; }
+/* Seat Status Colors — solid fills; seat numbers stay white */
+.seat-3d .seat-number { color: #ffffff; font-weight: 700; }
+.seat-available { background: #16a34a; border-color: #15803d; color: #ffffff; }
 .seat-disabled { background: #e5e7eb; border-color: #d1d5db; color: #9ca3af; cursor: not-allowed; }
-.seat-occupied-male { background: #eff6ff; border-color: #93c5fd; color: #1e3a8a; }
-.seat-occupied-female { background: #fdf2f8; border-color: #f9a8d4; color: #831843; }
+.seat-occupied-male { background: #2563eb; border-color: #1d4ed8; color: #ffffff; }
+.seat-occupied-female { background: #db2777; border-color: #be185d; color: #ffffff; }
 .seat-expiring { background: #fffbeb; border-color: #fcd34d; color: #92400e; }
 .seat-expired { background: #fef2f2; border-color: #fca5a5; color: #991b1b; }
-.seat-maintenance { background: #fef08a; border-color: #fde047; color: #854d0e; }
-.seat-unavailable { background: #f1f5f9; border-color: #cbd5e1; color: #475569; opacity: 0.5; }
+.seat-maintenance { background: #d97706; border-color: #b45309; color: #ffffff; }
+.seat-unavailable { background: #64748b; border-color: #475569; color: #ffffff; opacity: 1; }
+.seat-paid { background: #16a34a; border-color: #15803d; color: #ffffff; }
+.seat-unpaid { background: #dc2626; border-color: #b91c1c; color: #ffffff; }
+.seat-mixed { background: #eab308; border-color: #ca8a04; color: #ffffff; }
+.seat-unassigned { background: #9ca3af; border-color: #6b7280; color: #ffffff; }
 .seat-selected { box-shadow: 0 0 0 3px var(--brand-primary); transform: scale(1.05); z-index: 20; border-color: var(--brand-primary); }
 .seat-selected-outline { outline: 3px solid #16a34a !important; outline-offset: 2px !important; transform: scale(1.04); z-index: 20; }
+
+.seat-view-switcher { display: flex; gap: 4px; background: #fff; padding: 4px; border-radius: 8px; border: 1px solid var(--border-light); }
+.seat-view-switcher button[aria-pressed="true"] { background: var(--brand-primary); color: #fff; }
+.seat-view-switcher button { border: none; background: transparent; padding: 6px 14px; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; color: var(--text-secondary); }
+.seat-legend { display: flex; gap: 16px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+.seat-legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; }
+.seat-photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 14px; width: 100%; }
+.seat-photo-tile { display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 10px; border: 1px solid var(--border-light); border-radius: 12px; background: #fff; cursor: pointer; text-align: left; }
+.seat-photo-img { width: 100%; height: 148px; object-fit: cover; border-radius: 8px; background: #f1f5f9; }
+.seat-photo-empty { width: 100%; height: 148px; border-radius: 8px; background: #f1f5f9; color: #475569; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; }
+.seat-photo-name { font-size: 14px; font-weight: 700; color: var(--text-primary); }
+.seat-photo-desk { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+.seat-photo-preview-img { width: 100%; max-height: 320px; object-fit: contain; border-radius: 8px; background: #f8fafc; }
 
 /* Receipt slip: on-screen preview and the printed half-page share one layout. */
 .receipt-modal { max-width: 440px; }

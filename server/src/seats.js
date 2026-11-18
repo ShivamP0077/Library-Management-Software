@@ -13,7 +13,9 @@ import mongoose from 'mongoose';
 import express from 'express';
 import crypto from 'crypto';
 import tenantGuard, { applyBulkWriteGuard } from './tenantGuard.js';
-import { models } from './models.js';
+import { models, Settings } from './models.js';
+import { todayIn } from './finance.js';
+import { subscriptionLifecycle } from '../../src/utils/subscriptionLifecycle.js';
 
 const allocSchema = new mongoose.Schema({
   tenantId: { type: String, required: true, index: true },
@@ -69,10 +71,13 @@ export function shiftsOverlap(a, b) {
 }
 
 /* ------------------------------------------------------------------ helpers */
-export const ACTIVE_STATUSES = ['Active', 'Expiring Soon'];
+/** @deprecated Occupy uses subscriptionLifecycle (Active and Grace Period). Expiring Soon is a display badge only. */
+export const ACTIVE_STATUSES = ['Active', 'Grace Period'];
 export const isPhysicalSeat = (seatNo) => { const k = String(seatNo ?? '').trim(); return Boolean(k) && k !== 'Non-Fixed Seat' && k !== 'None'; };
 export const seatKeyOf = (branchId, seatNo) => `${branchId || ''}|${String(seatNo ?? '').trim()}`;
-export const occupiesSeat = (st) => st && ACTIVE_STATUSES.includes(st.status) && isPhysicalSeat(st.seatNo);
+/** Desk is held only while the lifecycle status is Active or Grace Period. */
+export const occupiesSeat = (st, { settings = null, today = todayIn() } = {}) =>
+  Boolean(st) && isPhysicalSeat(st.seatNo) && subscriptionLifecycle(st, { settings, today }).holdsDesk;
 
 export async function resolveShift(tenantId, student) {
   const shifts = await models.shifts.find({ tenantId }).lean();
@@ -92,8 +97,11 @@ async function findSeat(tenantId, branchId, seatNo) {
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-/** Acquires the per-seat lease (unique index), retrying briefly. */
-async function withSeatLock(tenantId, seatKey, fn) {
+/**
+ * Per-key lease (unique index), retrying briefly.
+ * Desk and student caps use a library-wide key so two creates cannot both pass the check.
+ */
+export async function withResourceLock(tenantId, seatKey, fn) {
   const token = crypto.randomBytes(8).toString('hex');
   let acquired = false;
   for (let i = 0; i < 40 && !acquired; i++) {
@@ -126,20 +134,24 @@ const sameShift = (a, b) => (a?.id || '') === (b?.id || '') && norm(a?.name) ===
  * must release-then-insert, so we do it inside the target seat lease and
  * restore the old allocation if the insert fails.
  */
-export async function assignStudent(tenantId, student, { actor, force = false, reason = 'relocated' } = {}) {
+export async function assignStudent(tenantId, student, { actor, force = false, reason = 'relocated', settings = null, today = todayIn() } = {}) {
   const sid = String(student.id);
+  const billing = settings || await Settings.findOne({ tenantId }).lean() || {};
   const current = await SeatAllocation.findOne({ tenantId, studentId: sid, status: 'active' }).lean();
-  if (!occupiesSeat(student)) {
-    if (current) await releaseAllocation(tenantId, current._id, student.status === 'Archived' || !ACTIVE_STATUSES.includes(student.status) ? 'student inactive' : 'seat removed');
+  if (!occupiesSeat(student, { settings: billing, today })) {
+    if (current) await releaseAllocation(tenantId, current._id, 'student inactive');
     return null;
   }
   const shift = await resolveShift(tenantId, student);
   const seatKey = seatKeyOf(student.branchId, student.seatNo);
   if (current && current.seatKey === seatKey && sameShift(current.shift, shift || {})) return current;
-  return withSeatLock(tenantId, seatKey, async () => {
+  return withResourceLock(tenantId, seatKey, async () => {
     if (!force) {
       const seat = await findSeat(tenantId, student.branchId, student.seatNo);
-      if (seat && (seat.isMaintenance || seat.isUnavailable || seat.status === 'maintenance')) {
+      if (!seat) {
+        throw new SeatConflictError(`Seat ${student.seatNo} does not exist and cannot be allocated.`, { seatNo: student.seatNo, studentId: sid });
+      }
+      if (seat.isMaintenance || seat.isUnavailable || seat.status === 'maintenance') {
         throw new SeatConflictError(`Seat ${student.seatNo} is under maintenance and cannot be allocated.`, { seatNo: student.seatNo, studentId: sid });
       }
       const others = await SeatAllocation.find({ tenantId, seatKey, status: 'active', studentId: { $ne: sid } }).lean();
@@ -163,7 +175,7 @@ export async function assignStudent(tenantId, student, { actor, force = false, r
  * backfilled without validation so existing data never blocks saving.
  * On any conflict every change made by this call is rolled back.
  */
-export async function reconcileStudents(tenantId, students, { actor, previous = new Map() } = {}) {
+export async function reconcileStudents(tenantId, students, { actor, previous = new Map(), settings = null, today = todayIn() } = {}) {
   const undo = [];
   const restore = async () => {
     for (const { before, after } of undo.reverse()) {
@@ -171,9 +183,12 @@ export async function reconcileStudents(tenantId, students, { actor, previous = 
       if (before) await SeatAllocation.updateOne({ tenantId, _id: before._id }, { $set: { status: 'active' }, $unset: { releasedAt: 1, releaseReason: 1 } });
     }
   };
+  const billing = settings || await Settings.findOne({ tenantId }).lean() || {};
   const rows = students.filter(st => st && st.id != null).map(st => {
     const prev = previous.get(String(st.id));
-    const unchanged = Boolean(prev) && prev.seatNo === st.seatNo && prev.branchId === st.branchId && (prev.shiftId || '') === (st.shiftId || '') && (prev.shift || '') === (st.shift || '') && prev.status === st.status;
+    const sameSeat = Boolean(prev) && prev.seatNo === st.seatNo && prev.branchId === st.branchId && (prev.shiftId || '') === (st.shiftId || '') && (prev.shift || '') === (st.shift || '');
+    const stillHolding = sameSeat && occupiesSeat(prev, { settings: billing, today }) && occupiesSeat(st, { settings: billing, today });
+    const unchanged = stillHolding;
     return { st, unchanged };
   });
   try {
@@ -182,14 +197,14 @@ export async function reconcileStudents(tenantId, students, { actor, previous = 
       if (unchanged) continue;
       const cur = await SeatAllocation.findOne({ tenantId, studentId: String(st.id), status: 'active' }).lean();
       if (!cur) continue;
-      if (occupiesSeat(st) && cur.seatKey === seatKeyOf(st.branchId, st.seatNo) && sameShift(cur.shift, (await resolveShift(tenantId, st)) || {})) continue;
-      await releaseAllocation(tenantId, cur._id, occupiesSeat(st) ? 'relocated' : 'seat released');
+      if (occupiesSeat(st, { settings: billing, today }) && cur.seatKey === seatKeyOf(st.branchId, st.seatNo) && sameShift(cur.shift, (await resolveShift(tenantId, st)) || {})) continue;
+      await releaseAllocation(tenantId, cur._id, occupiesSeat(st, { settings: billing, today }) ? 'relocated' : 'seat released');
       undo.push({ before: cur, after: null });
     }
     // Pass 2: claim (validated for changed students, backfill for unchanged legacy rows).
     for (const { st, unchanged } of rows) {
       const before = await SeatAllocation.findOne({ tenantId, studentId: String(st.id), status: 'active' }).lean();
-      const after = await assignStudent(tenantId, st, { actor, force: unchanged });
+      const after = await assignStudent(tenantId, st, { actor, force: unchanged, settings: billing, today });
       if (after && before && String(after._id) === String(before._id)) continue;
       if (after || before) undo.push({ before, after });
     }

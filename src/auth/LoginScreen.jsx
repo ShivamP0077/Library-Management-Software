@@ -4,6 +4,8 @@ import toast from 'react-hot-toast';
 import { useAuth, googleOAuthErrorMessage } from './AuthContext';
 import { api } from '../utils/api';
 import { SignupPanel } from './SignupPanel';
+import { ContactChoices } from '../components/ContactChoices';
+import { readInviteToken } from '../utils/inviteToken';
 
 const GoogleIcon = () => (
   <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
@@ -17,21 +19,8 @@ const GoogleIcon = () => (
 const ROLE_LABELS = { staff: 'Staff', client_admin: 'Co-admin', superadmin: 'Super Admin' };
 const roleLabel = (role) => ROLE_LABELS[role] || role || 'Staff';
 
-/** Reads `invite=<token>` from the URL fragment, if present. */
-const readInviteToken = () => {
-  if (typeof window === 'undefined') return '';
-  const hash = window.location.hash || '';
-  const match = hash.match(/invite=([^&]+)/);
-  if (!match) return '';
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return match[1];
-  }
-};
-
 export function LoginScreen({ onContinueOffline }) {
-  const { loginWithPassword, completeLogin, oauthError, googleSignupPending, clearGoogleSignupPending } = useAuth();
+  const { loginWithPassword, completeLogin, oauthError, googleSignupPending, clearGoogleSignupPending, googleResetToken, clearGoogleResetToken } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -44,9 +33,12 @@ export function LoginScreen({ onContinueOffline }) {
   const [mode, setMode] = useState(() => (readInviteToken() ? 'invite' : ((typeof window !== 'undefined' && /[?&]referral=/.test(window.location.hash || '')) ? 'signup' : 'login')));
   const [inviteToken] = useState(readInviteToken);
 
-  // Forgot password (2-step) state
+  // Forgot password: email, mobile, or linked Google.
   const [forgotStep, setForgotStep] = useState(1);
+  const [forgotMethod, setForgotMethod] = useState('email'); // email | mobile | google
+  const [forgotMobile, setForgotMobile] = useState('');
   const [forgotMessage, setForgotMessage] = useState('');
+  const [resendWait, setResendWait] = useState(0);
   const [otp, setOtp] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -79,6 +71,21 @@ export function LoginScreen({ onContinueOffline }) {
   }, [googleSignupPending, signup]);
 
   useEffect(() => {
+    if (!googleResetToken) return;
+    setMode('forgot');
+    setForgotMethod('google');
+    setForgotStep(2);
+    setForgotMessage('Google confirmed this linked account. Choose a new My Library OS password. This does not change your Google password.');
+    setError('');
+  }, [googleResetToken]);
+
+  useEffect(() => {
+    if (resendWait <= 0) return undefined;
+    const timer = setTimeout(() => setResendWait((seconds) => seconds - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [resendWait]);
+
+  useEffect(() => {
     if (!inviteToken) return;
     let cancelled = false;
     setInviteLoading(true);
@@ -109,7 +116,10 @@ export function LoginScreen({ onContinueOffline }) {
     setMode('login');
     setError('');
     setForgotStep(1);
+    setForgotMethod('email');
     setForgotMessage('');
+    setResendWait(0);
+    clearGoogleResetToken?.();
     setOtp('');
     setNewPassword('');
     setConfirmPassword('');
@@ -126,12 +136,17 @@ export function LoginScreen({ onContinueOffline }) {
   };
 
   const sendCode = async (e) => {
-    e.preventDefault();
+    e?.preventDefault();
     setError(''); setBusy(true);
     try {
-      const res = await api.forgotPassword(email);
-      setForgotMessage(res?.message || 'If that email is registered, a 6-digit code has been sent.');
+      const res = forgotMethod === 'mobile'
+        ? await api.forgotPasswordMobile(forgotMobile)
+        : await api.forgotPassword(email);
+      setForgotMessage(res?.message || (forgotMethod === 'mobile'
+        ? 'If that mobile number is registered, a 6-digit code has been sent on WhatsApp.'
+        : 'If that email is registered, a 6-digit code has been sent.'));
       setForgotStep(2);
+      setResendWait(30);
     } catch (err) {
       setError(err.message);
     } finally { setBusy(false); }
@@ -140,8 +155,8 @@ export function LoginScreen({ onContinueOffline }) {
   const submitReset = async (e) => {
     e.preventDefault();
     setError('');
-    if (!/^\d{6}$/.test(otp.trim())) {
-      setError('Enter the 6-digit code from your email.');
+    if (forgotMethod !== 'google' && !/^\d{6}$/.test(otp.trim())) {
+      setError(forgotMethod === 'mobile' ? 'Enter the 6-digit code from WhatsApp.' : 'Enter the 6-digit code from your email.');
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -150,11 +165,20 @@ export function LoginScreen({ onContinueOffline }) {
     }
     setBusy(true);
     try {
-      await api.resetPassword(email, otp.trim(), newPassword);
-      toast.success('Password changed. Please sign in.');
+      if (forgotMethod === 'google') {
+        await api.resetPasswordGoogle(googleResetToken, newPassword);
+      } else if (forgotMethod === 'mobile') {
+        await api.resetPasswordMobile(forgotMobile, otp.trim(), newPassword);
+      } else {
+        await api.resetPassword(email, otp.trim(), newPassword);
+      }
+      toast.success(forgotMethod === 'google' ? 'My Library OS password updated. Please sign in.' : 'Password changed. Please sign in.');
+      clearGoogleResetToken?.();
       setMode('login');
       setForgotStep(1);
+      setForgotMethod('email');
       setForgotMessage('');
+      setResendWait(0);
       setOtp('');
       setNewPassword('');
       setConfirmPassword('');
@@ -189,7 +213,7 @@ export function LoginScreen({ onContinueOffline }) {
     } finally { setInviteBusy(false); }
   };
 
-  const alertMessage = error || (mode === 'login' && oauthError ? googleOAuthErrorMessage(oauthError) : '');
+  const alertMessage = error || ((mode === 'login' || mode === 'forgot') && oauthError ? googleOAuthErrorMessage(oauthError) : '');
   const subtitle = mode === 'signup' ? 'Start your library' : mode === 'invite' ? 'Accept your invitation' : mode === 'forgot' ? 'Recover your account' : 'Sign in to continue';
   const inviteLibraryName = typeof inviteInfo?.library === 'string' ? inviteInfo.library : inviteInfo?.library?.name;
 
@@ -294,13 +318,25 @@ export function LoginScreen({ onContinueOffline }) {
             </button>
 
             <h2 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 4px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <KeyRound size={16} /> {forgotStep === 1 ? 'Reset your password' : 'Enter your reset code'}
+              <KeyRound size={16} /> {forgotStep === 1 ? 'Reset your password' : (forgotMethod === 'google' ? 'Set a My Library OS password' : 'Enter your reset code')}
             </h2>
             <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 16px 0' }}>
               {forgotStep === 1
-                ? 'Enter your account email and we will send you a 6-digit code.'
-                : `Enter the 6-digit code sent to ${email || 'your email'} and choose a new password.`}
+                ? 'Choose email, mobile, or the Google account already linked to this library. Mobile login stays password-only.'
+                : forgotMethod === 'google'
+                  ? 'This updates only your My Library OS password. It does not change your Google password.'
+                  : forgotMethod === 'mobile'
+                    ? `Enter the 6-digit WhatsApp code sent to ${forgotMobile || 'your mobile'} and choose a new password.`
+                    : `Enter the 6-digit code sent to ${email || 'your email'} and choose a new password.`}
             </p>
+
+            {forgotStep === 1 && (
+              <div id="forgot-method-picker" role="group" aria-label="Recovery method" style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                <button id="forgot-method-email" type="button" className={`btn ${forgotMethod === 'email' ? 'btn-primary' : 'btn-secondary'} btn-sm`} onClick={() => setForgotMethod('email')}>Email</button>
+                <button id="forgot-method-mobile" type="button" className={`btn ${forgotMethod === 'mobile' ? 'btn-primary' : 'btn-secondary'} btn-sm`} onClick={() => setForgotMethod('mobile')}>Mobile</button>
+                <button id="forgot-method-google" type="button" className={`btn ${forgotMethod === 'google' ? 'btn-primary' : 'btn-secondary'} btn-sm`} onClick={() => setForgotMethod('google')}>Google</button>
+              </div>
+            )}
 
             {forgotStep === 2 && forgotMessage && (
               <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e40af', fontSize: 13, borderRadius: 8, padding: '10px 12px', marginBottom: 12 }}>
@@ -308,32 +344,56 @@ export function LoginScreen({ onContinueOffline }) {
               </div>
             )}
 
+            {forgotStep === 1 && forgotMethod === 'google' ? (
+              <div>
+                <p style={{ color: 'var(--text-secondary)', fontSize: 13, margin: '0 0 12px' }}>
+                  Continue with the Google account already linked to My Library OS. After that you set a library password only.
+                </p>
+                {alertMessage && <div role="alert" style={{ color: '#dc2626', fontSize: 13, marginBottom: 12 }}>{alertMessage}</div>}
+                <a id="forgot-google" className="btn btn-primary" href={`${api.googleStartUrl()}?recovery=1`} style={{ width: '100%', justifyContent: 'center', textDecoration: 'none' }}>
+                  Continue with linked Google
+                </a>
+              </div>
+            ) : (
             <form onSubmit={forgotStep === 1 ? sendCode : submitReset}>
               {forgotStep === 1 ? (
-                <div className="form-group">
-                  <label className="form-label" htmlFor="forgot-email">Email</label>
-                  <input id="forgot-email" className="form-input" type="email" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} required />
-                </div>
+                forgotMethod === 'mobile' ? (
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="forgot-mobile">Mobile number</label>
+                    <input id="forgot-mobile" className="form-input" type="tel" inputMode="tel" autoComplete="tel" value={forgotMobile} onChange={e => setForgotMobile(e.target.value)} required />
+                    <p style={{ color: 'var(--text-secondary)', fontSize: 12, margin: '8px 0 0' }}>We'll send a 6-digit code on WhatsApp. Signing in still uses mobile and password, with no login code.</p>
+                  </div>
+                ) : (
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="forgot-email">Email</label>
+                    <input id="forgot-email" className="form-input" type="email" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} required />
+                  </div>
+                )
               ) : (
                 <>
+                  {forgotMethod !== 'google' && (
+                    <div className="form-group">
+                      <label className="form-label" htmlFor="forgot-otp">6-digit code</label>
+                      <input
+                        id="forgot-otp"
+                        className="form-input"
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        maxLength={6}
+                        pattern="\d{6}"
+                        placeholder="123456"
+                        value={otp}
+                        onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                        required
+                      />
+                      <button id="forgot-resend" type="button" className="btn btn-ghost btn-sm" disabled={busy || resendWait > 0} onClick={sendCode} style={{ marginTop: 8, padding: '4px 0' }}>
+                        {resendWait > 0 ? `Resend code in ${resendWait}s` : 'Resend code'}
+                      </button>
+                    </div>
+                  )}
                   <div className="form-group">
-                    <label className="form-label" htmlFor="forgot-otp">6-digit code</label>
-                    <input
-                      id="forgot-otp"
-                      className="form-input"
-                      type="text"
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      maxLength={6}
-                      pattern="\d{6}"
-                      placeholder="123456"
-                      value={otp}
-                      onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                      required
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label" htmlFor="forgot-new-password">New password</label>
+                    <label className="form-label" htmlFor="forgot-new-password">{forgotMethod === 'google' ? 'New My Library OS password' : 'New password'}</label>
                     <input id="forgot-new-password" className="form-input" type="password" autoComplete="new-password" value={newPassword} onChange={e => setNewPassword(e.target.value)} required />
                   </div>
                   <div className="form-group">
@@ -346,9 +406,10 @@ export function LoginScreen({ onContinueOffline }) {
               {alertMessage && <div role="alert" style={{ color: '#dc2626', fontSize: 13, marginBottom: 12 }}>{alertMessage}</div>}
 
               <button className="btn btn-primary" type="submit" disabled={busy} style={{ width: '100%', justifyContent: 'center' }}>
-                <span>{busy ? 'Please wait…' : (forgotStep === 1 ? 'Send code' : 'Reset password')}</span>
+                <span>{busy ? 'Please wait…' : (forgotStep === 1 ? 'Send code' : (forgotMethod === 'google' ? 'Save My Library OS password' : 'Reset password'))}</span>
               </button>
             </form>
+            )}
           </div>
         )}
 
@@ -452,6 +513,11 @@ export function LoginScreen({ onContinueOffline }) {
         )}
       </div>
     </div>
+    {mode === 'login' && (
+      <div style={{ maxWidth: 440, margin: '0 auto 8px', padding: '0 16px' }}>
+        <ContactChoices />
+      </div>
+    )}
     <footer style={{ padding: '4px 16px 20px', textAlign: 'center', fontSize: 12, lineHeight: 1.7, color: 'var(--text-tertiary, #6b7280)' }}>
       <a href="https://mylibraryos.in/privacy" style={{ color: 'inherit' }}>Privacy Policy</a>
       <span aria-hidden="true"> · </span>

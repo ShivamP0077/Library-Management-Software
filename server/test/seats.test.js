@@ -104,6 +104,38 @@ test('allocations are tenant-scoped', async () => {
   assert.equal((await call('POST', '/api/seat-allocations/assign', { token: ctx.tokens.b, body: { studentId: 'E1', seatNo: 'A1' } })).status, 404);
 });
 
+test('a missing desk is rejected and creates no allocation', async () => {
+  const beforeAlloc = (await call('GET', '/api/seat-allocations', { token: A() })).body;
+  const beforeStudents = (await call('GET', '/api/students', { token: A() })).body;
+  const r = await call('POST', '/api/students', { token: A(), body: stu('MISS', 'NO-SUCH', 'sh-m') });
+  assert.equal(r.status, 409);
+  assert.equal(r.body.code, 'seat_conflict');
+  assert.match(r.body.error, /does not exist/);
+  const allocs = (await call('GET', '/api/seat-allocations', { token: A() })).body;
+  assert.equal(allocs.length, beforeAlloc.length);
+  assert.ok(!allocs.some(a => a.studentId === 'MISS' || a.seatNo === 'NO-SUCH'));
+  assert.equal((await call('GET', '/api/students', { token: A() })).body.length, beforeStudents.length);
+});
+
+test('a desk that exists only in another branch is rejected', async () => {
+  const withOther = [...seats, { id: 'sx', name: 'BX', branchId: 'b2' }];
+  assert.equal((await call('PUT', '/api/seats', { token: A(), body: withOther })).status, 200);
+  const r = await call('POST', '/api/students', { token: A(), body: stu('XB', 'BX', 'sh-m') });
+  assert.equal(r.status, 409);
+  assert.equal(r.body.code, 'seat_conflict');
+  const allocs = (await call('GET', '/api/seat-allocations', { token: A() })).body;
+  assert.ok(!allocs.some(a => a.studentId === 'XB' || a.seatNo === 'BX'));
+  assert.equal((await call('PUT', '/api/seats', { token: A(), body: seats })).status, 200);
+});
+
+test('an existing desk in the student branch still assigns', async () => {
+  const r = await call('POST', '/api/students', { token: A(), body: stu('OK1', 'A1', 'sh-m') });
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  const allocs = (await call('GET', '/api/seat-allocations?studentId=OK1', { token: A() })).body;
+  assert.equal(allocs.length, 1);
+  assert.equal(allocs[0].seatNo, 'A1');
+});
+
 test('unchanged legacy double-bookings do not block unrelated saves', async () => {
   const mongoose = (await import('mongoose')).default;
   await mongoose.connection.collection('students').insertMany([
@@ -113,4 +145,22 @@ test('unchanged legacy double-bookings do not block unrelated saves', async () =
   const list = (await call('GET', '/api/students', { token: ctx.tokens.b })).body;
   const r = await call('PUT', '/api/students', { token: ctx.tokens.b, body: list.map(s => s.id === 'B1' ? { ...s, phone: '999' } : s) });
   assert.equal(r.status, 200, JSON.stringify(r.body));
+});
+
+test('unchanged legacy student on a missing desk does not block an unrelated save', async () => {
+  const mongoose = (await import('mongoose')).default;
+  await mongoose.connection.collection('students').insertOne({
+    tenantId: 'lib-a', _key: 'LEG', id: 'LEG', name: 'LEG', seatNo: 'GONE', branchId: 'b1', status: 'Active', shiftId: 'sh-m',
+  });
+  const list = (await call('GET', '/api/students', { token: A() })).body;
+  assert.ok(list.some(s => s.id === 'LEG' && s.seatNo === 'GONE'));
+  const r = await call('PUT', '/api/students', { token: A(), body: list.map(s => s.id === 'OK1' ? { ...s, phone: '888' } : s) });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const changed = await call('PUT', '/api/students', { token: A(), body: list.map(s => s.id === 'OK1' ? { ...s, seatNo: 'ALSO-GONE' } : s) });
+  assert.equal(changed.status, 409);
+  assert.equal(changed.body.code, 'seat_conflict');
+  const allocs = (await call('GET', '/api/seat-allocations', { token: A() })).body;
+  assert.ok(!allocs.some(a => a.seatNo === 'ALSO-GONE'));
+  const ok1 = allocs.find(a => a.studentId === 'OK1');
+  assert.equal(ok1.seatNo, 'A1');
 });

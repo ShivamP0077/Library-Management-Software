@@ -15,11 +15,15 @@ import { TeamAccess } from './TeamAccess';
 import { resolveConfigurationScope, matchesScope } from '../utils/scopeResolver';
 import { 
   STAFF_MODULES, STAFF_ACTIONS, STAFF_ROLES, 
-  createEmptyPermissions, getDefaultPermissionsForRole, countAllowedActions 
+  createEmptyPermissions, getDefaultPermissionsForRole, countAllowedActions,
+  FINANCIAL_MODULE_IDS, FINANCIAL_MATRIX, applyAllowAllFinancial, isWalletBlockedRole, emptyModuleActions,
 } from '../utils/staffPermissions';
 import { getCanonicalSeatTypes } from '../utils/seatTypeUtils';
 import { cycleConfig, effectiveCycleConfig, normalizePlanBillingCycle, CYCLE_MODE_LABELS } from '../utils/billingCycle';
+import { compileDurationPricing, defaultTiers, durationUnitForCycle, formatDurationLabel, inferUnitPrice, planPricingUnit } from '../utils/pricingCalculator';
+import { DEFAULT_EXPIRED_PERIOD_DAYS } from '../utils/subscriptionLifecycle.js';
 import { PlanDurationFields } from './PlanDurationFields';
+import { PlanPricingFields } from './PlanPricingFields';
 import toast from 'react-hot-toast';
 import { EnquiryQrCard } from './enquiry/EnquiryQrCard';
 
@@ -85,10 +89,10 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
         setPlanSeatTypeId(plan.seatTypeId || seatTypes[0]?.id || '');
         setPlanSectionId(plan.sectionId || '');
         setPlanShiftIds(plan.shiftIds || []);
-        setPlanPricing(plan.durationPricing && plan.durationPricing.length > 0 ? plan.durationPricing : [
-          { durationMonths: 1, basePrice: plan.price || 1500, discountType: 'None', discountValue: 0 }
-        ]);
         const savedCycle = plan.billingCycle?.mode ? effectiveCycleConfig(settings, plan) : cycleConfig(settings);
+        const unit = durationUnitForCycle(savedCycle.mode);
+        setPlanUnitPrice(inferUnitPrice(plan, unit));
+        setPlanPricing(plan.durationPricing && plan.durationPricing.length > 0 ? plan.durationPricing : compileDurationPricing(plan.price || 1500, defaultTiers(unit), unit));
         setPlanCycle(savedCycle);
         setPlanCycleCustom(!!plan.billingCycle?.mode);
         setActiveTab('plans');
@@ -118,6 +122,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
     receiptFooter: settings.receiptFooter || '',
     billingCycleMode: settings.billingCycleMode || 'ANNIVERSARY',
     gracePeriodDays: settings.gracePeriodDays ?? 3,
+    expiredPeriodDays: settings.expiredPeriodDays ?? DEFAULT_EXPIRED_PERIOD_DAYS,
     calendarBillingDay: settings.calendarBillingDay ?? 1,
     cycleDays: settings.cycleDays ?? 30,
     cycleAnchorDate: settings.cycleAnchorDate || '',
@@ -141,6 +146,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
       receiptFooter: settings.receiptFooter || '',
       billingCycleMode: settings.billingCycleMode || 'ANNIVERSARY',
       gracePeriodDays: settings.gracePeriodDays ?? 3,
+    expiredPeriodDays: settings.expiredPeriodDays ?? DEFAULT_EXPIRED_PERIOD_DAYS,
     calendarBillingDay: settings.calendarBillingDay ?? 1,
       cycleDays: settings.cycleDays ?? 30,
       cycleAnchorDate: settings.cycleAnchorDate || '',
@@ -183,9 +189,8 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
   const [planSeatTypeId, setPlanSeatTypeId] = useState(seatTypes[0]?.id || '');
   const [planSectionId, setPlanSectionId] = useState('');
   const [planShiftIds, setPlanShiftIds] = useState([]);
-  const [planPricing, setPlanPricing] = useState([
-    { durationMonths: 1, basePrice: 1500, discountType: 'None', discountValue: 0 }
-  ]);
+  const [planPricing, setPlanPricing] = useState(() => compileDurationPricing(1500, defaultTiers('month'), 'month'));
+  const [planUnitPrice, setPlanUnitPrice] = useState(1500);
   const [planCycle, setPlanCycle] = useState(() => cycleConfig(settings));
   const [planCycleCustom, setPlanCycleCustom] = useState(true);
 
@@ -197,6 +202,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
   const [editingSectionId, setEditingSectionId] = useState(null);
   const [editingBranchId, setEditingBranchId] = useState(null);
   const [permSearch, setPermSearch] = useState('');
+  const [allowAllFinancial, setAllowAllFinancial] = useState(false);
 
   // Seat Type Editing State
   const [newSeatTypeName, setNewSeatTypeName] = useState('');
@@ -265,6 +271,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
       receiptFooter: billingFormData.receiptFooter,
       billingCycleMode: billingFormData.billingCycleMode,
       gracePeriodDays: Number(billingFormData.gracePeriodDays) || 3,
+      expiredPeriodDays: Number.isFinite(Number(billingFormData.expiredPeriodDays)) ? Number(billingFormData.expiredPeriodDays) : DEFAULT_EXPIRED_PERIOD_DAYS,
       calendarBillingDay: Number(billingFormData.calendarBillingDay) || 1,
       cycleDays: Math.max(1, Number(billingFormData.cycleDays) || 30),
       cycleAnchorDate: billingFormData.cycleAnchorDate || '',
@@ -363,10 +370,11 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
     setPlanSeatTypeId(seatTypes[0]?.id || '');
     setPlanSectionId('');
     setPlanShiftIds([]);
-    setPlanPricing([
-      { durationMonths: 1, basePrice: 1500, discountType: 'None', discountValue: 0 }
-    ]);
-    setPlanCycle(cycleConfig(settings));
+    const cycle = cycleConfig(settings);
+    const unit = durationUnitForCycle(cycle.mode);
+    setPlanUnitPrice(1500);
+    setPlanPricing(compileDurationPricing(1500, defaultTiers(unit), unit));
+    setPlanCycle(cycle);
     setPlanCycleCustom(true);
     setIsPlanModalOpen(true);
   };
@@ -377,10 +385,10 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
     setPlanSeatTypeId(p.seatTypeId || seatTypes[0]?.id || '');
     setPlanSectionId(p.sectionId || '');
     setPlanShiftIds(p.shiftIds || []);
-    setPlanPricing(p.durationPricing && p.durationPricing.length > 0 ? p.durationPricing : [
-      { durationMonths: 1, basePrice: p.price || 1500, discountType: 'None', discountValue: 0 }
-    ]);
     const savedCycle = p.billingCycle?.mode ? effectiveCycleConfig(settings, p) : cycleConfig(settings);
+    const unit = durationUnitForCycle(savedCycle.mode);
+    setPlanUnitPrice(inferUnitPrice(p, unit));
+    setPlanPricing(p.durationPricing && p.durationPricing.length > 0 ? p.durationPricing : compileDurationPricing(p.price || 1500, defaultTiers(unit), unit));
     setPlanCycle(savedCycle);
     setPlanCycleCustom(!!p.billingCycle?.mode);
     setIsPlanModalOpen(true);
@@ -396,15 +404,22 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
       : null;
 
     if (editingPlanId) {
-      setPlans(prev => prev.map(p => p.id === editingPlanId ? {
-        ...p,
-        name: planName.trim(),
-        seatTypeId: planSeatTypeId,
-        sectionId: planSectionId || undefined,
-        shiftIds: planShiftIds,
-        durationPricing: planPricing,
-        ...(billingCycle ? { billingCycle } : {}),
-      } : p));
+      setPlans(prev => prev.map(p => {
+        if (p.id !== editingPlanId) return p;
+        const next = {
+          ...p,
+          name: planName.trim(),
+          seatTypeId: planSeatTypeId,
+          sectionId: planSectionId || undefined,
+          shiftIds: planShiftIds,
+          unitPrice: planUnitPrice,
+          durationPricing: planPricing,
+          ...(billingCycle ? { billingCycle } : {}),
+        };
+        if (durationUnitForCycle(planCycle?.mode) === 'month') next.monthlyPrice = planUnitPrice;
+        else delete next.monthlyPrice;
+        return next;
+      }));
       setEditingPlanId(null);
       toast.success('Fee Plan updated.');
     } else {
@@ -414,6 +429,8 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
         seatTypeId: planSeatTypeId,
         sectionId: planSectionId || scope.resolvedSectionId || undefined,
         shiftIds: planShiftIds,
+        unitPrice: planUnitPrice,
+        ...(durationUnitForCycle(planCycle?.mode) === 'month' ? { monthlyPrice: planUnitPrice } : {}),
         durationPricing: planPricing,
         ...(billingCycle ? { billingCycle } : {}),
         branchId: selectedBranchId !== 'all' ? selectedBranchId : (scope.resolvedBranchId || undefined),
@@ -708,14 +725,22 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
     const cloned = {};
     STAFF_MODULES.forEach(mod => {
       cloned[mod.id] = {
+        ...emptyModuleActions(),
         view: Boolean(currentPerms[mod.id]?.view),
         create: Boolean(currentPerms[mod.id]?.create),
         edit: Boolean(currentPerms[mod.id]?.edit),
         delete: Boolean(currentPerms[mod.id]?.delete),
         approve: Boolean(currentPerms[mod.id]?.approve),
-        manage: Boolean(currentPerms[mod.id]?.manage)
+        manage: Boolean(currentPerms[mod.id]?.manage),
+        print: Boolean(currentPerms[mod.id]?.print),
+        share: Boolean(currentPerms[mod.id]?.share),
+        export: Boolean(currentPerms[mod.id]?.export),
+        collect: Boolean(currentPerms[mod.id]?.collect),
+        ...(mod.id === 'reports' ? { netProfit: Boolean(currentPerms.reports?.netProfit) } : {}),
       };
     });
+    if (isWalletBlockedRole(staff.role)) cloned.wallet = emptyModuleActions();
+    setAllowAllFinancial(Boolean(currentPerms.allowAllFinancial));
     setTempPermissions(cloned);
     setIsPermMatrixModalOpen(true);
   };
@@ -776,9 +801,38 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
     toast.success(`Loaded preset permissions for "${roleName}"`);
   };
 
+  const handleAllowAllFinancial = (on) => {
+    const staff = staffMembers.find(s => s.id === targetPermStaffId);
+    const role = staff?.role;
+    setAllowAllFinancial(on);
+    if (!on) return;
+    const next = applyAllowAllFinancial(tempPermissions, role);
+    const cloned = { ...tempPermissions };
+    FINANCIAL_MODULE_IDS.forEach(id => { cloned[id] = next[id]; });
+    setTempPermissions(cloned);
+  };
+
+  const handleToggleFinancial = (moduleId, keys) => {
+    const staff = staffMembers.find(s => s.id === targetPermStaffId);
+    if (moduleId === 'wallet' && isWalletBlockedRole(staff?.role)) return;
+    setAllowAllFinancial(false);
+    setTempPermissions(prev => {
+      const modObj = { ...emptyModuleActions(), ...(prev[moduleId] || {}) };
+      const nextVal = !keys.every(k => modObj[k]);
+      keys.forEach(k => { modObj[k] = nextVal; });
+      if (nextVal) modObj.view = true;
+      if (moduleId === 'reports') {
+        /* net profit stays its own switch */
+      }
+      return { ...prev, [moduleId]: modObj };
+    });
+  };
+
   const handleSavePermMatrix = () => {
     if (!targetPermStaffId) return;
-    const ok = updateStaffMember(targetPermStaffId, { permissions: tempPermissions });
+    const ok = updateStaffMember(targetPermStaffId, {
+      permissions: { ...tempPermissions, allowAllFinancial },
+    });
     if (ok) {
       setIsPermMatrixModalOpen(false);
       setTargetPermStaffId(null);
@@ -1050,7 +1104,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                     <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-tertiary)' }}>DURATION PRICING:</span>
                     {(p.durationPricing || []).map((dp, i) => (
                       <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
-                        <span>{dp.durationMonths} Mo</span>
+                        <span>{formatDurationLabel(dp.durationMonths, dp.durationUnit || planPricingUnit(p))}</span>
                         <span style={{ fontWeight: 600 }}>₹{dp.basePrice?.toLocaleString()} {dp.discountType && dp.discountType !== 'None' ? `(Offer: ${dp.discountValue}${dp.discountType === 'Percentage' ? '%' : '₹'})` : ''}</span>
                       </div>
                     ))}
@@ -1526,7 +1580,19 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                     onChange={e => setBillingFormData(p => ({ ...p, gracePeriodDays: Number(e.target.value) || 0 }))} 
                   />
                   <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
-                    Days after due date before subscription is marked Expired.
+                    Days after the plan end date while the desk stays held. Changing this does not move deadlines for students already admitted or renewed.
+                  </span>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label" style={{ fontSize: '12px', fontWeight: 600 }}>Expired period before auto-cancel (Days)</label>
+                  <NumericInput
+                    className="form-input"
+                    value={billingFormData.expiredPeriodDays}
+                    onChange={e => setBillingFormData(p => ({ ...p, expiredPeriodDays: Number(e.target.value) || 0 }))}
+                  />
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
+                    Days the student stays Expired after grace, with the desk already free, before automatic cancellation. New admissions and renewals use the number you save here. Students already on a plan keep the days saved when their period started.
                   </span>
                 </div>
 
@@ -2326,13 +2392,89 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                     style={{ fontSize: '12px', padding: '4px 10px', width: '160px' }}
                   />
                   <div style={{ fontSize: '12px', fontWeight: 600, color: '#4338ca', background: '#e0e7ff', padding: '4px 10px', borderRadius: '6px', whiteSpace: 'nowrap' }}>
-                    {countAllowedActions(tempPermissions)} of 72 allowed
+                    {countAllowedActions(tempPermissions)} actions allowed
                   </div>
                 </div>
               </div>
 
               {/* Matrix Scrollable Table */}
               <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }}>
+                <div style={{ marginBottom: '16px', padding: '12px 14px', border: '1px solid #c7d2fe', borderRadius: '10px', background: '#eef2ff' }}>
+                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' }}>
+                    <input
+                      id="allow-all-financial"
+                      type="checkbox"
+                      checked={allowAllFinancial}
+                      onChange={e => handleAllowAllFinancial(e.target.checked)}
+                      style={{ marginTop: '3px' }}
+                    />
+                    <span>
+                      <span style={{ fontWeight: 700, color: '#312e81' }}>Allow all financial permissions</span>
+                      <span style={{ display: 'block', fontSize: '12px', color: '#4338ca', marginTop: '2px' }}>
+                        Turns on every money action this role is allowed to have: collections, expenses, reports, export, and Wallet.
+                        Librarians never get Wallet, even with this on.
+                      </span>
+                    </span>
+                  </label>
+                  {(() => {
+                    const st = staffMembers.find(s => s.id === targetPermStaffId);
+                    const blocked = isWalletBlockedRole(st?.role);
+                    return (
+                      <div style={{ marginTop: '12px', overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                          <thead>
+                            <tr>
+                              <th style={{ textAlign: 'left', padding: '4px' }}>Financial area</th>
+                              {FINANCIAL_MATRIX.map(col => <th key={col.id} style={{ padding: '4px' }}>{col.label}</th>)}
+                              <th style={{ padding: '4px' }}>Net Profit</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {STAFF_MODULES.filter(m => FINANCIAL_MODULE_IDS.includes(m.id)).map(mod => {
+                              const modPerms = tempPermissions[mod.id] || {};
+                              const locked = mod.id === 'wallet' && blocked;
+                              return (
+                                <tr key={mod.id}>
+                                  <td style={{ padding: '4px', fontWeight: 600 }}>{mod.name}{locked ? ' (not for Librarians)' : ''}</td>
+                                  {FINANCIAL_MATRIX.map(col => {
+                                    const on = col.keys.every(k => modPerms[k]);
+                                    return (
+                                      <td key={col.id} style={{ textAlign: 'center' }}>
+                                        <input
+                                          type="checkbox"
+                                          aria-label={`${mod.name} ${col.label}`}
+                                          checked={locked ? false : on}
+                                          disabled={locked}
+                                          onChange={() => handleToggleFinancial(mod.id, col.keys)}
+                                        />
+                                      </td>
+                                    );
+                                  })}
+                                  <td style={{ textAlign: 'center' }}>
+                                    {mod.id === 'reports' ? (
+                                      <input
+                                        type="checkbox"
+                                        aria-label="Net Profit"
+                                        checked={Boolean(modPerms.netProfit)}
+                                        onChange={() => {
+                                          setAllowAllFinancial(false);
+                                          setTempPermissions(prev => ({
+                                            ...prev,
+                                            reports: { ...emptyModuleActions(), ...(prev.reports || {}), netProfit: !prev.reports?.netProfit },
+                                          }));
+                                        }}
+                                      />
+                                    ) : '—'}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    );
+                  })()}
+                </div>
                 <table className="data-grid" style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#f8fafc', position: 'sticky', top: 0, zIndex: 2 }}>
@@ -2345,7 +2487,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                     </tr>
                   </thead>
                   <tbody>
-                    {STAFF_MODULES.filter(m => !permSearch || m.name.toLowerCase().includes(permSearch.toLowerCase()) || m.description.toLowerCase().includes(permSearch.toLowerCase())).map(mod => {
+                    {STAFF_MODULES.filter(m => !permSearch || m.name.toLowerCase().includes(permSearch.toLowerCase()) || String(m.desc || m.description || '').toLowerCase().includes(permSearch.toLowerCase())).map(mod => {
                       const modPerms = tempPermissions[mod.id] || {};
                       return (
                         <tr key={mod.id}>
@@ -2510,55 +2652,26 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
 
                 <PlanDurationFields
                   value={planCycle}
-                  onChange={(next) => { setPlanCycle(next); setPlanCycleCustom(true); }}
+                  onChange={(next) => {
+                    const prevUnit = durationUnitForCycle(planCycle?.mode);
+                    const nextUnit = durationUnitForCycle(next?.mode);
+                    setPlanCycle(next);
+                    setPlanCycleCustom(true);
+                    if (prevUnit !== nextUnit) {
+                      setPlanPricing(compileDurationPricing(planUnitPrice, defaultTiers(nextUnit), nextUnit));
+                    }
+                  }}
                 />
 
-                {/* Duration Pricing Editor */}
-                <div>
-                  <label className="form-label" style={{ fontSize: '12px', fontWeight: 600 }}>Duration Pricing Tiers & Offers</label>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {planPricing.map((dp, idx) => (
-                      <div key={idx} style={{ display: 'grid', gridTemplateColumns: '70px 1.5fr 1.5fr 1fr auto', gap: '8px', alignItems: 'center', background: '#f8fafc', padding: '8px 12px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
-                        <span style={{ fontSize: '13px', fontWeight: 700 }}>{dp.durationMonths} Mo</span>
-                        <NumericInput className="form-input" placeholder="Price (₹)" value={dp.basePrice} onChange={e => {
-                          const price = Number(e.target.value);
-                          setPlanPricing(planPricing.map((item, i) => i === idx ? { ...item, basePrice: price } : item));
-                        }} />
-                        <select className="form-select" value={dp.discountType || 'None'} onChange={e => {
-                          const dType = e.target.value;
-                          setPlanPricing(planPricing.map((item, i) => i === idx ? { ...item, discountType: dType } : item));
-                        }}>
-                          <option value="None">No Offer</option>
-                          <option value="Percentage">% Discount</option>
-                          <option value="Fixed">₹ Discount</option>
-                        </select>
-                        <NumericInput className="form-input" placeholder="Offer" value={dp.discountValue || 0} onChange={e => {
-                          const val = Number(e.target.value);
-                          setPlanPricing(planPricing.map((item, i) => i === idx ? { ...item, discountValue: val } : item));
-                        }} />
-                        <button type="button" className="btn btn-ghost" style={{ color: '#ef4444', padding: '4px' }} onClick={() => setPlanPricing(planPricing.filter((_, i) => i !== idx))}>
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    ))}
-
-                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '4px' }}>
-                      {[1, 2, 3, 6, 12].filter(m => !planPricing.some(p => p.durationMonths === m)).map(m => (
-                        <button
-                          key={m}
-                          type="button"
-                          className="btn btn-ghost"
-                          style={{ fontSize: '11px', border: '1px solid #cbd5e1', padding: '3px 8px', borderRadius: '4px' }}
-                          onClick={() => {
-                            setPlanPricing([...planPricing, { durationMonths: m, basePrice: m * 1500, discountType: 'None', discountValue: 0 }].sort((a,b) => a.durationMonths - b.durationMonths));
-                          }}
-                        >
-                          + Add {m} Mo
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
+                <PlanPricingFields
+                  cycleMode={planCycle?.mode}
+                  unitPrice={planUnitPrice}
+                  durationPricing={planPricing}
+                  onChange={(next) => {
+                    setPlanUnitPrice(next.unitPrice);
+                    setPlanPricing(next.durationPricing);
+                  }}
+                />
 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '14px', paddingTop: '14px', borderTop: '1px solid #f1f5f9' }}>
                   <button type="button" className="btn btn-ghost" onClick={() => setIsPlanModalOpen(false)}>Cancel</button>

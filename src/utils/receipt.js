@@ -5,6 +5,7 @@
  */
 
 import { receiptReferenceText } from './paymentReference.js';
+import { isVoidedPayment } from './paymentVoid.js';
 
 const str = (v) => (v == null ? '' : String(v).trim());
 const num = (v) => {
@@ -67,6 +68,13 @@ export function receiptAmounts(receipt) {
 
 export function receiptOperator(receipt) {
   return str(receipt?.staffName || receipt?.operatorName || 'Admin');
+}
+
+/** A student-profile payment row may open the paid receipt viewer only when the money was kept. */
+export function paymentRowCanOpenReceipt(pay) {
+  if (!pay || isVoidedPayment(pay)) return false;
+  if (pay.type === 'Refund' || pay.method === 'Refund' || Number(pay.amount) < 0) return false;
+  return receiptState(pay).settled === true && receiptState(pay).code === 'paid';
 }
 
 /** The complete label set used by the A5 receipt. */

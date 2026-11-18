@@ -3,6 +3,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { setup, teardown, call, ctx } from './helpers.js';
 import { suggestPlanPrice, derivePlanPrices, dueDatesFor, generateInstances, dueReminders, instanceStatus } from '../src/finance.js';
+import { login } from './helpers.js';
 
 const A = () => ctx.tokens.a;
 before(() => setup('lms_finance_test'));
@@ -88,4 +89,88 @@ test('voided receipts stay stored but out of P&L totals', async () => {
   const p = (await call('GET', '/api/reports/pnl?from=2026-11-05&to=2026-11-05', { token: A() })).body;
   assert.equal(p.feeCollections, 777, 'only the live receipt counts');
   assert.equal(p.byMethod.Cash, 777);
+});
+
+test('custom report: sections, shared expenses once, refunds vs cancellations, csv pdf xlsx, staff guard', async () => {
+  const day = '2026-12-10';
+  await call('POST', '/api/payments', { token: A(), body: { receiptNo: 'RB-COL', studentId: 'RB1', amount: 800, netTotal: 800, method: 'UPI', referenceNo: 'UTR-RB', date: day, branchId: 'b1', sectionId: 'sec1' } });
+  await call('POST', '/api/payments', { token: A(), body: { receiptNo: 'RB-REF', studentId: 'RB1', amount: -100, netTotal: -100, method: 'Refund', date: day, branchId: 'b1', sectionId: 'sec1' } });
+  await call('POST', '/api/expenses', { token: A(), body: { id: 'RB-SHARED', category: 'Rent', amount: 200, date: day, branchId: 'all' } });
+  await call('POST', '/api/expenses', { token: A(), body: { id: 'RB-B1', category: 'Tea', amount: 40, date: day, branchId: 'b1' } });
+  await call('POST', '/api/expenses', { token: A(), body: { id: 'RB-B2', category: 'Tea', amount: 25, date: day, branchId: 'b2' } });
+  assert.equal((await call('PUT', '/api/seats', { token: A(), body: [
+    { id: 'seat-s12', name: 'S-12', branchId: 'b1', sectionId: 'sec1' },
+  ]})).status, 200);
+  assert.equal((await call('PUT', '/api/students', { token: A(), body: [
+    { id: 'RB1', name: 'Asha', seatNo: 'S-12', branchId: 'b1', sectionId: 'sec1', status: 'Active', startDate: day },
+  ]})).status, 200);
+  await call('PUT', '/api/archivedStudents', { token: A(), body: [
+    { id: 'RB-C1', name: 'Cancelled only', seatNo: 'S-2', branchId: 'b1', sectionId: 'sec1', cancellationHistory: [{ date: day, reason: 'Left town', refundAmount: 0 }] },
+    { id: 'RB-C2', name: 'Cancelled refunded', seatNo: 'S-3', branchId: 'b1', sectionId: 'sec1', cancellationHistory: [{ date: day, reason: 'Refund requested', refundAmount: 100 }] },
+  ]});
+
+  const bad = await call('GET', `/api/reports/custom?from=${day}&to=${day}&sections=seatRevenue`, { token: A() });
+  assert.equal(bad.status, 400);
+  assert.match(bad.body.error, /Seat Revenue|seatRevenue|Unknown report section/);
+
+  const all = await call('GET', `/api/reports/custom?from=${day}&to=${day}&branchId=all&sections=payments,revenue,expenses,net,newStudents,studentList,cancelled`, { token: A() });
+  assert.equal(all.status, 200);
+  assert.deepEqual(all.body.sections, ['All Student Payments', 'Revenue', 'Expenses', 'Net Profit', 'New Students', 'Student List + Seat Numbers', 'Cancelled Students']);
+  assert.ok(!all.body.sections.some(s => /seat revenue|seat expenses/i.test(s)));
+  assert.equal(all.body.totals.feeCollections, 800);
+  assert.equal(all.body.totals.refunds, 100);
+  assert.equal(all.body.totals.oneTime, 265);
+  const b1 = await call('GET', `/api/reports/custom?from=${day}&to=${day}&branchId=b1&sections=expenses`, { token: A() });
+  const b2 = await call('GET', `/api/reports/custom?from=${day}&to=${day}&branchId=b2&sections=expenses`, { token: A() });
+  assert.equal(b1.body.totals.oneTime, 40);
+  assert.equal(b2.body.totals.oneTime, 25);
+  assert.equal(b1.body.totals.oneTime + b2.body.totals.oneTime + 200, all.body.totals.oneTime);
+
+  const pay = all.body.blocks.find(b => b.title === 'All Student Payments');
+  const kinds = pay.rows.slice(1).map(r => r[3]);
+  assert.ok(kinds.includes('Collection'));
+  assert.ok(kinds.includes('Refund'));
+  const cancelled = all.body.blocks.find(b => b.title === 'Cancelled Students');
+  const outcomes = cancelled.rows.slice(1).map(r => r[3]);
+  assert.ok(outcomes.includes('Cancellation'));
+  assert.ok(outcomes.includes('Cancellation with refund'));
+  assert.ok(all.body.blocks.find(b => b.title === 'New Students').rows.some(r => r[0] === 'Asha' && r[1] === 'S-12'));
+
+  const csv = await call('GET', `/api/reports/custom.csv?from=${day}&to=${day}&sections=revenue`, { token: A() });
+  assert.equal(csv.status, 200);
+  assert.match(String(csv.body), /Revenue/);
+  assert.equal((await call('GET', `/api/reports/pnl.csv?from=${day}&to=${day}`, { token: A() })).status, 200);
+
+  const pdf = await call('GET', `/api/reports/custom.pdf?from=${day}&to=${day}&sections=revenue,expenses`, { token: A() });
+  assert.equal(pdf.status, 200);
+  assert.match(String(pdf.body), /%PDF/);
+  assert.match(String(pdf.body), /Revenue/);
+  assert.match(String(pdf.body), /Expenses/);
+  assert.match(String(pdf.body), /Page 1 of/);
+
+  const { reportToXlsx } = await import('../src/finance.js');
+  const { xlsxSheetNames } = await import('../src/xlsx.js');
+  const names = xlsxSheetNames(reportToXlsx(all.body));
+  assert.deepEqual(names, all.body.sections);
+  const xlsx = await call('GET', `/api/reports/custom.xlsx?from=${day}&to=${day}&sections=net`, { token: A() });
+  assert.equal(xlsx.status, 200);
+  assert.match(xlsx.headers.get('content-type'), /spreadsheetml/);
+
+  const preset = await call('GET', '/api/reports/custom?preset=lastMonth&today=2026-11-18&sections=net', { token: A() });
+  assert.equal(preset.body.period.from, '2026-10-01');
+  assert.equal(preset.body.period.to, '2026-10-31');
+
+  await call('PUT', '/api/staffMembers', { token: A(), body: [
+    { id: 'st-deny', name: 'No Reports', role: 'Librarian', status: 'Active', permissions: { reports: { view: false, manage: false }, canViewFinancials: false } },
+    { id: 'st-allow', name: 'Reports', role: 'Accountant', status: 'Active', permissions: { reports: { view: true }, canViewFinancials: true } },
+  ]});
+  const deniedUser = await call('POST', '/api/users', { token: A(), body: { email: 'noreports@test.local', password: 'Password-staff-123', role: 'staff', name: 'No Reports', staffId: 'st-deny' } });
+  assert.equal(deniedUser.status, 201, JSON.stringify(deniedUser.body));
+  const allowedUser = await call('POST', '/api/users', { token: A(), body: { email: 'yesreports@test.local', password: 'Password-staff-123', role: 'staff', name: 'Yes Reports', staffId: 'st-allow' } });
+  assert.equal(allowedUser.status, 201, JSON.stringify(allowedUser.body));
+  const noTok = await login('noreports@test.local', 'Password-staff-123');
+  const yesTok = await login('yesreports@test.local', 'Password-staff-123');
+  assert.equal((await call('GET', `/api/reports/custom?from=${day}&to=${day}&sections=net`, { token: noTok })).status, 403);
+  assert.equal((await call('GET', `/api/reports/pnl.csv?from=${day}&to=${day}`, { token: noTok })).status, 403);
+  assert.equal((await call('GET', `/api/reports/custom?from=${day}&to=${day}&sections=net`, { token: yesTok })).status, 200);
 });

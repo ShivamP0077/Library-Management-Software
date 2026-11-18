@@ -26,8 +26,11 @@ import { addFilesToDocuments, removeDocumentFile, groupStudentDocuments } from '
 import { useBackClose } from '../utils/useBackClose';
 import { useStudentPhoto } from '../utils/useStudentPhoto';
 import { getCanonicalShifts, matchesShiftFilter, isShiftInPlan, resolveCanonicalShift, normalizeShiftName } from '../utils/shiftUtils';
-import { getPlanBasePrice, getPlanDefaultDuration } from '../utils/pricingCalculator';
+import { getPlanBasePrice, getPlanDefaultDuration, planPricingUnit, durationUnitWord, formatDurationLabel } from '../utils/pricingCalculator';
 import { isVoidedPayment } from '../utils/paymentVoid';
+import { paymentRowCanOpenReceipt } from '../utils/receipt';
+import { api } from '../utils/api';
+import { useWhatsappStatus, isDisconnected } from '../utils/whatsappStatus';
 import { clientCanEditAmount } from '../utils/amountPermission';
 import { cycleConfig, effectiveCycleConfig, cycleFor, addDays, bridgeCharge, upgradeCharge } from '../utils/billingCycle';
 import { isAdmissionVoid } from '../utils/admissionVoid.js';
@@ -225,7 +228,7 @@ const ActionMenu = ({ items = [], label = 'More actions', triggerClassName = 'bt
   );
 };
 
-export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedStudent, setActiveTab, renewActionStudent, setRenewActionStudent, relocateActionStudent, setRelocateActionStudent }) => {
+export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedStudent, setActiveTab, renewActionStudent, setRenewActionStudent, relocateActionStudent, setRelocateActionStudent, onPrintReceipt }) => {
   const { 
     settings, students, branches, sections, activeBranchId, setActiveBranchId, plans, shifts, seatTypes, 
     renewSubscription, changeSeat, extendStudentDueDate, archiveStudent,
@@ -252,6 +255,9 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
 
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [waHistoryKey, setWaHistoryKey] = useState(0); // refresh the profile WhatsApp list after a personal send
+  const wa = useWhatsappStatus();
+  const whatsappInUse = wa.checked && wa.allowed && ['connected', 'connecting', 'disconnected'].includes(wa.state);
+  const [receiptSendNote, setReceiptSendNote] = useState({});
   const [waTargets, setWaTargets] = useState(null); // students for the WhatsApp send window
   const [selectedIds, setSelectedIds] = useState([]);
   const [isBulkRenewModalOpen, setIsBulkRenewModalOpen] = useState(false);
@@ -667,7 +673,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     
     const result = renewSubscription(selectedStudent.id, {
       planId: plan.id,
-      planName: `${plan.name} (${renewDuration} Month)`,
+      planName: `${plan.name} (${formatDurationLabel(renewDuration, planPricingUnit(plan))})`,
       shiftId: renewShiftId || plan.shiftIds?.[0] || selectedStudent.shiftId,
       shift: shifts.find(sh => sh.id === (renewShiftId || plan.shiftIds?.[0]))?.name || selectedStudent.shift,
       durationMonths: Number(renewDuration || 1),
@@ -837,7 +843,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
 
       const result = renewSubscription(id, {
         planId: planToApply.id,
-        planName: `${planToApply.name} (${renewDuration} Month)`,
+        planName: `${planToApply.name} (${formatDurationLabel(renewDuration, planPricingUnit(planToApply))})`,
         shiftId: renewShiftId || planToApply.shiftId,
         shift: shifts.find(sh => sh.id === (renewShiftId || planToApply.shiftId))?.name || planToApply.shift,
         durationMonths: Number(renewDuration || 1),
@@ -1107,10 +1113,10 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
         {filteredStudents.length === 0 ? (
           <div className="compact-empty" style={{ padding: '40px 16px', textAlign: 'center', color: 'var(--text-tertiary)' }}>No student records match your criteria.</div>
         ) : filteredStudents.map(student => {
-          const subStatus = getSubscriptionStatus(student, settings?.gracePeriodDays);
+          const subStatus = getSubscriptionStatus(student, settings);
           const badgeClass = subStatus.status === 'Expired' ? 'badge-expired' : (subStatus.isGrace ? 'badge-expiring' : 'badge-active');
           const checked = selectedIds.includes(student.id);
-          const missingSeat = student.seatNo !== 'Non-Fixed Seat' && student.seatNo !== 'None' && (student.status === 'Active' || student.status === 'Expiring Soon') && !getValidDesksList(student.branchId, student.sectionId).includes(student.seatNo);
+          const missingSeat = student.seatNo !== 'Non-Fixed Seat' && student.seatNo !== 'None' && subStatus.holdsDesk && !getValidDesksList(student.branchId, student.sectionId).includes(student.seatNo);
           return (
             <div key={student.id} role="row" aria-selected={isSelectionMode ? checked : undefined} className={`st-row${checked ? ' sel' : ''}`} onClick={() => isSelectionMode ? handleToggleSelect(student.id) : setSelectedStudent(student)}>
               {isSelectionMode && (
@@ -1508,8 +1514,41 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                 )}
                 {activeDrawerTab === 'payments' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    {selectedStudent.paymentHistory?.map((pay, idx) => (
-                      <div key={idx} style={{ padding: '16px', border: '1px solid var(--border-light)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    {selectedStudent.paymentHistory?.map((pay, idx) => {
+                      const openable = paymentRowCanOpenReceipt(pay);
+                      const rowKey = pay.receiptNo || pay.id || idx;
+                      const openReceipt = () => {
+                        if (!openable || !onPrintReceipt) return;
+                        onPrintReceipt({ ...pay, studentName: pay.studentName || selectedStudent.name, phone: pay.phone || selectedStudent.phone, studentId: pay.studentId || selectedStudent.id });
+                      };
+                      const sendPdf = async (e) => {
+                        e.stopPropagation();
+                        const phone = selectedStudent.phone;
+                        if (!phone) { setReceiptSendNote(n => ({ ...n, [rowKey]: 'Student has no phone number' })); return; }
+                        if (isDisconnected(wa)) { setReceiptSendNote(n => ({ ...n, [rowKey]: 'WhatsApp is disconnected. Reconnect it before sending the receipt.' })); return; }
+                        const ok = window.confirm(`Send receipt ${pay.receiptNo || ''} as a PDF to ${phone}?`);
+                        if (!ok) return;
+                        const earlier = (selectedStudent.paymentHistory || []).filter(p => paymentRowCanOpenReceipt(p) && (p.receiptNo || p.id) !== (pay.receiptNo || pay.id));
+                        const type = earlier.length || /renew/i.test(pay.planName || pay.type || '') ? 'renewal_receipt' : 'admission_receipt';
+                        setReceiptSendNote(n => ({ ...n, [rowKey]: 'Sending…' }));
+                        try {
+                          const r = await api.whatsappSendReceipt(pay.receiptNo || pay.id, type);
+                          if (r?.status === 'sent' || r?.status === 'duplicate') setReceiptSendNote(n => ({ ...n, [rowKey]: r.status === 'duplicate' ? 'Already sent' : 'Receipt PDF sent' }));
+                          else setReceiptSendNote(n => ({ ...n, [rowKey]: r?.error || r?.message?.error || (r?.status === 'skipped' ? `Not sent (${r.reason || 'skipped'})` : 'Could not send the receipt PDF') }));
+                        } catch (err) {
+                          setReceiptSendNote(n => ({ ...n, [rowKey]: err?.message || 'Could not send the receipt PDF' }));
+                        }
+                      };
+                      return (
+                      <div
+                        key={rowKey}
+                        data-testid="student-payment-row"
+                        role={openable ? 'button' : undefined}
+                        tabIndex={openable ? 0 : undefined}
+                        onClick={openReceipt}
+                        onKeyDown={(e) => { if (openable && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openReceipt(); } }}
+                        style={{ padding: '16px', border: '1px solid var(--border-light)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: openable ? 'pointer' : 'default', background: isVoidedPayment(pay) ? '#fef2f2' : undefined }}
+                      >
                         <div>
                           <div style={{ fontWeight: 600, fontSize: '14px' }}>{pay.receiptNo}</div>
                           <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>{pay.date} • {pay.method}{pay.referenceNo ? ` • Ref: ${pay.referenceNo}` : ''} • Staff: {pay.staffName || "Admin"}</div>
@@ -1520,16 +1559,25 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                           )}
                           {pay.reason && <div style={{ fontSize: '11px', color: '#ef4444', marginTop: '2px' }}>Reason: {pay.reason}</div>}
                         </div>
-                        <div style={{ textAlign: 'right' }}>
-                          {isVoidedPayment(pay) && (
-                            <div data-testid="payment-voided-badge" style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: '#fee2e2', color: '#b91c1c', display: 'inline-block', marginBottom: 4 }}>Voided</div>
-                          )}
-                          <div style={{ fontWeight: 700, color: isVoidedPayment(pay) ? '#9ca3af' : ((pay.type === 'Refund' || pay.amount < 0) ? '#ef4444' : '#10b981'), textDecoration: isVoidedPayment(pay) ? 'line-through' : 'none' }}>
-                            {pay.type === 'Refund' || pay.amount < 0 ? `-₹${Math.abs(pay.amount).toLocaleString()} (Refund)` : `₹${(pay.netTotal || pay.amount).toLocaleString()}`}
+                        <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <div>
+                            {isVoidedPayment(pay) && (
+                              <div data-testid="payment-voided-badge" style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: '#fee2e2', color: '#b91c1c', display: 'inline-block', marginBottom: 4 }}>Voided</div>
+                            )}
+                            <div style={{ fontWeight: 700, color: isVoidedPayment(pay) ? '#9ca3af' : ((pay.type === 'Refund' || pay.amount < 0) ? '#ef4444' : '#10b981'), textDecoration: isVoidedPayment(pay) ? 'line-through' : 'none' }}>
+                              {pay.type === 'Refund' || pay.amount < 0 ? `-₹${Math.abs(pay.amount).toLocaleString()} (Refund)` : `₹${(pay.netTotal || pay.amount).toLocaleString()}`}
+                            </div>
+                            {receiptSendNote[rowKey] && <div data-testid="student-payment-whatsapp-status" style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: 4, maxWidth: 180 }}>{receiptSendNote[rowKey]}</div>}
                           </div>
+                          {openable && whatsappInUse && (
+                            <button type="button" data-testid="student-payment-whatsapp" className="btn btn-ghost" title={`Send receipt PDF to ${selectedStudent.phone || 'student'}`} onClick={sendPdf} style={{ padding: '6px' }}>
+                              <MessageCircle size={16} />
+                            </button>
+                          )}
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
                 {activeDrawerTab === 'whatsapp' && (
@@ -1733,7 +1781,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
                     <div className="form-group">
-                      <label className="form-label">Duration (Months)</label>
+                      <label className="form-label">Duration ({renewPlanId && renewPlanId !== 'keep_existing' ? durationUnitWord(planPricingUnit(plans.find(p => p.id === renewPlanId))) : 'Months'})</label>
                       <NumericInput className="form-input" value={renewDuration} onChange={(e) => setRenewDuration(e.target.value)} min={1} />
                     </div>
                     <div className="form-group">
@@ -1881,7 +1929,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
                     <div className="form-group">
-                      <label className="form-label">Duration (Months)</label>
+                      <label className="form-label">Duration ({durationUnitWord(planPricingUnit(validRenewalPlans.find(p => p.id === renewPlanId)))})</label>
                       <NumericInput 
                         className="form-input manual-duration-input" 
                         value={renewDuration} 

@@ -17,13 +17,13 @@ test('a failed or incomplete refresh is not treated as success', () => {
 });
 
 test('Super Admin Refresh shows loading, disables repeats, and toasts success only after the request', () => {
-  assert.match(dash, /toast\.loading\('Refreshing…'\)/);
-  assert.match(dash, /if \(result\.ok\) toast\.success\('Refreshed'/);
-  assert.match(dash, /toast\.error\(result\.error\?\.message \|\| 'Could not refresh'/);
+  assert.match(dash, /toast\.loading\(SUPERADMIN_REFRESH\.refreshing\)/);
+  assert.match(dash, /if \(result\.ok\) toast\.success\(SUPERADMIN_REFRESH\.refreshed/);
+  assert.match(dash, /toast\.error\(result\.error\?\.message \|\| SUPERADMIN_REFRESH\.failed/);
   assert.match(dash, /verifiedAdminRefresh\(libs, sum\)/);
   assert.match(dash, /disabled=\{loading\}/);
   assert.match(dash, /refreshInFlight\.current/);
-  const successAt = dash.indexOf("toast.success('Refreshed'");
+  const successAt = dash.indexOf('toast.success(SUPERADMIN_REFRESH.refreshed');
   const checkAt = dash.indexOf('if (result.ok)');
   assert.ok(checkAt !== -1 && successAt > checkAt);
 });

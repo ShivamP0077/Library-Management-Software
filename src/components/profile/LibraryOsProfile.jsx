@@ -2,18 +2,19 @@ import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ArrowLeft, Building2, ChevronRight, CreditCard, FileText, Info, KeyRound, Languages,
-  LogOut, Mail, Moon, Phone, Shield, Wallet,
+  LogOut, Moon, Phone, Shield, Wallet,
 } from 'lucide-react';
 import pkg from '../../../package.json';
 import { useAuth } from '../../auth/AuthContext';
 import { ChangePasswordModal } from '../../auth/ChangePasswordModal';
-import { MySoftwarePlanModal } from '../../auth/MySoftwarePlanModal';
 import { useLibrary } from '../../context/LibraryContext';
 import { SupportCenter } from '../SupportCenter';
 import { applyTheme, readTheme } from '../../utils/theme';
 import { isLibraryLocked } from '../../utils/subscriptionLock';
-import { SUPPORT_EMAIL, SUPPORT_PHONE, SUPPORT_WHATSAPP, whatsappHref } from '../../utils/support';
+import { legalHref } from '../../utils/support';
+import { ContactChoices } from '../ContactChoices';
 import { SubscriptionPage } from './SubscriptionPage';
+import { WalletPage } from './WalletPage';
 import './profile.css';
 
 function Row({ icon: Icon, tint, label, value, onClick, danger = false }) {
@@ -41,12 +42,13 @@ function Subpage({ title, onBack, children }) {
 
 export function LibraryOsProfile({ screen = 'home', onScreenChange, onClose, onPaid }) {
   const { user, library, logout, subscriptionAccess } = useAuth();
-  const { settings, branches, activeBranchId, setActiveBranchId } = useLibrary();
+  const { settings, branches, activeBranchId, setActiveBranchId, currentStaff, hasPermission } = useLibrary();
   const [dark, setDark] = useState(() => readTheme() === 'dark');
   const [langOpen, setLangOpen] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
-  const [walletOpen, setWalletOpen] = useState(false);
   const canPay = user?.role === 'client_admin' || user?.role === 'superadmin';
+  const librarianBlocked = currentStaff?.role === 'Librarian';
+  const showWallet = !librarianBlocked && (canPay || hasPermission?.('wallet', 'view'));
   const planLocked = isLibraryLocked(subscriptionAccess, user);
   const name = user?.name || 'Owner';
   const initial = (name || user?.email || 'M').trim().charAt(0).toUpperCase();
@@ -115,12 +117,13 @@ export function LibraryOsProfile({ screen = 'home', onScreenChange, onClose, onP
 
       <section className="os-card">
         <Row icon={CreditCard} tint="#dbeafe" label="Subscription" onClick={() => go('subscription')} />
-        <Row icon={Wallet} tint="#fef3c7" label="Wallet" onClick={() => { if (canPay) setWalletOpen(true); else go('subscription'); }} />
+        {showWallet && <Row icon={Wallet} tint="#fef3c7" label="Wallet" onClick={() => go('wallet')} />}
         <Row icon={KeyRound} tint="#e7e5e4" label="Change Password" onClick={() => setPwOpen(true)} />
         <Row icon={Phone} tint="#dcfce7" label="Contact Us" onClick={() => go('contact')} />
         <Row icon={Shield} tint="#ede9fe" label="Privacy Policy" onClick={() => go('privacy')} />
         <Row icon={FileText} tint="#e0e7ff" label="Terms & Conditions" onClick={() => go('terms')} />
         <Row icon={Info} tint="#ccfbf1" label="About" onClick={() => go('about')} />
+        <Row icon={FileText} tint="#fce7f3" label="Refund & Cancellation" onClick={() => go('refund')} />
       </section>
 
       <section className="os-card">
@@ -132,50 +135,31 @@ export function LibraryOsProfile({ screen = 'home', onScreenChange, onClose, onP
   let body = home;
   if (view === 'subscription') {
     body = <SubscriptionPage onBack={() => go('home')} onPaid={onPaid} canPay={canPay} locked={planLocked} />;
+  } else if (view === 'wallet') {
+    body = <WalletPage onBack={() => go('home')} canPay={canPay} libraryName={libraryName} />;
   } else if (view === 'contact') {
     body = (
       <Subpage title="Contact Us" onBack={() => go('home')}>
-        <section className="os-card os-contact">
-          <a className="os-row" href={`mailto:${SUPPORT_EMAIL}`}>
-            <span className="os-icon" style={{ background: '#dbeafe' }}><Mail size={18} color="#1c1917" /></span>
-            <span className="os-row-label">Email</span>
-            <span className="os-row-value">{SUPPORT_EMAIL}</span>
-          </a>
-          {SUPPORT_PHONE && (
-            <div className="os-row" style={{ cursor: 'default' }}>
-              <span className="os-icon" style={{ background: '#dcfce7' }}><Phone size={18} color="#1c1917" /></span>
-              <span className="os-row-label">Phone</span>
-              <span className="os-row-value"><a href={`tel:${SUPPORT_PHONE}`}>{SUPPORT_PHONE}</a></span>
-            </div>
-          )}
-          {SUPPORT_WHATSAPP && whatsappHref(SUPPORT_WHATSAPP) && (
-            <div className="os-row" style={{ cursor: 'default' }}>
-              <span className="os-icon" style={{ background: '#d1fae5' }}><Phone size={18} color="#1c1917" /></span>
-              <span className="os-row-label">WhatsApp</span>
-              <span className="os-row-value"><a href={whatsappHref(SUPPORT_WHATSAPP)} target="_blank" rel="noreferrer">Chat</a></span>
-            </div>
-          )}
-        </section>
+        <ContactChoices showPublicTicket={false} />
+        <h3 className="os-row-label" style={{ margin: '12px 4px' }}>Raise a support ticket</h3>
         <SupportCenter embedded />
       </Subpage>
     );
-  } else if (view === 'privacy') {
+  } else if (view === 'privacy' || view === 'terms' || view === 'refund') {
+    const legal = {
+      privacy: ['Privacy Policy', '/privacy'],
+      terms: ['Terms & Conditions', '/terms'],
+      refund: ['Refund & Cancellation', '/refund'],
+    }[view];
     body = (
-      <Subpage title="Privacy Policy" onBack={() => go('home')}>
+      <Subpage title={legal[0]} onBack={() => go('home')}>
         <section className="os-card os-card-pad os-legal">
-          <p>My Library OS stores library records so the owner and staff can run admissions, seats, fees and reminders. A full privacy policy page is not published in this app yet. This screen is a placeholder until that page is linked.</p>
+          <p>This page is published on the My Library OS site.</p>
+          <p><a href={legalHref(legal[1])}>{legal[0]}</a></p>
         </section>
       </Subpage>
     );
-  } else if (screen === 'terms') {
-    body = (
-      <Subpage title="Terms & Conditions" onBack={() => go('home')}>
-        <section className="os-card os-card-pad os-legal">
-          <p>Use of My Library OS is covered by the agreement between your library and the platform. A full terms page is not published in this app yet. This screen is a placeholder until that page is linked.</p>
-        </section>
-      </Subpage>
-    );
-  } else if (screen === 'about') {
+  } else if (view === 'about') {
     body = (
       <Subpage title="About" onBack={() => go('home')}>
         <section className="os-card os-card-pad os-legal">
@@ -206,7 +190,6 @@ export function LibraryOsProfile({ screen = 'home', onScreenChange, onClose, onP
         </div>
       )}
       {pwOpen && <ChangePasswordModal onClose={() => setPwOpen(false)} hasPassword={!(user?.authProviders?.length && !user.authProviders.includes('password'))} />}
-      {walletOpen && <MySoftwarePlanModal onClose={() => setWalletOpen(false)} />}
     </div>,
     document.body,
   );

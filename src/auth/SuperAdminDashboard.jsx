@@ -1,9 +1,11 @@
 import { confirmNameMatches } from '../utils/confirmName';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Building2, Eye, LogOut, Plus, RefreshCw, Shield, UserPlus, Power, Trash2 } from 'lucide-react';
+import { Building2, Eye, KeyRound, LogOut, Plus, RefreshCw, Shield, UserPlus, Power, Trash2 } from 'lucide-react';
+import { AssistedPasswordReset } from './AssistedPasswordReset';
 import toast, { Toaster } from 'react-hot-toast';
 import { api } from '../utils/api';
 import { verifiedAdminRefresh } from '../utils/refreshFeedback';
+import { SUPERADMIN_REFRESH } from '../utils/refreshCopy';
 import { useAuth } from './AuthContext';
 import { LibraryInsights } from './LibraryInsights';
 import { PartnersAdmin } from './PartnersAdmin';
@@ -39,6 +41,7 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
   const [deleteName, setDeleteName] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const [resetFor, setResetFor] = useState(null);
   const nameOk = !!deleteFor && confirmNameMatches(deleteName, deleteFor.name);
   const confirmDelete = async (e) => {
     e.preventDefault();
@@ -69,17 +72,18 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
       return { ok: false, error: e };
     } finally { setLoading(false); }
   }, []);
+
   useEffect(() => { load(); }, [load]);
 
   const refreshInFlight = useRef(false);
   const refreshLibraries = async () => {
     if (refreshInFlight.current || loading) return;
     refreshInFlight.current = true;
-    const toastId = toast.loading('Refreshing…');
+    const toastId = toast.loading(SUPERADMIN_REFRESH.refreshing);
     try {
       const result = await load({ silent: true });
-      if (result.ok) toast.success('Refreshed', { id: toastId });
-      else toast.error(result.error?.message || 'Could not refresh', { id: toastId });
+      if (result.ok) toast.success(SUPERADMIN_REFRESH.refreshed, { id: toastId });
+      else toast.error(result.error?.message || SUPERADMIN_REFRESH.failed, { id: toastId });
     } finally {
       refreshInFlight.current = false;
     }
@@ -122,7 +126,7 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button type="button" className="btn btn-secondary btn-sm" onClick={refreshLibraries} disabled={loading} aria-busy={loading}><RefreshCw size={14} /> <span>{loading ? 'Refreshing…' : 'Refresh'}</span></button>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={refreshLibraries} disabled={loading} aria-busy={loading}><RefreshCw size={14} /> <span>{loading ? SUPERADMIN_REFRESH.refreshing : 'Refresh'}</span></button>
           <button className="btn btn-ghost btn-sm" onClick={logout}><LogOut size={14} /> <span>Sign out</span></button>
         </div>
       </header>
@@ -195,6 +199,7 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
                       <button className="btn btn-ghost btn-sm" title="View read-only" onClick={() => onOpenLibrary(l, true)}><Eye size={14} /></button>
                       <button className="btn btn-secondary btn-sm" title="Access Library" onClick={() => onOpenLibrary(l, false)}><Building2 size={14} /> <span>Access Library</span></button>
                       <button className="btn btn-ghost btn-sm" title="Add client admin" onClick={() => setInviteFor(l)}><UserPlus size={14} /></button>
+                      <button className="btn btn-ghost btn-sm" title="Reset owner or staff password" onClick={() => setResetFor(l)}><KeyRound size={14} /></button>
                       <button className="btn btn-ghost btn-sm" title={l.status === 'Active' ? 'Disable' : 'Enable'} onClick={() => toggleStatus(l)}><Power size={14} /></button>
                       <button className="btn btn-ghost btn-sm" title="Delete library" aria-label={`Delete ${l.name}`} style={{ color: '#dc2626' }} onClick={() => { setDeleteFor(l); setDeleteName(''); setDeleteError(''); }}><Trash2 size={14} /></button>
                     </td>
@@ -225,6 +230,7 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
             </form>
           </div>
         )}
+        {resetFor && <AssistedPasswordReset library={resetFor} onClose={() => setResetFor(null)} />}
         {inviteFor && (
           <form className="premium-card" style={{ padding: 16, display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }} onSubmit={addAdmin}>
             <div className="form-group" style={{ flex: 1, minWidth: 240, marginBottom: 0 }}>

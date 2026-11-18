@@ -14,7 +14,7 @@ async function staff(id, role, email, permissions) {
   assert.equal(saved.status, 201, JSON.stringify(saved.body));
   const inv = await call('POST', '/api/invites', { token: A(), body: { email, name: id, staffId: id, permissions } });
   assert.equal(inv.status, 201, JSON.stringify(inv.body));
-  const token = inv.body.link.split('#invite=')[1];
+  const token = decodeURIComponent(inv.body.link.split('/invite/')[1]);
   const accepted = await call('POST', '/api/auth/invite/accept', { body: { token, password: 'StaffPass-123' } });
   assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
   return accepted.body.token;

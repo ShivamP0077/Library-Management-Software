@@ -5,6 +5,17 @@ import { motion } from 'framer-motion';
 import { api } from '../utils/api';
 import toast from 'react-hot-toast';
 import { isVoidedPayment, sumActivePayments } from '../utils/paymentVoid';
+import { REPORT_SECTIONS, resolveDateRange, branchFilterState, sectionFilterState } from '../utils/reportBuilder';
+
+const PRESETS = [
+  { id: 'last7', label: 'Last 7 days' },
+  { id: 'thisMonth', label: 'This month' },
+  { id: 'lastMonth', label: 'Last month' },
+  { id: 'last2Months', label: 'Last 2 months' },
+  { id: 'quarter', label: 'Quarter' },
+  { id: 'year', label: 'Year' },
+  { id: 'custom', label: 'Custom' },
+];
 
 const firstOfMonth = (dateStr) => {
   const d = dateStr ? new Date(`${dateStr}T00:00:00`) : new Date();
@@ -12,7 +23,7 @@ const firstOfMonth = (dateStr) => {
 };
 
 export const ReportsManager = () => {
-  const { payments, expenses, students, branches, activeBranchId, todayStr, hasPermission } = useLibrary();
+  const { payments, expenses, students, branches, sections, activeBranchId, todayStr, hasPermission } = useLibrary();
   const showNetProfit = hasPermission('reports', 'netProfit');
   const canExport = hasPermission('reports', 'export');
   const showCollections = hasPermission('payments', 'view');
@@ -20,6 +31,42 @@ export const ReportsManager = () => {
 
   const [fromDate, setFromDate] = useState(() => firstOfMonth(todayStr));
   const [toDate, setToDate] = useState(() => todayStr || new Date().toISOString().split('T')[0]);
+  const [preset, setPreset] = useState('thisMonth');
+  const [picked, setPicked] = useState(() => REPORT_SECTIONS.map(s => s.id));
+  const branchState = branchFilterState(branches);
+  const [branchId, setBranchId] = useState(branchState.value);
+  const sectionState = sectionFilterState(sections, branchState.locked ? branchState.value : branchId);
+  const [sectionId, setSectionId] = useState(sectionState.value);
+
+  const applyPreset = (id) => {
+    setPreset(id);
+    if (id === 'custom') return;
+    const range = resolveDateRange(id, { today: todayStr || new Date().toISOString().split('T')[0] });
+    setFromDate(range.from);
+    setToDate(range.to);
+  };
+  const toggleSection = (id) => {
+    setPicked(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+  const effectiveBranch = branchState.locked ? branchState.value : branchId;
+  const effectiveSection = sectionState.locked ? sectionState.value : sectionId;
+
+  const downloadCustom = async (format) => {
+    if (!picked.length) { toast.error('Choose at least one section'); return; }
+    try {
+      const q = new URLSearchParams({
+        preset: preset === 'custom' ? 'custom' : preset,
+        from: fromDate, to: toDate,
+        branchId: effectiveBranch || 'all',
+        sectionId: effectiveSection || 'all',
+        sections: picked.join(','),
+        today: todayStr || '',
+      });
+      await api.downloadFile(`/reports/custom.${format}?${q}`, `report.${format}`);
+    } catch (e) {
+      toast.error(e.message || 'Download failed');
+    }
+  };
   const [serverPnl, setServerPnl] = useState(null);
   const [pnlLoading, setPnlLoading] = useState(false);
   const [pnlError, setPnlError] = useState(false);
@@ -104,6 +151,53 @@ export const ReportsManager = () => {
           <h2 style={{ fontSize: '24px', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>Financial Reports</h2>
           <p style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>Profit & Loss statement and financial breakdown</p>
         </div>
+      </div>
+
+      <div className="premium-card" style={{ minWidth: 0 }}>
+        <h3 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '8px' }}>Custom report</h3>
+        <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginBottom: '16px' }}>Choose sections, a date range, and a branch or section. Shared expenses are counted once.</p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
+          {PRESETS.map(p => (
+            <button key={p.id} type="button" className={preset === p.id ? 'btn btn-primary' : 'btn btn-secondary'} onClick={() => applyPreset(p.id)}>{p.label}</button>
+          ))}
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
+          {REPORT_SECTIONS.map(s => (
+            <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
+              <input type="checkbox" checked={picked.includes(s.id)} onChange={() => toggleSection(s.id)} />
+              {s.label}
+            </label>
+          ))}
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
+          <div className="form-group" style={{ marginBottom: 0, minWidth: '160px' }}>
+            <label className="form-label">Branch</label>
+            {branchState.locked ? (
+              <input className="form-input" value={branchState.options[0]?.name || 'All'} disabled readOnly />
+            ) : (
+              <select className="form-input" value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+                <option value="all">All</option>
+                {branchState.options.map(b => <option key={b.id} value={b.id}>{b.name || b.id}</option>)}
+              </select>
+            )}
+          </div>
+          <div className="form-group" style={{ marginBottom: 0, minWidth: '160px' }}>
+            <label className="form-label">Section</label>
+            {sectionState.locked ? (
+              <input className="form-input" value={sectionState.options[0]?.name || 'All'} disabled readOnly />
+            ) : (
+              <select className="form-input" value={sectionId} onChange={(e) => setSectionId(e.target.value)}>
+                <option value="all">All</option>
+                {sectionState.options.map(s => <option key={s.id} value={s.id}>{s.name || s.id}</option>)}
+              </select>
+            )}
+          </div>
+        </div>
+        {canExport && <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <button type="button" className="btn btn-secondary" onClick={() => downloadCustom('csv')}><Download size={16} /> CSV</button>
+          <button type="button" className="btn btn-secondary" onClick={() => downloadCustom('pdf')}><Download size={16} /> PDF</button>
+          <button type="button" className="btn btn-secondary" onClick={() => downloadCustom('xlsx')}><Download size={16} /> Excel</button>
+        </div>}
       </div>
 
       {/* Server P&L */}

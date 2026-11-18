@@ -9,6 +9,7 @@
  * - Every ticket action and every export is written to the audit log.
  * - Exports (CSV) respect the viewer's module permission; they never cross tenants.
  */
+import crypto from 'crypto';
 import mongoose from 'mongoose';
 import express from 'express';
 import tenantGuard, { applyBulkWriteGuard } from './tenantGuard.js';
@@ -16,6 +17,10 @@ import { models, Library } from './models.js';
 import { audit } from './audit.js';
 import { viewerScope, ALLOWED_TYPES, MAX_ATTACHMENT, MAX_SUPPORT_TOTAL, notify } from './notifications.js';
 import { toCsv, registerSaasKpi } from './insights.js';
+import { rateLimited } from './accounts.js';
+import { sendMail } from './mailer.js';
+import { sendMobileMessage } from './messaging.js';
+import { EMAIL_RE, normalizeEmail, normalizeMobile, isMobile } from './identity.js';
 
 export const TICKET_CATEGORIES = ['general', 'billing', 'technical', 'whatsapp', 'account', 'data', 'feature_request'];
 // Kept for backward compatibility: legacy tickets may still use waiting_on_customer/closed.
@@ -65,6 +70,10 @@ const ticketSchema = new mongoose.Schema({
   // They are shown as chat messages on read and are never written back.
   description: String,
   reply: String,
+  // Public (logged-out) tickets. Contact is the one later proved with an OTP. Never a library tenant.
+  publicName: String,
+  publicEmail: String,
+  publicMobile: String,
 }, { timestamps: true });
 // Deliberately no {tenantId, number} unique index and no global unique index here: duplicates
 // already exist in production and auto-index creation would fail. scripts/support-global-numbering.mjs
@@ -633,6 +642,199 @@ export function createSupportAdminRouter() {
     await audit(req, 'support.ticket_update', { tenantId: t.tenantId, target: ticketNumberLabel(t.number), detail: { ...set } });
     res.json(pubTicket(u.toObject(), { full: true, admin: true }));
   }));
+  return r;
+}
+
+/* ------------------------------------------------------------ public (no login) tickets */
+export const PUBLIC_SUPPORT_TENANT = 'public';
+const PUBLIC_FAIL = 'Could not show that ticket.';
+const OTP_TRIES = 5;
+const lookupMinutes = () => Number(process.env.SUPPORT_LOOKUP_OTP_MINUTES || 10);
+
+const lookupOtpSchema = new mongoose.Schema({
+  ticketId: { type: String, required: true, index: true },
+  contactHash: { type: String, required: true },
+  channel: { type: String, enum: ['email', 'mobile'], required: true },
+  codeHash: { type: String, required: true },
+  expiresAt: { type: Date, required: true },
+  attempts: { type: Number, default: 0 },
+  lockedAt: Date,
+  usedAt: Date,
+}, { timestamps: true });
+lookupOtpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+export const SupportLookupOtp = mongoose.models.SupportLookupOtp || mongoose.model('SupportLookupOtp', lookupOtpSchema);
+
+const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
+const hashesEqual = (a, b) => {
+  const left = Buffer.from(String(a));
+  const right = Buffer.from(String(b));
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+};
+
+export function parsePublicTicketNumber(raw) {
+  const digits = String(raw || '').trim().replace(/^#/, '').replace(/\D/g, '');
+  if (!digits || digits.length > 12) return null;
+  const n = Number(digits);
+  if (!Number.isInteger(n) || n < 1) return null;
+  return n;
+}
+
+const publicContact = (body) => {
+  const email = normalizeEmail(body?.email);
+  const mobile = body?.mobile ? normalizeMobile(body.mobile) : '';
+  return {
+    email: EMAIL_RE.test(email) ? email : '',
+    mobile: mobile && isMobile(mobile) ? mobile : '',
+  };
+};
+
+async function findPublicTicket(number, contact) {
+  const or = [];
+  if (contact.email) or.push({ publicEmail: contact.email });
+  if (contact.mobile) or.push({ publicMobile: contact.mobile });
+  if (!or.length || !number) return null;
+  return SupportTicket.findOne({ tenantId: PUBLIC_SUPPORT_TENANT, number, $or: or }).setOptions({ skipTenantGuard: false });
+}
+
+const publicView = (t) => {
+  const shown = presentMessages(t);
+  return {
+    number: t.number,
+    numberLabel: ticketNumberLabel(t.number),
+    status: t.status,
+    category: t.category,
+    subject: t.subject,
+    createdAt: t.createdAt,
+    messages: shown.map(m => ({
+      fromSupport: !!m.fromSupport,
+      body: m.body,
+      at: m.at,
+      attachments: (m.attachments || []).map(a => ({ name: a.name, type: a.type, size: a.size })),
+    })),
+  };
+};
+
+export function createPublicSupportRouter() {
+  const r = express.Router();
+
+  r.post('/public/support/tickets', wrap(async (req, res) => {
+    if (rateLimited(`pub-ticket:${req.ip}`, 5, 15 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
+    const name = String(req.body?.name || '').trim().slice(0, 80);
+    const description = String(req.body?.description || req.body?.message || '').trim();
+    const category = TICKET_CATEGORIES.includes(req.body?.category) ? req.body.category : '';
+    const contact = publicContact(req.body);
+    if (name.length < 2) return res.status(400).json({ error: 'Name is required' });
+    if (!contact.email && !contact.mobile) return res.status(400).json({ error: 'Email or mobile is required' });
+    if (req.body?.email && !contact.email) return res.status(400).json({ error: 'Enter a valid email' });
+    if (req.body?.mobile && !contact.mobile) return res.status(400).json({ error: 'Enter a valid mobile' });
+    if (!category) return res.status(400).json({ error: 'Choose a category' });
+    if (description.length < 5) return res.status(400).json({ error: 'Describe the problem' });
+    let files = [];
+    try { files = parseAttachments(req.body?.attachments); }
+    catch (e) { return res.status(e.status || 400).json({ error: 'The attachment could not be accepted' }); }
+    let t;
+    for (let i = 0; i < 8 && !t; i++) {
+      try {
+        t = await SupportTicket.create({
+          tenantId: PUBLIC_SUPPORT_TENANT,
+          number: await nextSupportTicketNumber(),
+          subject: name.slice(0, 160),
+          category,
+          priority: 'normal',
+          createdById: 'public',
+          createdByEmail: contact.email || contact.mobile,
+          createdByRole: 'public',
+          publicName: name,
+          publicEmail: contact.email || undefined,
+          publicMobile: contact.mobile || undefined,
+          migrationVersion: SUPPORT_NUMBERING_VERSION,
+          description: description.slice(0, 5000),
+          statusHistory: [{ status: 'open', byId: 'public', byEmail: contact.email || contact.mobile, at: new Date() }],
+          messages: [{
+            authorId: 'public',
+            authorEmail: contact.email || contact.mobile,
+            authorRole: 'public',
+            fromSupport: false,
+            body: description.slice(0, 5000),
+            status: 'sent',
+            attachments: files,
+          }],
+        });
+      } catch (e) {
+        if (e?.code !== 11000) throw e;
+      }
+    }
+    if (!t) return res.status(409).json({ error: 'Could not save the ticket. Please retry.' });
+    await audit(req, 'support.public_ticket_create', { tenantId: PUBLIC_SUPPORT_TENANT, target: ticketNumberLabel(t.number), detail: { category, files: files.length } });
+    res.status(201).json({
+      id: ticketNumberLabel(t.number),
+      number: t.number,
+      numberLabel: ticketNumberLabel(t.number),
+      status: t.status,
+    });
+  }));
+
+  r.post('/public/support/otp', wrap(async (req, res) => {
+    if (rateLimited(`pub-otp-ip:${req.ip}`, 8, 15 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
+    const generic = { ok: true, message: 'If the ticket matches that contact, we sent a code. It expires soon.' };
+    const number = parsePublicTicketNumber(req.body?.ticket || req.body?.ticketId || req.body?.number);
+    const contact = publicContact(req.body);
+    if (!number || (!contact.email && !contact.mobile)) return res.json(generic);
+    const channel = contact.email ? 'email' : 'mobile';
+    const key = contact.email || contact.mobile;
+    if (rateLimited(`pub-otp:${number}:${key}`, 3, 10 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
+    const t = await findPublicTicket(number, contact);
+    if (!t) return res.json(generic);
+    const code = String(crypto.randomInt(0, 1e6)).padStart(6, '0');
+    const text = `Your My Library OS ticket code is ${code}. It expires in ${lookupMinutes()} minutes.`;
+    try {
+      if (channel === 'email') await sendMail({ to: contact.email, subject: 'Your My Library OS ticket code', text });
+      else {
+        const delivery = await sendMobileMessage({ to: contact.mobile, text });
+        if (!delivery?.sent) return res.json(generic);
+      }
+    } catch { return res.json(generic); }
+    const contactHash = sha256(`${channel}:${key}`);
+    await SupportLookupOtp.updateMany({ ticketId: String(t._id), contactHash, usedAt: null }, { $set: { usedAt: new Date() } });
+    await SupportLookupOtp.create({
+      ticketId: String(t._id),
+      contactHash,
+      channel,
+      codeHash: sha256(`${String(t._id)}:${code}`),
+      expiresAt: new Date(Date.now() + lookupMinutes() * 60e3),
+    });
+    res.json(generic);
+  }));
+
+  const deny = (res) => res.status(401).json({ error: PUBLIC_FAIL });
+
+  r.post('/public/support/lookup', wrap(async (req, res) => {
+    if (rateLimited(`pub-look:${req.ip}`, 20, 15 * 60e3)) return res.status(429).json({ error: 'Too many requests. Try again later.' });
+    const code = String(req.body?.otp || req.body?.code || '').trim();
+    const number = parsePublicTicketNumber(req.body?.ticket || req.body?.ticketId || req.body?.number);
+    const contact = publicContact(req.body);
+    if (!code || !/^\d{6}$/.test(code) || !number || (!contact.email && !contact.mobile)) return deny(res);
+    const t = await findPublicTicket(number, contact);
+    if (!t) return deny(res);
+    const channel = contact.email ? 'email' : 'mobile';
+    const contactHash = sha256(`${channel}:${contact.email || contact.mobile}`);
+    const rec = await SupportLookupOtp.findOne({
+      ticketId: String(t._id), contactHash, usedAt: null, expiresAt: { $gt: new Date() },
+    }).sort({ createdAt: -1 });
+    if (!rec || rec.lockedAt || rec.attempts >= OTP_TRIES) return deny(res);
+    if (!hashesEqual(rec.codeHash, sha256(`${String(t._id)}:${code}`))) {
+      rec.attempts += 1;
+      if (rec.attempts >= OTP_TRIES) rec.lockedAt = new Date();
+      await rec.save();
+      return deny(res);
+    }
+    const claimed = await SupportLookupOtp.findOneAndUpdate({ _id: rec._id, usedAt: null, lockedAt: null }, { $set: { usedAt: new Date() } });
+    if (!claimed) return deny(res);
+    res.json({ ticket: publicView(t.toObject()) });
+  }));
+
+  r.get('/public/support/tickets/:id', (_req, res) => deny(res));
+
   return r;
 }
 

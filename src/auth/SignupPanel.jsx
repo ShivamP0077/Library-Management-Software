@@ -2,6 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../utils/api';
 import { SignupPlanPicker } from './SignupPlanPicker';
+import { ContactChoices } from '../components/ContactChoices';
+import { intervalOffered } from '../utils/softwarePlanForm';
 
 export function SignupPanel({ plans = [], googleSignup = false, mobileSignupAvailable = false, paymentsConfigured = false, googlePendingToken = '', onDone, onBack }) {
   const [step, setStep] = useState(googlePendingToken ? 2 : 1); // 1 verify, 2 details, 3 payment
@@ -20,6 +22,7 @@ export function SignupPanel({ plans = [], googleSignup = false, mobileSignupAvai
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [busy, setBusy] = useState(false);
+  const [resendWait, setResendWait] = useState(0);
   const [error, setError] = useState('');
   const [info, setInfo] = useState(googlePendingToken ? 'Google verified. Choose a plan and name your library.' : '');
   const [sessionResult, setSessionResult] = useState(null);
@@ -33,6 +36,16 @@ export function SignupPanel({ plans = [], googleSignup = false, mobileSignupAvai
   useEffect(() => {
     if (!mobileSignupAvailable && channel === 'mobile') setChannel('email');
   }, [mobileSignupAvailable, channel]);
+
+  useEffect(() => {
+    if (step === 2 && !viaGoogle) setResendWait(30);
+  }, [step, viaGoogle]);
+
+  useEffect(() => {
+    if (resendWait <= 0) return undefined;
+    const timer = setTimeout(() => setResendWait((seconds) => seconds - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [resendWait]);
 
   useEffect(() => {
     if (googlePendingToken) {
@@ -51,6 +64,18 @@ export function SignupPanel({ plans = [], googleSignup = false, mobileSignupAvai
         : await api.signupStart(email.trim());
       setInfo(r.message || 'Code sent.');
       setStep(2);
+    });
+  };
+
+  const resendCode = () => {
+    if (resendWait > 0) return;
+    run(async () => {
+      const r = channel === 'mobile' && mobileSignupAvailable
+        ? await api.signupStartMobile(mobile.trim())
+        : await api.signupStart(email.trim());
+      setCode('');
+      setResendWait(30);
+      setInfo(r.message ? `${r.message} A new code was sent. The old code no longer works.` : 'A new code was sent. The old code no longer works.');
     });
   };
 
@@ -168,6 +193,9 @@ export function SignupPanel({ plans = [], googleSignup = false, mobileSignupAvai
               <div className="form-group">
                 <label className="form-label" htmlFor="signup-code">6-digit code</label>
                 <input id="signup-code" className="form-input" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={e => setCode(e.target.value.replace(/\D/g, ''))} required />
+                <button id="signup-resend" type="button" className="btn btn-ghost btn-sm" disabled={busy || resendWait > 0} onClick={resendCode} style={{ marginTop: 8, padding: '4px 0' }}>
+                  {resendWait > 0 ? `Resend code in ${resendWait}s` : 'Resend code'}
+                </button>
               </div>
               {channel === 'mobile' && mobileSignupAvailable && (
                 <div className="form-group">
@@ -185,7 +213,7 @@ export function SignupPanel({ plans = [], googleSignup = false, mobileSignupAvai
             onSelect={(id) => {
               setPlanId(id);
               const next = plans.find(p => p.planId === id);
-              if (interval === 'year' && !next?.priceYearly) setInterval('month');
+              if (!intervalOffered(next, interval)) setInterval('month');
             }}
           />
           <div className="form-group"><label className="form-label" htmlFor="signup-name">Your name</label><input id="signup-name" className="form-input" autoComplete="name" value={name} onChange={e => setName(e.target.value)} required={!viaGoogle} /></div>
@@ -237,6 +265,9 @@ export function SignupPanel({ plans = [], googleSignup = false, mobileSignupAvai
           </button>
         </div>
       )}
+      <div style={{ marginTop: 16 }}>
+        <ContactChoices />
+      </div>
       <div style={{ marginTop: 12, textAlign: 'center' }}>
         <button type="button" className="btn btn-ghost" onClick={onBack} style={{ fontSize: 13, padding: '4px 8px' }}>Back to sign in</button>
       </div>

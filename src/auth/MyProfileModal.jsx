@@ -3,6 +3,8 @@ import { X, Download, RefreshCw, ShieldCheck, Mail, Smartphone, CheckCircle2, Li
 import toast from 'react-hot-toast';
 import { api } from '../utils/api';
 import { ChangePasswordModal } from './ChangePasswordModal';
+import { ContactChoices } from '../components/ContactChoices';
+import { legalHref } from '../utils/support';
 
 const field = { display: 'grid', gap: 4, fontSize: 13 };
 const box = { border: '1px solid var(--border-light, #e5e7eb)', borderRadius: 10, padding: 14 };
@@ -294,6 +296,16 @@ export function MyProfileModal({ onClose }) {
                   )}
                 </>
               ) : <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Not available yet.</div>}
+            </section>
+            <section style={box} aria-label="Contact Us">
+              <h4 style={{ margin: '0 0 8px' }}>Contact Us</h4>
+              <ContactChoices />
+              <p style={{ fontSize: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <a href={legalHref('/privacy')}>Privacy Policy</a>
+                <a href={legalHref('/terms')}>Terms & Conditions</a>
+                <a href={legalHref('/')}>About</a>
+                <a href={legalHref('/refund')}>Refund & Cancellation</a>
+              </p>
             </section>
           </>
         )}

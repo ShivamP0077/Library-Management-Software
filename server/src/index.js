@@ -9,10 +9,11 @@ import { runDailyFinanceJob } from './finance.js';
 import { Library } from './models.js';
 import { runDailyNotificationJob } from './notifications.js';
 import { ensureSupportGlobalNumberIndex } from './support.js';
-import { runReminderJob, runReceiptRetryJob } from './reminders.js';
-import { evolutionKeepAlivePing } from './evolution.js';
 import { refreshPaymentProvider } from './paymentConfig.js';
 import { purgeExpiredDocuments } from './documentRetention.js';
+import { installProcessGuards, registerWhatsappJobs, startEvolutionKeepAlive, whatsappJobsBelongInWorker } from './whatsappJobs.js';
+
+installProcessGuards();
 
 const PORT = Number(process.env.PORT || 4000);
 const RETRY_MS = Number(process.env.DB_RETRY_MS || 30000);
@@ -30,8 +31,12 @@ async function connectWithRetry() {
     await ensureSupportGlobalNumberIndex().catch(e => console.error('[support] number index check failed:', redact(e.message)));
     registerJob('recurring-expenses', () => runDailyFinanceJob(Library));
     registerJob('notifications', () => runDailyNotificationJob(Library)); // after bills are generated
-    registerJob('whatsapp-reminders', () => runReminderJob()); // no-op unless Evolution API is configured
-    registerJob('whatsapp-receipt-retry', () => runReceiptRetryJob(), { intervalMs: 3 * 60 * 1000 });
+    if (whatsappJobsBelongInWorker()) {
+      console.log('[whatsapp] jobs run in the worker (WHATSAPP_JOBS_IN_WORKER=true); this API process will not schedule them');
+    } else {
+      registerWhatsappJobs(registerJob);
+      startEvolutionKeepAlive();
+    }
     registerJob('document-retention', () => purgeExpiredDocuments(), { intervalMs: 6 * 60 * 60 * 1000 });
     startScheduler();
   } catch (err) {
@@ -40,13 +45,3 @@ async function connectWithRetry() {
   }
 }
 connectWithRetry();
-
-// Keep the free-plan Evolution service (evolution-api-lms) from spinning down: ping its root every 10 min.
-// NOTE: lms-api itself is also on Render's free plan and sleeps after ~15 min idle, so this only helps while
-// lms-api is awake. The real fix is a paid (always-on) plan for both services.
-if (process.env.EVOLUTION_API_URL && process.env.NODE_ENV !== 'test' && process.env.EVOLUTION_KEEPALIVE !== 'false') {
-  const ping = () => evolutionKeepAlivePing(process.env.EVOLUTION_API_URL)
-    .catch(e => console.error('[whatsapp] keep-alive ping failed:', e.message));
-  setTimeout(ping, 30000);
-  setInterval(ping, 10 * 60 * 1000);
-}

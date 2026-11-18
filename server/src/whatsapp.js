@@ -145,6 +145,7 @@ export function whatsappBackoff(attempt, { baseMs = 1000, maxMs = 10000, retryAf
 
 /** Provider asleep / unreachable / timed out / 502-503-504: worth retrying later. */
 export function isTransientError(e) {
+  if (e?.code === 'circuit_open') return false;
   const up = e?.upstreamStatus;
   return e?.status === 503 || [429, 502, 503, 504].includes(up) || /unreachable|timed? ?out|waking|connection closed|not connected|connecting/i.test(String(e?.message || ''));
 }

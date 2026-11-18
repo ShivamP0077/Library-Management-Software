@@ -1,7 +1,7 @@
 /**
  * Students, history and capacity invariants (spec §3.1, STU-01).
  * - Status: Active / Expiring Soon / Expired derive from expiryDate; Archived lives in archivedStudents.
- * - Capacity counts active + expired (the students collection), never archived/deleted.
+ * - Capacity counts Active + Grace only (same lifecycle as a held desk). Expired, Cancelled, and Archived do not count.
  * - Every admission, renewal, seat/shift/branch/plan change, archive, restore and
  *   permanent delete is recorded as an immutable StudentEvent (history is never rewritten).
  * - Permanent delete keeps a snapshot + audit entry; payments are never deleted with the student.
@@ -29,7 +29,17 @@ eventSchema.plugin(tenantGuard);
 export const StudentEvent = applyBulkWriteGuard(mongoose.models.StudentEvent || mongoose.model('StudentEvent', eventSchema));
 
 export class CapacityError extends Error {
-  constructor(limit, count) { super(`Student limit reached (${count}/${limit}). Archive a student or ask your administrator to raise the limit.`); this.status = 409; this.code = 'capacity_exceeded'; this.details = { limit, count }; }
+  constructor(limit, count) {
+    super(`Plan Limit Exceeded (${count}/${limit} active students, including grace). Upgrade the plan to add more.`);
+    this.status = 409; this.code = 'capacity_exceeded'; this.details = { limit, count };
+  }
+}
+
+/** Active and Grace Period count. Expired, Cancelled, and Archived do not. */
+export function countsTowardStudentLimit(student, { settings = null, today = todayIn() } = {}) {
+  if (!student) return false;
+  const life = subscriptionLifecycle(student, { settings, today });
+  return life.status === 'Active' || life.status === 'Grace Period';
 }
 
 /**
@@ -108,8 +118,9 @@ export function createStudentRouter() {
       by[life.status] = (by[life.status] || 0) + 1;
       if (life.expiringSoon) expiringSoon += 1;
     }
-    const all = branch ? await models.students.countDocuments({ tenantId: req.tenantId }) : list.length;
-    res.json({ active: by.Active, grace: by['Grace Period'], expiringSoon, expired: by.Expired, archived, capacity: { used: all, limit: await studentLimit(req.tenantId), counts: 'active + expired (archived excluded)' } });
+    const allDocs = branch ? await models.students.find({ tenantId: req.tenantId }).lean() : list;
+    const used = allDocs.filter(s => countsTowardStudentLimit(s, { settings, today })).length;
+    res.json({ active: by.Active, grace: by['Grace Period'], expiringSoon, expired: by.Expired, archived, capacity: { used, limit: await studentLimit(req.tenantId), counts: 'active + grace (expired, cancelled, and archived excluded)' } });
   }));
 
   r.get('/students/:id/history', wrap(async (req, res) => {

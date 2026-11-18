@@ -7,6 +7,7 @@ import { NumericInput } from './NumericInput';
 import { resolveConfigurationScope, matchesScope } from '../utils/scopeResolver';
 import { getCanonicalShifts, normalizeShiftName, resolveCanonicalShift, shiftsOverlap } from '../utils/shiftUtils';
 import toast from 'react-hot-toast';
+import { deskGrowthMessage } from '../utils/planLimitCopy';
 import { holdsDesk } from '../utils/subscriptionLifecycle.js';
 import { todayIST } from '../utils/dateUtils';
 
@@ -318,7 +319,7 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
   };
 
   // Add Generated Seats to Map
-  const handleConfirmAddSeats = () => {
+  const handleConfirmAddSeats = async () => {
     const effectiveBranch = (targetAddBranchId && targetAddBranchId !== 'all')
       ? targetAddBranchId
       : ((activeBranchId !== 'all' ? activeBranchId : null) || (branches.length > 0 ? branches[0].id : undefined));
@@ -361,6 +362,8 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
     });
 
     if (added > 0) {
+      const blocked = await deskGrowthMessage(seats.length, added);
+      if (blocked) return toast.error(blocked);
       setSeats(prev => [...prev, ...newItems]);
       toast.success(`Added ${added} new desks! ${skippedDuplicates > 0 ? `(${skippedDuplicates} duplicates skipped)` : ''}`);
       setIsAddSeatsModalOpen(false);

@@ -97,8 +97,11 @@ async function findSeat(tenantId, branchId, seatNo) {
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-/** Acquires the per-seat lease (unique index), retrying briefly. */
-async function withSeatLock(tenantId, seatKey, fn) {
+/**
+ * Per-key lease (unique index), retrying briefly.
+ * Desk and student caps use a library-wide key so two creates cannot both pass the check.
+ */
+export async function withResourceLock(tenantId, seatKey, fn) {
   const token = crypto.randomBytes(8).toString('hex');
   let acquired = false;
   for (let i = 0; i < 40 && !acquired; i++) {
@@ -142,7 +145,7 @@ export async function assignStudent(tenantId, student, { actor, force = false, r
   const shift = await resolveShift(tenantId, student);
   const seatKey = seatKeyOf(student.branchId, student.seatNo);
   if (current && current.seatKey === seatKey && sameShift(current.shift, shift || {})) return current;
-  return withSeatLock(tenantId, seatKey, async () => {
+  return withResourceLock(tenantId, seatKey, async () => {
     if (!force) {
       const seat = await findSeat(tenantId, student.branchId, student.seatNo);
       if (!seat) {

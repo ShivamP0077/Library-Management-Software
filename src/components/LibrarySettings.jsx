@@ -127,7 +127,9 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
     cycleDays: settings.cycleDays ?? 30,
     cycleAnchorDate: settings.cycleAnchorDate || '',
     managerCanEditAmount: settings.managerCanEditAmount !== false,
-    staffCanEditAmount: settings.staffCanEditAmount === true
+    staffCanEditAmount: settings.staffCanEditAmount === true,
+    idProofRequirement: settings.idProofRequirement || 'Required',
+    idProofDeadlineDays: settings.idProofDeadlineDays ?? 7
   });
 
   // Keep billingFormData in sync if settings changes externally
@@ -149,7 +151,9 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
       cycleDays: settings.cycleDays ?? 30,
       cycleAnchorDate: settings.cycleAnchorDate || '',
       managerCanEditAmount: settings.managerCanEditAmount !== false,
-      staffCanEditAmount: settings.staffCanEditAmount === true
+      staffCanEditAmount: settings.staffCanEditAmount === true,
+      idProofRequirement: settings.idProofRequirement || 'Required',
+      idProofDeadlineDays: settings.idProofDeadlineDays ?? 7
     });
   }, [settings]);
 
@@ -161,6 +165,12 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
     { id: "doc-photo", name: "Photograph", requirement: "Required", active: true },
     { id: "doc-other", name: "Other Document", requirement: "Not Required", active: true }
   ]);
+  // Restore saved document types when settings arrive after the first paint.
+  React.useEffect(() => {
+    if (Array.isArray(settings.documentTypes) && settings.documentTypes.length > 0) {
+      setDocTypes(settings.documentTypes);
+    }
+  }, [settings.documentTypes]);
   const [newDocName, setNewDocName] = useState('');
   const [newDocReq, setNewDocReq] = useState('Can Be Submitted Later');
 

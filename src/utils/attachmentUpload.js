@@ -15,6 +15,7 @@ import {
   friendlyRequestError,
   withTimeout,
 } from './boundedRequest.js';
+import { compressImageDataUrl } from './compressImage.js';
 
 export const DEFAULT_ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
 export const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
@@ -130,20 +131,37 @@ export async function uploadAttachmentFile({
   random,
   sleep,
   returnDataUrl = false,
+  compress = true,
+  purpose,
+  docType,
+  docTypeId,
 } = {}) {
   const check = validateAttachment(file, { allowedTypes, maxBytes });
   if (!check.ok) throw Object.assign(new Error(check.error), { code: check.code });
   onProgress(5, 'reading');
-  const dataUrl = await readFileAsDataUrl(file, { timeoutMs, FileReaderImpl });
+  const readUrl = await readFileAsDataUrl(file, { timeoutMs, FileReaderImpl });
+  const encoded = await encodeAttachment(readUrl, file, { compress, purpose, docType, docTypeId, name: check.name });
   onProgress(10, 'read');
-  await uploadAttachmentData({ key, data: dataUrl, save, timeoutMs, retries, onProgress, random, sleep });
+  const dataUrl = encoded.dataUrl;
+  const fileType = encoded.fileType;
+  const fileSize = encoded.fileSize;
+  await uploadAttachmentData({
+    key,
+    data: dataUrl,
+    save: (k, d) => save(k, d, { fileType, fileSize, dataUrl }),
+    timeoutMs,
+    retries,
+    onProgress,
+    random,
+    sleep,
+  });
   return {
     id: key,
     storageKey: key,
     name: check.name,
     fileName: check.name,
-    fileType: check.type,
-    fileSize: check.size,
+    fileType,
+    fileSize,
     uploadedAt: new Date().toISOString(),
     ...(returnDataUrl ? { dataUrl } : {}),
   };
@@ -158,20 +176,48 @@ export async function prepareAttachment({
   timeoutMs = DEFAULT_UPLOAD_TIMEOUT_MS,
   onProgress = () => {},
   FileReaderImpl,
+  compress = true,
+  purpose,
+  docType,
+  docTypeId,
 } = {}) {
   const check = validateAttachment(file, { allowedTypes, maxBytes });
   if (!check.ok) throw Object.assign(new Error(check.error), { code: check.code });
   onProgress(10, 'reading');
-  const dataUrl = await readFileAsDataUrl(file, { timeoutMs, FileReaderImpl });
+  const readUrl = await readFileAsDataUrl(file, { timeoutMs, FileReaderImpl });
+  const encoded = await encodeAttachment(readUrl, file, { compress, purpose, docType, docTypeId, name: check.name });
   onProgress(100, 'ready');
   return {
     id: key,
     key,
     name: check.name,
     fileName: check.name,
-    fileType: check.type,
-    fileSize: check.size,
-    dataUrl,
+    fileType: encoded.fileType,
+    fileSize: encoded.fileSize,
+    dataUrl: encoded.dataUrl,
     uploadedAt: new Date().toISOString(),
+  };
+}
+
+/** Shrink images after they are read. PDFs and environments without canvas stay as read. */
+async function encodeAttachment(dataUrl, file, { compress, purpose, docType, docTypeId, name }) {
+  if (compress === false || isPdfAttachment(file)) {
+    return { dataUrl, fileType: mimeOf(file), fileSize: Number(file?.size || 0) };
+  }
+  const result = await compressImageDataUrl(dataUrl, {
+    compress,
+    purpose,
+    docType: docType || docTypeId,
+    docTypeId,
+    name,
+    fileName: name,
+  });
+  if (!result.compressed) {
+    return { dataUrl, fileType: mimeOf(file), fileSize: Number(file?.size || 0) };
+  }
+  return {
+    dataUrl: result.dataUrl,
+    fileType: result.fileType || mimeOf(file),
+    fileSize: result.fileSize,
   };
 }

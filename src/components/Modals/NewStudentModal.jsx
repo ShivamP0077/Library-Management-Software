@@ -92,12 +92,13 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
           file,
           key: storageKey,
           returnDataUrl: true,
+          docType: selectedDocType,
           onProgress: (p) => setUploadProgress(Math.round(((i + p / 100) / files.length) * 100)),
-          save: (key, data) => saveDocumentBlobNow(key, data, {
+          save: (key, data, encoded) => saveDocumentBlobNow(key, data, {
             docTypeId: selectedDocType,
             fileName: file.name,
-            fileType: file.type,
-            fileSize: file.size,
+            fileType: encoded?.fileType || file.type,
+            fileSize: encoded?.fileSize ?? file.size,
             status: 'Submitted',
           }),
         });

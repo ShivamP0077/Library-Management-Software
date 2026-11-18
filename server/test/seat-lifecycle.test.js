@@ -21,7 +21,9 @@ after(teardown);
 const stu = (id, seatNo, extra = {}) => ({ id, name: id, branchId: 'b1', seatNo, shiftId: 'sh-full', status: 'Active', expiryDate: '2026-11-13', ...extra });
 
 test('admission snapshots library days; Active and Grace hold the desk; Expired frees it', async () => {
-  const created = await call('POST', '/api/students', { token: A(), body: stu('L1', 'A1') });
+  // Dates are relative to the real today so the admission is still Active when it is created.
+  const plus = (n) => new Date(Date.parse(todayIn()) + n * 864e5).toISOString().slice(0, 10);
+  const created = await call('POST', '/api/students', { token: A(), body: stu('L1', 'A1', { expiryDate: plus(1) }) });
   assert.equal(created.status, 201, JSON.stringify(created.body));
   assert.equal(created.body.graceDaysSnapshot, 5);
   assert.equal(created.body.expiredPeriodDaysSnapshot, 25);
@@ -30,9 +32,9 @@ test('admission snapshots library days; Active and Grace hold the desk; Expired 
     const rows = await SeatAllocation.find({ tenantId: 'lib-a', studentId: 'L1', status: 'active' }).lean();
     return rows.length;
   };
-  assert.equal(await held('2026-11-13'), 1);
-  assert.equal(await held('2026-11-18'), 1);
-  assert.equal(await held('2026-11-19'), 0);
+  assert.equal(await held(plus(1)), 1);
+  assert.equal(await held(plus(6)), 1);
+  assert.equal(await held(plus(7)), 0);
   const still = await call('GET', '/api/students/L1', { token: A() });
   assert.equal(still.status, 200);
   assert.notEqual(still.body.status, 'Cancelled');

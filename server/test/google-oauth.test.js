@@ -8,6 +8,8 @@ import jwt from 'jsonwebtoken';
 import { createApp } from '../src/app.js';
 import { User, Library } from '../src/models.js';
 import { googleEnabled, setGoogleClientFactory } from '../src/google.js';
+import { PasswordResetOtp } from '../src/accounts.js';
+import { AuditLog } from '../src/audit.js';
 
 const FRONTEND = 'http://localhost:5173';
 const COOKIE = 'lms_g_oauth';
@@ -260,6 +262,68 @@ test('callback rejects a disabled library', async () => {
   });
   assert.equal(out.params.get('google_error'), 'library_disabled');
   assert.equal(saveCalls, 0);
+});
+
+test('recovery start stores a recovery flag and does not sign the user in', async () => {
+  const res = await fetch(`${base}/api/auth/google/start?recovery=1`, { redirect: 'manual' });
+  const cookieValue = res.headers.get('set-cookie').match(/lms_g_oauth=([^;]+)/)[1];
+  const data = JSON.parse(Buffer.from(cookieValue, 'base64url').toString('utf8'));
+  assert.equal(data.rc, 1);
+  assert.equal(data.su, undefined);
+});
+
+test('linked Google recovery returns a reset token and does not create a session', async () => {
+  user = makeUser({ googleSub: 'google-sub-1', authProviders: ['google'] });
+  const created = [];
+  const originalCreate = PasswordResetOtp.create;
+  const originalUpdate = PasswordResetOtp.updateMany;
+  const originalAudit = AuditLog.create;
+  PasswordResetOtp.updateMany = async () => ({ acknowledged: true });
+  PasswordResetOtp.create = async (doc) => { created.push(doc); return doc; };
+  AuditLog.create = async () => ({});
+  User.findOne = async (filter) => {
+    findOneCalls.push(filter);
+    if (filter?.googleSub && user?.googleSub !== filter.googleSub) return null;
+    return user;
+  };
+  try {
+    const value = Buffer.from(JSON.stringify({ s: 'state-1', v: 'verifier-1', rc: 1 }), 'utf8').toString('base64url');
+    const out = await callbackRequest({
+      payload: { email: 'owner@example.com', email_verified: true, sub: 'google-sub-1', name: 'Owner' },
+      cookie: `${COOKIE}=${value}`,
+    });
+    assert.equal(out.params.get('google_token'), null);
+    assert.ok(out.params.get('google_reset'));
+    assert.equal(out.location.includes(out.params.get('google_reset')), true);
+    assert.equal(created.length, 1);
+    assert.equal(created[0].channel, 'google');
+    assert.notEqual(created[0].codeHash, out.params.get('google_reset'));
+    assert.equal(saveCalls, 0);
+    assert.equal(createCalls, 0);
+    assert.equal(user.googleSub, 'google-sub-1');
+  } finally {
+    PasswordResetOtp.create = originalCreate;
+    PasswordResetOtp.updateMany = originalUpdate;
+    AuditLog.create = originalAudit;
+  }
+});
+
+test('Google recovery refuses an account that is not already linked', async () => {
+  user = makeUser({ googleSub: null });
+  User.findOne = async (filter) => {
+    findOneCalls.push(filter);
+    if (filter?.googleSub) return null;
+    return user;
+  };
+  const value = Buffer.from(JSON.stringify({ s: 'state-1', v: 'verifier-1', rc: 1 }), 'utf8').toString('base64url');
+  const out = await callbackRequest({
+    payload: { email: 'owner@example.com', email_verified: true, sub: 'google-sub-new' },
+    cookie: `${COOKIE}=${value}`,
+  });
+  assert.equal(out.params.get('google_error'), 'google_not_linked');
+  assert.equal(out.params.get('google_reset'), null);
+  assert.equal(saveCalls, 0);
+  assert.equal(user.googleSub, null);
 });
 
 test('auth config reports Google off when the client secret is missing', async () => {

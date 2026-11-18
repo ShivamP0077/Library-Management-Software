@@ -32,6 +32,7 @@ function featureLines(plan) {
   const branches = Number(plan.branchLimit) === 1 ? '1 branch' : `${limitLabel(plan.branchLimit)} branches`;
   const lines = [
     `${limitLabel(plan.studentLimit)} students`,
+    `${limitLabel(plan.deskLimit)} physical desks`,
     `${limitLabel(plan.staffLimit)} staff`,
     branches,
   ];

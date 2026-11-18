@@ -246,6 +246,7 @@ export const AppContent = () => {
                     setRenewActionStudent={setRenewActionStudent}
                     relocateActionStudent={relocateActionStudent}
                     setRelocateActionStudent={setRelocateActionStudent}
+                    onPrintReceipt={handlePrintReceipt}
                   />
                 )}
 

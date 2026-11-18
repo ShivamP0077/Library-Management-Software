@@ -12,8 +12,25 @@ export const STAFF_MODULES = [
   { id: 'reports', name: 'Reports & P&L', label: 'Reports & P&L', desc: 'Financial insights, collection summaries, and P&L' },
   { id: 'documents', name: 'Document Settings', label: 'Document Settings', desc: 'ID proof rules, upload policies, and verification' },
   { id: 'settings', name: 'Library Settings', label: 'Library Settings', desc: 'Operating branches, shifts, and general system configuration' },
-  { id: 'staff', name: 'Staff & Roles', label: 'Staff & Roles', desc: 'Staff directory, role assignments, and permission matrix' }
+  { id: 'staff', name: 'Staff & Roles', label: 'Staff & Roles', desc: 'Staff directory, role assignments, and permission matrix' },
+  { id: 'wallet', name: 'Wallet', label: 'Wallet', desc: 'Software wallet balance and eligible wallet actions' }
 ];
+
+/** Financial modules the owner can grant. Wallet is never eligible for a Librarian. */
+export const FINANCIAL_MODULE_IDS = ['payments', 'expenses', 'reports', 'wallet'];
+
+/** Labels on the financial matrix. Keys are stored on the existing module object. */
+export const FINANCIAL_MATRIX = [
+  { id: 'view', label: 'View', keys: ['view'] },
+  { id: 'collect', label: 'Add/Collect', keys: ['create', 'collect'] },
+  { id: 'edit', label: 'Edit', keys: ['edit'] },
+  { id: 'delete', label: 'Reverse/Delete', keys: ['delete'] },
+  { id: 'print', label: 'Print', keys: ['print'] },
+  { id: 'share', label: 'Share', keys: ['share'] },
+  { id: 'export', label: 'Export', keys: ['export'] },
+];
+
+const FINANCIAL_KEYS = ['view', 'create', 'edit', 'delete', 'print', 'share', 'export', 'collect'];
 
 export const STAFF_ACTIONS = [
   { id: 'view', name: 'View', label: 'View', desc: 'Can view records and lists' },
@@ -115,7 +132,7 @@ export const getDefaultPermissionsForRole = (role) => {
 export const syncLegacyPermissions = (perms) => {
   const result = { ...perms };
   result.canManageStudents = Boolean(perms.students?.edit || perms.students?.manage);
-  result.canProcessPayments = Boolean(perms.payments?.create || perms.payments?.manage);
+  result.canProcessPayments = Boolean(perms.payments?.create || perms.payments?.collect || perms.payments?.manage);
   result.canEditSeats = Boolean(perms.seats?.edit || perms.seats?.manage);
   result.canManageExpenses = Boolean(perms.expenses?.create || perms.expenses?.manage);
   result.canViewFinancials = Boolean(perms.reports?.view || perms.reports?.manage);
@@ -144,3 +161,73 @@ export const countAllowedActions = (perms) => {
   });
   return count;
 };
+
+export const emptyModuleActions = () => ({
+  view: false, create: false, edit: false, delete: false, approve: false, manage: false,
+  print: false, share: false, export: false, collect: false,
+});
+
+export const isWalletBlockedRole = (role) => role === 'Librarian';
+
+/**
+ * One module + action. `manage` still means every action in that module.
+ * Absent keys are false. Add/Collect is `create` or `collect`.
+ * Librarians never pass a wallet check.
+ */
+export function staffAllows(perms, role, moduleName, actionName = 'view') {
+  if (role === 'Admin') return true;
+  if (moduleName === 'wallet' && isWalletBlockedRole(role)) return false;
+  const mod = perms?.[moduleName];
+  if (mod && typeof mod === 'object') {
+    if (mod.manage === true) return true;
+    if (actionName === 'netProfit') return mod.netProfit === true;
+    if (actionName === 'collect' || actionName === 'create') return mod.create === true || mod.collect === true;
+    if (typeof mod[actionName] === 'boolean') return mod[actionName];
+    return false;
+  }
+  if (moduleName === 'students' && actionName === 'edit') return Boolean(perms?.canManageStudents);
+  if (moduleName === 'students' && actionName === 'view') return true;
+  if (moduleName === 'payments' && (actionName === 'create' || actionName === 'collect')) return Boolean(perms?.canProcessPayments);
+  if (moduleName === 'seats' && actionName === 'edit') return Boolean(perms?.canEditSeats);
+  if (moduleName === 'expenses' && (actionName === 'create' || actionName === 'collect')) return Boolean(perms?.canManageExpenses);
+  if (moduleName === 'reports' && actionName === 'view') return Boolean(perms?.canViewFinancials);
+  if (moduleName === 'settings' && actionName === 'edit') return Boolean(perms?.canManageSettings);
+  if (moduleName === 'admissions' && actionName === 'delete') return Boolean(perms?.canCancelAdmission);
+  if (moduleName === 'payments' && actionName === 'approve') return Boolean(perms?.canProcessRefunds);
+  return false;
+}
+
+/** Net Profit is its own flag. Missing means hidden. `manage` on reports still includes it. */
+export function canSeeNetProfit(perms, role) {
+  if (role === 'Admin') return true;
+  const mod = perms?.reports;
+  if (mod && typeof mod === 'object') {
+    if (mod.manage === true) return true;
+    return mod.netProfit === true;
+  }
+  return false;
+}
+
+/** Grants every financial action this role may have. Librarians never receive Wallet. */
+export function applyAllowAllFinancial(perms = {}, role) {
+  const next = { ...perms, allowAllFinancial: true };
+  for (const id of FINANCIAL_MODULE_IDS) {
+    const cur = { ...emptyModuleActions(), ...(perms?.[id] && typeof perms[id] === 'object' ? perms[id] : {}) };
+    if (id === 'wallet' && isWalletBlockedRole(role)) {
+      next.wallet = emptyModuleActions();
+      continue;
+    }
+    for (const k of FINANCIAL_KEYS) cur[k] = true;
+    if (id === 'reports') cur.netProfit = true;
+    next[id] = cur;
+  }
+  return syncLegacyPermissions(next);
+}
+
+/** Drop Wallet for a Librarian, including when Allow All was stored on the document. */
+export function sanitizeStaffPermissions(perms, role) {
+  if (!perms || typeof perms !== 'object') return perms;
+  if (perms.allowAllFinancial) return applyAllowAllFinancial(perms, role);
+  if (!isWalletBlockedRole(role)) return perms;
+  return { ...perms, wallet: emptyModuleActions() };
+}

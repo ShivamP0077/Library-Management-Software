@@ -6,6 +6,7 @@
  * Month steps use the same anchored helper as library billing cycles.
  */
 import { addDays, addMonthsAnchored, cycleConfig, cycleFor } from './billingCycle.js';
+import { subscriptionLifecycle, periodSnapshots } from './subscriptionLifecycle.js';
 
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -178,7 +179,8 @@ export function renewalPeriodForStudent(student, opts = {}) {
 }
 
 /** Append a renewal without throwing when older students have no history arrays. */
-export function applyRenewalToStudent(student, renewal, payment, { billingAnchorDay } = {}) {
+export function applyRenewalToStudent(student, renewal, payment, opts = {}) {
+  const { billingAnchorDay } = opts;
   const s = student || {};
   const months = Number(renewal?.durationMonths || s.durationMonths || 1);
   return {
@@ -193,6 +195,7 @@ export function applyRenewalToStudent(student, renewal, payment, { billingAnchor
     billingAnchorDay: billingAnchorDay || s.billingAnchorDay || anchorDayFromStudent(s),
     renewalHistory: [renewal, ...(Array.isArray(s.renewalHistory) ? s.renewalHistory : [])],
     paymentHistory: [payment, ...(Array.isArray(s.paymentHistory) ? s.paymentHistory : [])],
+    ...(opts.snapshots || {}),
   };
 }
 
@@ -203,60 +206,12 @@ export function applyRenewalToStudent(student, renewal, payment, { billingAnchor
  * @param {number} defaultGraceDays 
  * @returns {{ status: 'Active' | 'Grace Period' | 'Expired', label: string, isGrace: boolean, daysRemaining: number }}
  */
-export function getSubscriptionStatus(student, defaultGraceDays = 3) {
-  if (!student) return { status: 'Active', label: 'Active', isGrace: false, daysRemaining: 0 };
-  if (student.status === 'Cancelled') return { status: 'Cancelled', label: 'Cancelled', isGrace: false, daysRemaining: 0 };
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const expiry = parseDate(student.expiryDate);
-  expiry.setHours(0, 0, 0, 0);
-
-  const graceDays = student.customGraceDays != null ? Number(student.customGraceDays) : Number(defaultGraceDays || 0);
-  
-  // Effective due date may have an individual student extension
-  let effectiveDueDate = new Date(expiry);
-  if (student.extendedDueDate) {
-    const ext = parseDate(student.extendedDueDate);
-    ext.setHours(0, 0, 0, 0);
-    if (ext > effectiveDueDate) {
-      effectiveDueDate = ext;
-    }
-  }
-
-  const graceBoundary = new Date(effectiveDueDate);
-  graceBoundary.setDate(graceBoundary.getDate() + graceDays);
-
-  const diffTime = effectiveDueDate.getTime() - today.getTime();
-  const daysUntilDue = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-  if (today <= effectiveDueDate) {
-    return {
-      status: 'Active',
-      label: 'Active',
-      isGrace: false,
-      daysRemaining: daysUntilDue
-    };
-  }
-
-  if (today <= graceBoundary) {
-    const graceDiff = graceBoundary.getTime() - today.getTime();
-    const graceDaysLeft = Math.ceil(graceDiff / (1000 * 60 * 60 * 24));
-    return {
-      status: 'Grace Period',
-      label: `Grace (${graceDaysLeft}d left)`,
-      isGrace: true,
-      daysRemaining: graceDaysLeft
-    };
-  }
-
-  const overdueDiff = today.getTime() - effectiveDueDate.getTime();
-  const overdueDays = Math.ceil(overdueDiff / (1000 * 60 * 60 * 24));
-  return {
-    status: 'Expired',
-    label: `Expired (${overdueDays}d ago)`,
-    isGrace: false,
-    daysRemaining: -overdueDays
-  };
+export function getSubscriptionStatus(student, defaultGraceDays = 3, today = todayIST()) {
+  const settings = defaultGraceDays && typeof defaultGraceDays === 'object'
+    ? defaultGraceDays
+    : { gracePeriodDays: defaultGraceDays };
+  const life = subscriptionLifecycle(student, { settings, today });
+  return { ...life, isGrace: life.status === 'Grace Period' };
 }
+
+export { periodSnapshots };

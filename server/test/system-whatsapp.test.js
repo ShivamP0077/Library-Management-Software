@@ -25,6 +25,7 @@ const fake = {
   connectionState: async (name) => { assert.equal(name, SYSTEM_INSTANCE); return { instance: { state: inst?.connectionStatus || 'close' } }; },
   connect: async (name) => { assert.equal(name, SYSTEM_INSTANCE); return { base64: 'data:image/png;base64,QR', pairingCode: null }; },
   logout: async (name) => { assert.equal(name, SYSTEM_INSTANCE); if (inst) inst.connectionStatus = 'close'; },
+  deleteInstance: async (name) => { assert.equal(name, SYSTEM_INSTANCE); inst = null; },
   sendText: async (name, number, text) => {
     assert.equal(name, SYSTEM_INSTANCE);
     if (failSend) throw new Error('provider down');

@@ -4,7 +4,7 @@ import { useLibrary } from '../../context/LibraryContext';
 import { X, UserPlus, ShieldAlert, AlertCircle, Clock, Check, RefreshCw } from 'lucide-react';
 import { NumericInput } from '../NumericInput';
 import toast from 'react-hot-toast';
-import { calculatePricing } from '../../utils/pricingCalculator';
+import { calculatePricing, planPricingUnit, durationUnitWord } from '../../utils/pricingCalculator';
 import { handleSplitAmountChange, handleAddSplitComponent, handleRemoveSplitComponent, validateSplitPayment } from '../../utils/splitPaymentUtils';
 import { paymentReferenceError } from '../../utils/paymentReference';
 import { ReferenceField } from '../ReferenceField';
@@ -880,7 +880,7 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                   <label className="form-label" style={{ fontSize: '12px' }}>Subscription Duration</label>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <label htmlFor="duration-months-input" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                      Months:
+                      {durationUnitWord(planPricingUnit(plans.find(p => p.id === planId)))}:
                     </label>
                     <input
                       id="duration-months-input"

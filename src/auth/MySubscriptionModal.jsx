@@ -33,8 +33,8 @@ export function MySubscriptionModal({ libraryName, onClose }) {
               {s?.trialEndsAt && s.status === 'trialing' && <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Trial ends {fmt(s.trialEndsAt)}</div>}
               {s?.currentPeriodEnd && <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{s.cancelAtPeriodEnd ? 'Ends' : 'Renews'} {fmt(s.currentPeriodEnd)}</div>}
               {pending && <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Changes to {pending.name} on {fmt(s.currentPeriodEnd)}</div>}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 10, fontSize: 12 }}>
-                {[['Students', 'students', 'studentLimit'], ['Staff', 'staff', 'staffLimit'], ['Branches', 'branches', 'branchLimit']].map(([label, u, l]) => (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginTop: 10, fontSize: 12 }}>
+                {[['Students', 'students', 'studentLimit'], ['Desks', 'desks', 'deskLimit'], ['Staff', 'staff', 'staffLimit'], ['Branches', 'branches', 'branchLimit']].map(([label, u, l]) => (
                   <div key={u} style={{ border: '1px solid var(--border-light, #e5e7eb)', borderRadius: 8, padding: 8 }}>
                     <div style={{ color: 'var(--text-tertiary)' }}>{label}</div><strong>{v.usage[u]}</strong> / {lim(v.limits[l])}
                   </div>
@@ -57,7 +57,7 @@ export function MySubscriptionModal({ libraryName, onClose }) {
                     return (
                       <div key={p.planId} data-plan={p.planId} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', border: '1px solid var(--border-light, #e5e7eb)', borderRadius: 8, padding: 10, fontSize: 13 }}>
                         <div><strong>{p.name}</strong> · {price == null ? 'monthly only' : price ? `₹${price.toLocaleString()}/${interval}` : 'Free'}
-                          <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Students {lim(p.studentLimit)} · Staff {lim(p.staffLimit)} · Branches {lim(p.branchLimit)}</div></div>
+                          <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Students {lim(p.studentLimit)} · Desks {lim(p.deskLimit)} · Staff {lim(p.staffLimit)} · Branches {lim(p.branchLimit)}</div></div>
                         {current ? <span className="badge badge-active">Current</span>
                           : <button className="btn btn-secondary btn-sm" disabled={busy || price == null} onClick={() => act(() => api.subscriptionChange(p.planId, interval), 'Plan updated')}>Choose</button>}
                       </div>

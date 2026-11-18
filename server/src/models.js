@@ -21,7 +21,7 @@ export const Library = mongoose.model('Library', new mongoose.Schema({
   createdBy: String,
   isDefault: { type: Boolean, default: false },
   city: { type: String, trim: true, default: null }, // used for Library Insights location filters
-  studentLimit: { type: Number, default: null }, // active + expired cap (null = unlimited)
+  studentLimit: { type: Number, default: null }, // Active + Grace cap (null = unlimited). Field name stays studentLimit.
   planId: { type: String, default: null }, // Issue #14: software plan (limits come from it unless overridden)
   subscription: { type: mongoose.Schema.Types.Mixed, default: null }, // Issues #15/#19: { planId, interval, status, price, trialEndsAt, currentPeriodEnd, cancelAtPeriodEnd, pendingPlanId }
   signupAt: { type: Date, default: null },
@@ -62,6 +62,8 @@ const userSchema = new mongoose.Schema({
   status: { type: String, enum: ['Active', 'Disabled'], default: 'Active' },
   lastLoginAt: Date,
   passwordChangedAt: Date,
+  // Session generation. Missing on older accounts means 0. No backfill.
+  tokenVersion: { type: Number },
   googleSub: { type: String, index: true, sparse: true },
   authProviders: { type: [String], default: [] }, // e.g. ['password', 'google']
 }, { timestamps: true });

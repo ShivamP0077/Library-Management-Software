@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api } from '../utils/api';
@@ -10,12 +10,20 @@ export const ChangePasswordModal = ({ onClose, hasPassword = true }) => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [sentTo, setSentTo] = useState('');
+  const [resendWait, setResendWait] = useState(0);
+
+  useEffect(() => {
+    if (resendWait <= 0) return undefined;
+    const timer = setTimeout(() => setResendWait((seconds) => seconds - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [resendWait]);
 
   const sendCode = async () => {
     setBusy(true); setError('');
     try {
       const r = await api.setupPasswordStart();
       setSentTo(r.sentTo || r.via || 'your verified contact');
+      setResendWait(30);
       toast.success('Verification code sent');
     } catch (err) { setError(err.message || 'Could not send code'); }
     finally { setBusy(false); }
@@ -54,7 +62,7 @@ export const ChangePasswordModal = ({ onClose, hasPassword = true }) => {
         {!hasPassword && (
           <div style={{ display: 'grid', gap: 8 }}>
             <p style={{ margin: 0, fontSize: 13, color: 'var(--text-secondary)' }}>We will send a 6-digit code to your verified email or mobile.</p>
-            <button type="button" className="btn btn-secondary btn-sm" onClick={sendCode} disabled={busy}>{sentTo ? 'Resend code' : 'Send code'}</button>
+            <button id="password-setup-resend" type="button" className="btn btn-secondary btn-sm" onClick={sendCode} disabled={busy || resendWait > 0}>{sentTo ? (resendWait > 0 ? `Resend code in ${resendWait}s` : 'Resend code') : 'Send code'}</button>
             {sentTo && <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Sent to {sentTo}</div>}
             <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>6-digit code
               <input className="input-field" inputMode="numeric" maxLength={6} value={f.code} onChange={e => setF({ ...f, code: e.target.value.replace(/\D/g, '') })} required />

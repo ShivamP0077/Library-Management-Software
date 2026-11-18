@@ -44,7 +44,28 @@ function wrapLine(line, width = 92) {
   return out.length ? out : [''];
 }
 
-export function textToPdf(text) {
+/** Branded multi-page report. Each page repeats the header and a "Page n of m" footer. */
+export function reportToPdf(text, { title = 'My Library OS', subtitle = '' } = {}) {
+  const header = [title, subtitle].filter(Boolean).join(' — ');
+  const body = String(text || '');
+  const rawLines = body.split(/\r?\n/);
+  const lines = [];
+  for (const line of rawLines) lines.push(...wrapLine(line, 90));
+  if (!lines.length) lines.push('');
+  const perPage = MAX_LINES - 3;
+  const pages = [];
+  for (let i = 0; i < lines.length; i += perPage) pages.push(lines.slice(i, i + perPage));
+  const stamped = pages.map((pageLines, idx) => {
+    const footer = `Page ${idx + 1} of ${pages.length}`;
+    const block = [header, ''].concat(pageLines);
+    while (block.length < MAX_LINES - 1) block.push('');
+    block.push(footer);
+    return block.slice(0, MAX_LINES);
+  });
+  return textToPdf(stamped.map(p => p.join('\n')).join('\n'), { pageBreaks: stamped.map(p => p.length) });
+}
+
+export function textToPdf(text, { pageBreaks } = {}) {
   const rawLines = String(text || '').split(/\r?\n/);
   const lines = [];
   for (const line of rawLines) lines.push(...wrapLine(line));

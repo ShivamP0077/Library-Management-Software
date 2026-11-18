@@ -5,9 +5,15 @@
  */
 import mongoose from 'mongoose';
 import express from 'express';
+import { reportToPdf } from './pdf.js';
+import { sheetsToXlsx } from './xlsx.js';
+import {
+  REPORT_SECTIONS, parseReportSections, resolveDateRange, inDateRange, matchesScope, paymentKind, studentJoinDate, cancellationDetail,
+} from '../../src/utils/reportBuilder.js';
 import tenantGuard, { applyBulkWriteGuard } from './tenantGuard.js';
-import { models } from './models.js';
+import { Library, models } from './models.js';
 import { normalizePaymentReferences, referenceError, trimReference } from '../../src/utils/paymentReference.js';
+import { assertModule, canSeeNetProfit, redactPnl, staffContext } from './staffAccess.js';
 
 export const roundRupees = (v) => Math.round(Number(v) + Number.EPSILON);
 
@@ -329,12 +335,173 @@ export async function computePnl(tenantId, { from, to, branchId } = {}) {
 const csvCell = (v) => { let s = String(v ?? ''); if (/^[=+\-@]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s)) s = "'" + s; return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
 export const toCsv = (rows) => rows.map(r => r.map(csvCell).join(',')).join('\n') + '\n';
 
+async function staffCanViewReports(req) {
+  if (req.user?.role !== 'staff') return true;
+  const staff = req.user.staffId
+    ? await models.staffMembers.findOne({ tenantId: req.tenantId, _key: String(req.user.staffId) }).lean()
+    : null;
+  if (!staff || staff.status === 'Inactive') return false;
+  const perms = staff.permissions || {};
+  const mod = perms.reports;
+  if (mod && typeof mod === 'object') return Boolean(mod.manage || mod.view);
+  return Boolean(perms.canViewFinancials);
+}
+
+const scoped = (row, branchId, sectionId) => matchesScope(row?.branchId, branchId) && matchesScope(row?.sectionId, sectionId);
+
+/** Custom report. Sections are only the approved list. Shared branch/section rows count once, and only under All. */
+export async function buildCustomReport(tenantId, { preset, from, to, today, branchId = 'all', sectionId = 'all', sections } = {}) {
+  const ids = parseReportSections(sections);
+  const period = resolveDateRange(preset, { today, from, to });
+  const branch = branchId || 'all';
+  const section = sectionId || 'all';
+  const [payments, expenses, instances, students, archived, library] = await Promise.all([
+    models.payments.find({ tenantId }).lean(),
+    models.expenses.find({ tenantId }).lean(),
+    ExpenseInstance.find({ tenantId }).lean(),
+    models.students.find({ tenantId }).lean(),
+    models.archivedStudents.find({ tenantId }).lean(),
+    Library.findOne({ libraryId: tenantId }).lean(),
+  ]);
+  const payRows = payments.filter(p => inDateRange(p.date, period.from, period.to) && scoped(p, branch, section));
+  const expRows = expenses.filter(e => inDateRange(e.date, period.from, period.to) && scoped(e, branch, section));
+  const seenExpense = new Set();
+  const uniqueExp = expRows.filter(e => {
+    const key = String(e.id || e._key || e._id);
+    if (seenExpense.has(key)) return false;
+    seenExpense.add(key);
+    return true;
+  });
+  let feeCollections = 0, refunds = 0, oneTime = 0, recurringPaid = 0;
+  const paymentTable = [['Date', 'Receipt', 'Student', 'Kind', 'Method', 'Amount (INR)']];
+  for (const p of payRows) {
+    const kind = paymentKind(p);
+    const n = Number(p.netTotal ?? p.amount ?? 0);
+    if (kind !== 'Voided') {
+      if (kind === 'Refund') refunds += Math.abs(n);
+      else if (kind === 'Collection') feeCollections += n;
+    }
+    paymentTable.push([p.date || '', p.receiptNo || p.id || '', p.studentId || '', kind, p.method || '', n]);
+  }
+  const expenseTable = [['Date', 'Category', 'Branch', 'Shared', 'Amount (INR)']];
+  for (const e of uniqueExp) {
+    const a = Number(e.amount || 0);
+    oneTime += a;
+    const shared = !e.branchId || e.branchId === 'all' || e.branchId === 'shared';
+    expenseTable.push([e.date || '', e.category || 'Other', e.branchId || 'all', shared ? 'Yes' : 'No', a]);
+  }
+  for (const i of instances) {
+    if (!scoped(i, branch, section)) continue;
+    for (const pay of i.payments || []) {
+      if (!inDateRange(pay.date, period.from, period.to)) continue;
+      const a = Number(pay.amount || 0);
+      recurringPaid += a;
+      expenseTable.push([pay.date || '', i.category || 'Other', i.branchId || 'all', 'No', a]);
+    }
+  }
+  const netFees = feeCollections - refunds;
+  const expenseTotal = oneTime + recurringPaid;
+  const netProfit = netFees - expenseTotal;
+  const blocks = {};
+  if (ids.includes('payments')) blocks.payments = { title: 'All Student Payments', rows: paymentTable };
+  if (ids.includes('revenue')) blocks.revenue = { title: 'Revenue', rows: [['Line', 'Amount (INR)'], ['Fee collections', feeCollections], ['Refunds', refunds], ['Net fees', netFees]] };
+  if (ids.includes('expenses')) blocks.expenses = { title: 'Expenses', rows: [...expenseTable, [], ['One-time', oneTime], ['Recurring paid', recurringPaid], ['Total expenses', expenseTotal]] };
+  if (ids.includes('net')) blocks.net = { title: 'Net Profit', rows: [['Line', 'Amount (INR)'], ['Net fees', netFees], ['Total expenses', expenseTotal], ['Net profit', netProfit]] };
+  const activeStudents = students.filter(s => scoped(s, branch, section) && s.status !== 'Archived');
+  if (ids.includes('newStudents')) {
+    const rows = [['Name', 'Seat', 'Branch', 'Section', 'Start date']];
+    for (const s of activeStudents) {
+      const joined = studentJoinDate(s);
+      if (!inDateRange(joined, period.from, period.to)) continue;
+      rows.push([s.name || '', s.seatNo || '', s.branchId || '', s.sectionId || '', joined]);
+    }
+    blocks.newStudents = { title: 'New Students', rows };
+  }
+  if (ids.includes('studentList')) {
+    const rows = [['Name', 'Seat number', 'Branch', 'Section', 'Status']];
+    for (const s of activeStudents) rows.push([s.name || '', s.seatNo || '', s.branchId || '', s.sectionId || '', s.status || 'Active']);
+    blocks.studentList = { title: 'Student List + Seat Numbers', rows };
+  }
+  if (ids.includes('cancelled')) {
+    const rows = [['Name', 'Seat', 'Date', 'Outcome', 'Refund (INR)', 'Reason']];
+    const pool = [...students.filter(s => s.status === 'Cancelled'), ...archived];
+    const seen = new Set();
+    for (const s of pool) {
+      if (!scoped(s, branch, section)) continue;
+      const key = String(s.id || s._key || s._id);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const c = cancellationDetail(s);
+      if (!inDateRange(c.date, period.from, period.to)) continue;
+      rows.push([s.name || '', s.seatNo || '', c.date || '', c.outcome, c.refundAmount, c.reason]);
+    }
+    blocks.cancelled = { title: 'Cancelled Students', rows };
+  }
+  const ordered = ids.filter(id => blocks[id]).map(id => blocks[id]);
+  return {
+    libraryName: library?.name || 'My Library OS',
+    period: { ...period, branchId: branch, sectionId: section },
+    sections: ids.map(id => REPORT_SECTIONS.find(s => s.id === id).label),
+    totals: { feeCollections, refunds, netFees, oneTime, recurringPaid, expenseTotal, netProfit },
+    blocks: ordered,
+  };
+}
+
+
+function redactCustomReport(report, ctx) {
+  if (!report || ctx?.unrestricted) return report;
+  if (canSeeNetProfit(ctx.permissions, ctx.role)) return report;
+  const copy = {
+    ...report,
+    totals: { ...(report.totals || {}) },
+    sections: [...(report.sections || [])],
+    blocks: [...(report.blocks || [])],
+  };
+  delete copy.totals.netProfit;
+  copy.sections = copy.sections.filter((s) => s !== 'Net Profit');
+  copy.blocks = copy.blocks.filter((b) => b.title !== 'Net Profit');
+  return copy;
+}
+
+
+export function reportToCsv(report) {
+  const rows = [['My Library OS', report.libraryName], ['From', report.period.from], ['To', report.period.to], ['Branch', report.period.branchId], ['Section', report.period.sectionId], []];
+  for (const b of report.blocks) {
+    rows.push([b.title]);
+    rows.push(...b.rows);
+    rows.push([]);
+  }
+  return toCsv(rows);
+}
+
+export function reportToPdfBuffer(report) {
+  const lines = [
+    `Period: ${report.period.from} to ${report.period.to}`,
+    `Branch: ${report.period.branchId}    Section: ${report.period.sectionId}`,
+    `Sections: ${report.sections.join(', ')}`,
+    '',
+  ];
+  for (const b of report.blocks) {
+    lines.push(b.title);
+    for (const row of b.rows) lines.push(row.map(c => (c === '' || c === undefined ? '' : String(c))).join(' | '));
+    lines.push('');
+  }
+  return reportToPdf(lines.join('\n'), { title: 'My Library OS', subtitle: report.libraryName });
+}
+
+export function reportToXlsx(report) {
+  return sheetsToXlsx(report.blocks.map(b => ({ name: b.title, rows: b.rows })));
+}
+
 /* ------------------------------------------------------------------ routes */
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const byId = (req) => (mongoose.isValidObjectId(req.params.id) ? { tenantId: req.tenantId, _id: req.params.id } : null);
 
 export function createFinanceRouter() {
   const r = express.Router();
+  const guard = (moduleName, action) => (req, res, next) => {
+    assertModule(req, moduleName, action).then(() => next()).catch(next);
+  };
   r.get('/fees/suggest', (req, res, next) => {
     try {
       const tiers = String(req.query.tiers || '1:0').split(',').map(x => { const [months, discountPct] = x.split(':'); return { months, discountPct }; });
@@ -342,29 +509,29 @@ export function createFinanceRouter() {
     } catch (e) { next(e); }
   });
 
-  r.get('/recurring-expenses', wrap(async (req, res) => {
+  r.get('/recurring-expenses', guard('expenses', 'view'), wrap(async (req, res) => {
     res.json((await RecurringExpense.find({ tenantId: req.tenantId }).sort({ createdAt: -1 }).lean()).map(pubTemplate));
   }));
-  r.post('/recurring-expenses', wrap(async (req, res) => {
+  r.post('/recurring-expenses', guard('expenses', 'collect'), wrap(async (req, res) => {
     const t = await RecurringExpense.create({ ...templateInput(req.body || {}), tenantId: req.tenantId, createdBy: req.user.email });
     await generateInstances(req.tenantId);
     res.status(201).json(pubTemplate(t));
   }));
-  r.put('/recurring-expenses/:id', wrap(async (req, res) => {
+  r.put('/recurring-expenses/:id', guard('expenses', 'edit'), wrap(async (req, res) => {
     const f = byId(req); if (!f) return res.status(404).json({ error: 'Not found' });
     const t = await RecurringExpense.findOneAndUpdate(f, { $set: templateInput(req.body || {}, true) }, { new: true, lean: true });
     if (!t) return res.status(404).json({ error: 'Not found' });
     await generateInstances(req.tenantId);
     res.json(pubTemplate(t));
   }));
-  r.post('/recurring-expenses/:id/stop', wrap(async (req, res) => {
+  r.post('/recurring-expenses/:id/stop', guard('expenses', 'delete'), wrap(async (req, res) => {
     const f = byId(req); if (!f) return res.status(404).json({ error: 'Not found' });
     const t = await RecurringExpense.findOneAndUpdate(f, { $set: { status: 'stopped', stoppedAt: new Date() } }, { new: true, lean: true });
     t ? res.json(pubTemplate(t)) : res.status(404).json({ error: 'Not found' });
   }));
-  r.post('/recurring-expenses/generate', wrap(async (req, res) => res.json({ created: await generateInstances(req.tenantId) })));
+  r.post('/recurring-expenses/generate', guard('expenses', 'collect'), wrap(async (req, res) => res.json({ created: await generateInstances(req.tenantId) })));
 
-  r.get('/expense-instances', wrap(async (req, res) => {
+  r.get('/expense-instances', guard('expenses', 'view'), wrap(async (req, res) => {
     const q = { tenantId: req.tenantId };
     if (req.query.templateId) q.templateId = String(req.query.templateId);
     const today = todayIn();
@@ -373,11 +540,11 @@ export function createFinanceRouter() {
     if (req.query.branchId && req.query.branchId !== 'all') list = list.filter(i => i.branchId === req.query.branchId);
     res.json(list);
   }));
-  r.get('/expense-instances/:id', wrap(async (req, res) => {
+  r.get('/expense-instances/:id', guard('expenses', 'view'), wrap(async (req, res) => {
     const f = byId(req); const i = f && await ExpenseInstance.findOne(f).lean();
     i ? res.json(pubInstance(i)) : res.status(404).json({ error: 'Not found' });
   }));
-  r.patch('/expense-instances/:id', wrap(async (req, res) => {
+  r.patch('/expense-instances/:id', guard('expenses', 'edit'), wrap(async (req, res) => {
     const f = byId(req); if (!f) return res.status(404).json({ error: 'Not found' });
     const set = {};
     if (req.body?.amount !== undefined) { const a = Number(req.body.amount); if (!(a >= 0)) throw new ValidationError('Amount must be 0 or more'); set.amount = roundRupees(a); }
@@ -387,7 +554,7 @@ export function createFinanceRouter() {
     const i = await ExpenseInstance.findOneAndUpdate(f, { $set: set, $push: { history: { at: new Date(), by: req.user.email, action: 'edited', detail: Object.keys(set).join(', ') } } }, { new: true, lean: true });
     i ? res.json(pubInstance(i)) : res.status(404).json({ error: 'Not found' });
   }));
-  r.post('/expense-instances/:id/payments', wrap(async (req, res) => {
+  r.post('/expense-instances/:id/payments', guard('expenses', 'collect'), wrap(async (req, res) => {
     const f = byId(req); if (!f) return res.status(404).json({ error: 'Not found' });
     const amount = Number(req.body?.amount);
     if (!(amount > 0) || !Number.isInteger(amount)) throw new ValidationError('Payment must be a positive whole amount');
@@ -409,17 +576,57 @@ export function createFinanceRouter() {
   }));
 
   const pnlQuery = (req) => ({ from: req.query.from, to: req.query.to, branchId: req.query.branchId });
-  r.get('/reports/pnl', wrap(async (req, res) => res.json(await computePnl(req.tenantId, pnlQuery(req)))));
-  r.get('/reports/pnl.csv', wrap(async (req, res) => {
-    const p = await computePnl(req.tenantId, pnlQuery(req));
+  r.get('/reports/pnl', guard('reports', 'view'), wrap(async (req, res) => {
+    const pnl = redactPnl(await computePnl(req.tenantId, pnlQuery(req)), await staffContext(req));
+    res.json(pnl);
+  }));
+  r.get('/reports/pnl.csv', guard('reports', 'export'), wrap(async (req, res) => {
+    const p = redactPnl(await computePnl(req.tenantId, pnlQuery(req)), await staffContext(req));
     const rows = [['Line', 'Amount (INR)'], ['Fee collections', p.feeCollections], ['Refunds', -p.refunds], ['Net fees', p.netFees],
-      ['One-time expenses', -p.expenses.oneTime], ['Recurring bills paid', -p.expenses.recurringPaid], ['Net collections', p.netCollections],
+      ['One-time expenses', -p.expenses.oneTime], ['Recurring bills paid', -p.expenses.recurringPaid],
+      ...(p.netCollections === undefined ? [] : [['Net collections', p.netCollections]]),
       ['Recurring bills outstanding', p.recurringOutstanding], ['Student dues', p.studentDues], [], ['Expense category', 'Amount (INR)'],
       ...Object.entries(p.expenses.byCategory), [], ['Payment method', 'Amount (INR)'], ...Object.entries(p.byMethod)];
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="pnl-${p.period.from || 'all'}-${p.period.to || 'all'}.csv"`);
     res.send(toCsv(rows));
   }));
+
+  const customQuery = (req) => ({
+    preset: req.query.preset, from: req.query.from, to: req.query.to, today: req.query.today,
+    branchId: req.query.branchId, sectionId: req.query.sectionId, sections: req.query.sections,
+  });
+  const sendCustom = (format) => wrap(async (req, res) => {
+    await assertModule(req, 'reports', format === 'json' ? 'view' : 'export');
+    let report;
+    try { report = await buildCustomReport(req.tenantId, customQuery(req)); }
+    catch (e) {
+      if (e.code === 'unknown_section' || e.code === 'unknown_preset') return res.status(400).json({ error: e.message });
+      throw e;
+    }
+    report = redactCustomReport(report, await staffContext(req));
+    const stamp = `${report.period.from || 'all'}-${report.period.to || 'all'}`;
+    if (format === 'csv') {
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="report-${stamp}.csv"`);
+      return res.send(reportToCsv(report));
+    }
+    if (format === 'pdf') {
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="report-${stamp}.pdf"`);
+      return res.send(reportToPdfBuffer(report));
+    }
+    if (format === 'xlsx') {
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="report-${stamp}.xlsx"`);
+      return res.send(reportToXlsx(report));
+    }
+    res.json(report);
+  });
+  r.get('/reports/custom', sendCustom('json'));
+  r.get('/reports/custom.csv', sendCustom('csv'));
+  r.get('/reports/custom.pdf', sendCustom('pdf'));
+  r.get('/reports/custom.xlsx', sendCustom('xlsx'));
   return r;
 }
 

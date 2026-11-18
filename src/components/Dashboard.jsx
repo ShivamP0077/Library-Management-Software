@@ -55,8 +55,12 @@ export const Dashboard = ({
 }) => {
   const { 
     settings, students, payments, expenses, branches, activeBranchId, todayStr,
-    plans, shifts, seatTypes, seats, checkDataIntegrity, getSetupStatus
+    plans, shifts, seatTypes, seats, checkDataIntegrity, getSetupStatus, hasPermission
   } = useLibrary();
+  const showCollections = hasPermission('payments', 'view');
+  const showExpenses = hasPermission('expenses', 'view');
+  const showNetProfit = hasPermission('reports', 'netProfit');
+  const showMoneyChart = showCollections || showExpenses;
 
   const [showAllIssues, setShowAllIssues] = useState(false);
 
@@ -289,14 +293,14 @@ export const Dashboard = ({
 
       {/* Main KPI Grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '24px' }}>
-        <KpiCard 
+        {showCollections && <KpiCard 
           title="TODAY'S COLLECTIONS" 
           value={todaysCollectionsTotal} 
           prefix="₹" 
           icon={DollarSign} 
           color="#10b981" 
           delay={0.1}
-        />
+        />}
         <KpiCard 
           title="ACTIVE STUDENTS" 
           value={activeStudentsCount} 
@@ -314,7 +318,7 @@ export const Dashboard = ({
           delay={0.3}
           onClick={() => setActiveTab('seats')}
         />
-        <KpiCard 
+        {showNetProfit && <KpiCard 
           title="MONTHLY NET PROFIT" 
           value={monthlyNetProfit} 
           prefix="₹" 
@@ -322,14 +326,14 @@ export const Dashboard = ({
           color={monthlyNetProfit >= 0 ? "#10b981" : "#ef4444"} 
           delay={0.4}
           onClick={() => setActiveTab('reports')}
-        />
+        />}
       </div>
 
       {/* Secondary Grid: Chart & Lists */}
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px' }}>
         
         {/* Chart Section */}
-        <motion.div 
+        {showMoneyChart && <motion.div 
           className="premium-card"
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -363,13 +367,12 @@ export const Dashboard = ({
               </AreaChart>
             </ResponsiveContainer>
           </div>
-        </motion.div>
+        </motion.div>}
 
         {/* Quick Lists */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           
-          {/* Recent Payments Preview */}
-          <div className="premium-card">
+          {showCollections && <div className="premium-card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <h3 style={{ fontSize: '16px', fontWeight: 600 }}>Recent Payments</h3>
               <button className="btn btn-ghost" style={{ fontSize: '12px', padding: '4px 8px' }} onClick={() => setActiveTab('payments')}>
@@ -395,7 +398,7 @@ export const Dashboard = ({
                 </div>
               )}
             </div>
-          </div>
+          </div>}
 
           {/* Expiring Soon Alert Card */}
           <div className="premium-card">

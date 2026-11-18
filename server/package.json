@@ -6,6 +6,7 @@
   "scripts": {
     "test": "NODE_ENV=test node --test --test-concurrency=1 test/*.test.js",
     "start": "node src/index.js",
+    "whatsapp:worker": "node src/whatsapp-worker.js",
     "dev": "node --watch src/index.js",
     "seed": "node src/seed-cli.js",
     "seed:demo": "node src/seed-cli.js --demo",

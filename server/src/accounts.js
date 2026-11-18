@@ -19,7 +19,36 @@ import { checkStaffLimit } from './plans.js';
 
 const sha = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
-const frontendUrl = () => (process.env.FRONTEND_URL || process.env.APP_URL || '').replace(/\/+$/, '');
+
+/** App the invite email and Team Access copy link must open. */
+export const DEFAULT_INVITE_APP_ORIGIN = 'https://app.mylibraryos.in';
+const MARKETING_HOSTS = new Set(['mylibraryos.in', 'www.mylibraryos.in']);
+
+/**
+ * Origin for a staff invite. A local or real app origin (including
+ * http://localhost:5173) is kept. Empty, the marketing site, or an API host
+ * falls back to the My Library OS app.
+ */
+export function inviteAppOrigin(env = process.env) {
+  const raw = String(env.FRONTEND_URL || env.APP_URL || '').trim();
+  if (!raw) return DEFAULT_INVITE_APP_ORIGIN;
+  let url;
+  try { url = new URL(raw); } catch { return DEFAULT_INVITE_APP_ORIGIN; }
+  const host = url.hostname.toLowerCase();
+  const path = url.pathname.replace(/\/+$/, '');
+  const apiHost = host.startsWith('api.') || host.endsWith('.onrender.com');
+  const sameAsApi = [env.RENDER_EXTERNAL_URL, env.WEBHOOK_BASE_URL].some((value) => {
+    if (!value) return false;
+    try { return new URL(String(value)).origin === url.origin; } catch { return false; }
+  });
+  if (MARKETING_HOSTS.has(host) || apiHost || sameAsApi || path === '/api') return DEFAULT_INVITE_APP_ORIGIN;
+  const basePath = path && path !== '/' ? path : '';
+  return `${url.origin}${basePath}`;
+}
+
+export function inviteLink(token, env = process.env) {
+  return `${inviteAppOrigin(env)}/invite/${encodeURIComponent(token)}`;
+}
 const INVITE_HOURS = () => Number(process.env.INVITE_EXPIRY_HOURS || 72);
 const OTP_MINUTES = () => Number(process.env.OTP_EXPIRY_MINUTES || 10);
 
@@ -234,7 +263,7 @@ export function createTenantAccountRouter() {
     await Invite.updateMany({ tenantId: req.tenantId, email, usedAt: null, revokedAt: null }, { $set: { revokedAt: new Date() } }); // one live invite per email
     const token = crypto.randomBytes(32).toString('base64url');
     const inv = await Invite.create({ tenantId: req.tenantId, tokenHash: sha(token), email, name: req.body?.name, role, staffId: req.body?.staffId, permissions: req.body?.permissions, expiresAt: new Date(Date.now() + hours * 3600e3), createdBy: req.user.email });
-    const link = `${frontendUrl()}/#invite=${token}`;
+    const link = inviteLink(token);
     const lib = await Library.findOne({ libraryId: req.tenantId }).lean();
     let emailed = false;
     if (req.body?.sendEmail !== false) {

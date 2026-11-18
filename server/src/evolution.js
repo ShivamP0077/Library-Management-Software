@@ -9,6 +9,14 @@ export class EvolutionError extends Error {
 
 export const evolutionConfigured = (env = process.env) => Boolean(env.EVOLUTION_API_URL && env.EVOLUTION_API_KEY);
 
+/**
+ * HTTP GET of the Evolution server root so a free-plan host stays awake.
+ * This is not a WhatsApp message: it must never call sendText, sendMedia, connect, or logout.
+ */
+export function evolutionKeepAlivePing(url, fetchImpl = globalThis.fetch) {
+  return fetchImpl(String(url || ''), { method: 'GET', signal: AbortSignal.timeout(60000) });
+}
+
 /** Evolution instance used by My Library OS itself (sign-up codes). Never a library. */
 export const SYSTEM_INSTANCE = 'libos-system';
 
@@ -94,6 +102,8 @@ export function createEvolutionClient({ baseUrl = process.env.EVOLUTION_API_URL,
     /** Wake a sleeping (free-plan) Evolution service: same read as connectionState, with a long timeout for the cold start. */
     wake: (name, ms = 60000) => call('GET', `/instance/connectionState/${enc(name)}`, undefined, ms),
     logout: (name) => call('DELETE', `/instance/logout/${enc(name)}`),
+    // Evolution API v2: remove the instance and its Baileys session so a later status/wake cannot restore it.
+    deleteInstance: (name) => call('DELETE', `/instance/delete/${enc(name)}`),
     setWebhook: (name, url) => call('POST', `/webhook/set/${enc(name)}`, { webhook: { enabled: true, url, byEvents: false, base64: false, events: ['MESSAGES_UPDATE'] } }),
     sendText: (name, number, text) => call('POST', `/message/sendText/${enc(name)}`, { number, text }),
     /**

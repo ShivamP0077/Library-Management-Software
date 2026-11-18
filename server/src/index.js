@@ -10,6 +10,7 @@ import { Library } from './models.js';
 import { runDailyNotificationJob } from './notifications.js';
 import { ensureSupportGlobalNumberIndex } from './support.js';
 import { runReminderJob, runReceiptRetryJob } from './reminders.js';
+import { evolutionKeepAlivePing } from './evolution.js';
 import { refreshPaymentProvider } from './paymentConfig.js';
 import { purgeExpiredDocuments } from './documentRetention.js';
 
@@ -44,7 +45,7 @@ connectWithRetry();
 // NOTE: lms-api itself is also on Render's free plan and sleeps after ~15 min idle, so this only helps while
 // lms-api is awake. The real fix is a paid (always-on) plan for both services.
 if (process.env.EVOLUTION_API_URL && process.env.NODE_ENV !== 'test' && process.env.EVOLUTION_KEEPALIVE !== 'false') {
-  const ping = () => fetch(process.env.EVOLUTION_API_URL, { signal: AbortSignal.timeout(60000) })
+  const ping = () => evolutionKeepAlivePing(process.env.EVOLUTION_API_URL)
     .catch(e => console.error('[whatsapp] keep-alive ping failed:', e.message));
   setTimeout(ping, 30000);
   setInterval(ping, 10 * 60 * 1000);

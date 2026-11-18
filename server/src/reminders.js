@@ -14,8 +14,8 @@ import express from 'express';
 import tenantGuard, { applyBulkWriteGuard } from './tenantGuard.js';
 import { models, Library } from './models.js';
 import { todayIn } from './finance.js';
-import { WhatsappConfig, sendWhatsappMessage, buildReceiptText, receiptDocument, logSkipped, canManageWhatsapp, retryFailedReceipts } from './whatsapp.js';
-import { evolutionConfigured } from './evolution.js';
+import { WhatsappConfig, sendWhatsappMessage, buildReceiptText, receiptDocument, logSkipped, canManageWhatsapp, retryFailedReceipts, readSessionState, isLoggedOutState } from './whatsapp.js';
+import { evolutionConfigured, instanceNameFor } from './evolution.js';
 import { getTemplates, renderTemplate } from './templates.js';
 
 const schema = new mongoose.Schema({
@@ -141,6 +141,13 @@ export async function planReminders(tenantId, { today = todayIn() } = {}) {
 
 /** Send everything due today, re-checking live data first (latest payment status wins). */
 export async function sendDueReminders(tenantId, { today = todayIn(), hour = null, deps = {} } = {}) {
+  if (deps.client) {
+    const state = await readSessionState(deps.client, instanceNameFor(tenantId));
+    if (isLoggedOutState(state)) {
+      console.log(`[reminders] ${tenantId} WhatsApp is disconnected; leaving scheduled reminders unsent`);
+      return { sent: 0, skipped: 0, failed: 0, cancelled: 0, disconnected: true };
+    }
+  }
   // A rule's send time: today's row waits until that local hour (earlier days' rows go out now).
   const due = (await ReminderSchedule.find({ tenantId, status: 'scheduled', sendOn: { $lte: today } }).lean())
     .filter(r => hour == null || r.sendOn < today || !r.sendHour || hour >= r.sendHour);

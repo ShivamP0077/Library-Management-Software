@@ -1,6 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { API_BASE } from '../../utils/api';
 import { indianMobileError } from '../../utils/enquiry';
+import { branchSectionState, genderError, viewOnlyPlans } from '../../utils/enquiryForm';
+import { compressEnquiryImage } from '../../utils/compressEnquiryImage';
 
 async function publicEnquiry(path, { method = 'GET', body } = {}) {
   let res;
@@ -40,10 +42,14 @@ export function PublicEnquiryForm({ token }) {
   const [loadError, setLoadError] = useState('');
   const [name, setName] = useState('');
   const [mobile, setMobile] = useState('');
+  const [gender, setGender] = useState('');
   const [email, setEmail] = useState('');
-  const [preferred, setPreferred] = useState('Not sure');
   const [message, setMessage] = useState('');
   const [website, setWebsite] = useState('');
+  const [branchId, setBranchId] = useState('');
+  const [sectionId, setSectionId] = useState('');
+  const [aadhaar, setAadhaar] = useState('');
+  const [photo, setPhoto] = useState('');
   const [mobileTouched, setMobileTouched] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -52,7 +58,13 @@ export function PublicEnquiryForm({ token }) {
     setPhase('loading');
     setLoadError('');
     publicEnquiry(`/public/enquiry/${encodeURIComponent(token)}`)
-      .then((data) => { setInfo(data); setPhase('form'); })
+      .then((data) => {
+        setInfo(data);
+        const state = branchSectionState(data, '', '');
+        setBranchId(state.branch.value);
+        setSectionId(state.section.value);
+        setPhase('form');
+      })
       .catch((error) => {
         if (error.status === 404) setPhase('missing');
         else if (error.status === 429 || error.code === 'rate_limited') {
@@ -67,12 +79,26 @@ export function PublicEnquiryForm({ token }) {
 
   useEffect(() => { load(); }, [token]);
 
-  const choices = useMemo(() => {
-    const names = [...(info?.shifts || []), ...(info?.plans || [])].map(v => String(v || '').trim()).filter(Boolean);
-    return ['Not sure', ...new Set(names)];
-  }, [info]);
-
+  const place = info ? branchSectionState(info, branchId, sectionId) : null;
+  const plans = viewOnlyPlans(info?.plans);
   const mobileMessage = mobileTouched || mobile ? indianMobileError(mobile) : '';
+
+  const onBranch = (id) => {
+    setBranchId(id);
+    const next = branchSectionState(info, id, '');
+    setSectionId(next.section.value);
+  };
+
+  const onFile = async (file, setter) => {
+    setSubmitError('');
+    if (!file) { setter(''); return; }
+    try {
+      setter(await compressEnquiryImage(file));
+    } catch (error) {
+      setter('');
+      setSubmitError(error.message || 'Could not use that image');
+    }
+  };
 
   const submit = async (event) => {
     event.preventDefault();
@@ -81,12 +107,27 @@ export function PublicEnquiryForm({ token }) {
     if (!name.trim()) { setSubmitError('Name is required'); return; }
     const mobileProblem = indianMobileError(mobile);
     if (mobileProblem) { setSubmitError(mobileProblem); return; }
+    const genderProblem = genderError(gender);
+    if (genderProblem) { setSubmitError(genderProblem); return; }
     if (message.length > 500) { setSubmitError('Message must be 500 characters or less'); return; }
+    if (place && !place.branch.hidden && !place.branch.value) { setSubmitError('Choose a branch'); return; }
+    if (place && !place.section.hidden && !place.section.value) { setSubmitError('Choose a section'); return; }
     setBusy(true);
     try {
       await publicEnquiry(`/public/enquiry/${encodeURIComponent(token)}`, {
         method: 'POST',
-        body: { name: name.trim(), mobile, email: email.trim(), preferred, message: message.trim(), website },
+        body: {
+          name: name.trim(),
+          mobile,
+          gender,
+          email: email.trim(),
+          message: message.trim(),
+          website,
+          branchId: place?.branch.value || '',
+          sectionId: place?.section.value || '',
+          ...(aadhaar ? { aadhaar } : {}),
+          ...(photo ? { photo } : {}),
+        },
       });
       setPhase('done');
     } catch (error) {
@@ -96,6 +137,27 @@ export function PublicEnquiryForm({ token }) {
     } finally {
       setBusy(false);
     }
+  };
+
+  const choiceField = (id, label, control, onChange) => {
+    if (!control || control.hidden) return null;
+    if (control.locked) {
+      return (
+        <div className="form-group">
+          <span className="form-label">{label}</span>
+          <input className="form-input" style={{ borderRadius: 10, minHeight: 44 }} value={control.options[0]?.name || ''} readOnly aria-readonly="true" />
+        </div>
+      );
+    }
+    return (
+      <div className="form-group">
+        <label className="form-label" htmlFor={id}>{label} *</label>
+        <select id={id} className="form-select" style={{ borderRadius: 10, minHeight: 44 }} value={control.value} onChange={e => onChange(e.target.value)} required>
+          <option value="">Select</option>
+          {control.options.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}
+        </select>
+      </div>
+    );
   };
 
   return (
@@ -141,6 +203,20 @@ export function PublicEnquiryForm({ token }) {
                 <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: 14 }}>Tell the library you are interested. They will contact you.</p>
               </div>
 
+              {plans.length > 0 && (
+                <section aria-label="Membership plans" style={{ marginBottom: 16 }}>
+                  <h2 style={{ fontSize: 15, margin: '0 0 8px' }}>Membership plans</h2>
+                  <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 8 }}>
+                    {plans.map(plan => (
+                      <li key={plan.id} style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: '8px 12px', fontSize: 14 }}>
+                        {plan.name}{plan.price != null ? ` · ₹${plan.price}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                  <p style={{ margin: '8px 0 0', fontSize: 12, color: 'var(--text-secondary)' }}>For information only. You cannot choose or buy a plan on this form.</p>
+                </section>
+              )}
+
               <div className="form-group">
                 <label className="form-label" htmlFor="enquiry-name">Name *</label>
                 <input id="enquiry-name" className="form-input" style={{ borderRadius: 10, minHeight: 44 }} autoComplete="name" value={name} onChange={e => setName(e.target.value)} required maxLength={80} />
@@ -150,15 +226,28 @@ export function PublicEnquiryForm({ token }) {
                 <input id="enquiry-mobile" className="form-input" style={{ borderRadius: 10, minHeight: 44 }} type="tel" inputMode="tel" autoComplete="tel" placeholder="10-digit mobile" value={mobile} onBlur={() => setMobileTouched(true)} onChange={e => setMobile(e.target.value)} required aria-invalid={Boolean(mobileMessage)} />
                 {mobileMessage && <span role="alert" style={{ color: '#dc2626', fontSize: 12 }}>{mobileMessage}</span>}
               </div>
+              <fieldset className="form-group" style={{ border: 0, padding: 0, margin: 0 }}>
+                <legend className="form-label">Gender *</legend>
+                {['male', 'female', 'other'].map(value => (
+                  <label key={value} style={{ display: 'inline-flex', gap: 6, marginRight: 12, minHeight: 44, alignItems: 'center' }}>
+                    <input type="radio" name="gender" value={value} checked={gender === value} onChange={() => setGender(value)} required />
+                    {value[0].toUpperCase() + value.slice(1)}
+                  </label>
+                ))}
+              </fieldset>
               <div className="form-group">
                 <label className="form-label" htmlFor="enquiry-email">Email</label>
                 <input id="enquiry-email" className="form-input" style={{ borderRadius: 10, minHeight: 44 }} type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} />
               </div>
+              {choiceField('enquiry-branch', 'Branch', place?.branch, onBranch)}
+              {choiceField('enquiry-section', 'Section', place?.section, setSectionId)}
               <div className="form-group">
-                <label className="form-label" htmlFor="enquiry-preferred">Preferred shift or plan</label>
-                <select id="enquiry-preferred" className="form-select" style={{ borderRadius: 10, minHeight: 44 }} value={preferred} onChange={e => setPreferred(e.target.value)}>
-                  {choices.map(choice => <option key={choice} value={choice}>{choice}</option>)}
-                </select>
+                <label className="form-label" htmlFor="enquiry-aadhaar">Aadhaar</label>
+                <input id="enquiry-aadhaar" className="form-input" style={{ borderRadius: 10 }} type="file" accept="image/jpeg,image/webp" onChange={e => onFile(e.target.files?.[0], setAadhaar)} />
+              </div>
+              <div className="form-group">
+                <label className="form-label" htmlFor="enquiry-photo">Student photo</label>
+                <input id="enquiry-photo" className="form-input" style={{ borderRadius: 10 }} type="file" accept="image/jpeg,image/webp" onChange={e => onFile(e.target.files?.[0], setPhoto)} />
               </div>
               <div className="form-group">
                 <label className="form-label" htmlFor="enquiry-message">Message</label>

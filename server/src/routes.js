@@ -43,6 +43,8 @@ import { refreshPaymentProvider } from './paymentConfig.js';
 import { DeletionJob } from './deletionJob.js';
 import { createPublicAccountRouter, createTenantAccountRouter, auditSuperadminAccess, acceptInvite, issueLinkedGooglePasswordReset } from './accounts.js';
 import { createSeatRouter, reconcileStudents, releaseForStudents, validateSeatSync, SeatAllocation, seatMatchesAllocation, SeatConflictError } from './seats.js';
+import { billingSettings } from './seatLifecycle.js';
+import { stampPeriodSnapshots } from '../../src/utils/subscriptionLifecycle.js';
 
 const router = express.Router();
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -633,6 +635,7 @@ tenant.post('/:col', colParam, wrap(async (req, res) => {
     const n = await req.Model.countDocuments({ tenantId: req.tenantId });
     await checkCapacity(req.tenantId, n + 1, n);
     normalizeStudentPaymentDates(body, null);
+    stampPeriodSnapshots(body, null, await billingSettings(req.tenantId));
     await reconcileStudents(req.tenantId, [body], { actor: req.user.email });
   }
   if (req.params.col === 'payments') { validatePaymentBatch([body]); await enforceAmountEdits(req, [body]); }
@@ -649,6 +652,9 @@ tenant.put('/:col/:key', colParam, wrap(async (req, res) => {
     if (!prev) return res.status(404).json({ error: 'Not found' });
     const merged = { ...clean(prev), ...stripMeta(req.body), id: prev.id ?? req.params.key };
     normalizeStudentPaymentDates(merged, prev);
+    stampPeriodSnapshots(merged, prev, await billingSettings(req.tenantId));
+    req.body.graceDaysSnapshot = merged.graceDaysSnapshot;
+    req.body.expiredPeriodDaysSnapshot = merged.expiredPeriodDaysSnapshot;
     await reconcileStudents(req.tenantId, [merged], { actor: req.user.email, previous: new Map([[String(merged.id), prev]]) });
     await recordStudentDiff(req.tenantId, new Map([[String(merged.id), prev]]), [merged], req.user.email);
   }
@@ -717,7 +723,16 @@ tenant.put('/:col', colParam, wrap(async (req, res) => {
     const prevDocs = await req.Model.find({ tenantId: req.tenantId }).lean();
     const previous = new Map(prevDocs.map(d => [String(d._key), d]));
     const incoming = req.body.map(stripMeta).filter(b => keyOf(col, b));
-    for (const s of incoming) normalizeStudentPaymentDates(s, previous.get(String(keyOf(col, s))));
+    const billing = await billingSettings(req.tenantId);
+    for (const s of incoming) {
+      normalizeStudentPaymentDates(s, previous.get(String(keyOf(col, s))));
+      stampPeriodSnapshots(s, previous.get(String(s.id ?? keyOf(col, s))), billing);
+      const raw = req.body.find(b => String(b?.id) === String(s.id));
+      if (raw) {
+        raw.graceDaysSnapshot = s.graceDaysSnapshot;
+        raw.expiredPeriodDaysSnapshot = s.expiredPeriodDaysSnapshot;
+      }
+    }
     await checkCapacity(req.tenantId, new Set(incoming.map(b => keyOf(col, b))).size, prevDocs.length);
     await reconcileStudents(req.tenantId, incoming, { actor: req.user.email, previous });
     req.studentDiff = { previous, incoming };

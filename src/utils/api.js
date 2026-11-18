@@ -80,10 +80,10 @@ export const api = {
   me: () => apiRequest('/auth/me'),
   logout: () => setToken(null),
   // WhatsApp (finite client timeouts; the server also wakes/retries within a budget)
-  whatsappStatus: (timeoutMs = 15000) => apiRequest('/whatsapp/status', { timeoutMs }),
+  whatsappStatus: (timeoutMs = 15000, extra = {}) => apiRequest(`/whatsapp/status${extra?.fresh ? '?fresh=true' : ''}`, { timeoutMs }),
   whatsappConnect: (timeoutMs = 45000) => apiRequest('/whatsapp/connect', { method: 'POST', timeoutMs }),
   whatsappLogout: (timeoutMs = 20000) => apiRequest('/whatsapp/logout', { method: 'POST', timeoutMs }),
-  systemWhatsappStatus: (timeoutMs = 15000) => apiRequest('/admin/system-whatsapp/status', { timeoutMs }),
+  systemWhatsappStatus: (timeoutMs = 15000, extra = {}) => apiRequest(`/admin/system-whatsapp/status${extra?.fresh ? '?fresh=true' : ''}`, { timeoutMs }),
   systemWhatsappConnect: (timeoutMs = 45000) => apiRequest('/admin/system-whatsapp/connect', { method: 'POST', timeoutMs }),
   systemWhatsappDisconnect: (timeoutMs = 20000) => apiRequest('/admin/system-whatsapp/disconnect', { method: 'POST', timeoutMs }),
   whatsappSaveSettings: (body) => apiRequest('/whatsapp/settings', { method: 'PUT', body }),

@@ -11,6 +11,7 @@ import { runDailyNotificationJob } from './notifications.js';
 import { ensureSupportGlobalNumberIndex } from './support.js';
 import { refreshPaymentProvider } from './paymentConfig.js';
 import { purgeExpiredDocuments } from './documentRetention.js';
+import { runSeatLifecycleJob } from './seatLifecycle.js';
 import { installProcessGuards, registerWhatsappJobs, startEvolutionKeepAlive, whatsappJobsBelongInWorker } from './whatsappJobs.js';
 
 installProcessGuards();
@@ -38,6 +39,7 @@ async function connectWithRetry() {
       startEvolutionKeepAlive();
     }
     registerJob('document-retention', () => purgeExpiredDocuments(), { intervalMs: 6 * 60 * 60 * 1000 });
+    registerJob('seat-lifecycle', () => runSeatLifecycleJob(Library));
     startScheduler();
   } catch (err) {
     console.error(`[db] Connection failed (retrying in ${RETRY_MS / 1000}s):`, redact(err.message));

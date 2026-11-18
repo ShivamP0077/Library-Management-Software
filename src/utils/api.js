@@ -193,7 +193,8 @@ export const api = {
   updateExpenseInstance: (id, body) => apiRequest(`/expense-instances/${encodeURIComponent(id)}`, { method: 'PATCH', body }),
   payExpenseInstance: (id, body) => apiRequest(`/expense-instances/${encodeURIComponent(id)}/payments`, { method: 'POST', body }),
   pnl: (q = '') => apiRequest(`/reports/pnl${q}`),
-  downloadCsv: async (path, filename) => {
+  downloadCsv: async (path, filename) => api.downloadFile(path, filename),
+  downloadFile: async (path, filename) => {
     const headers = {}; const t = getToken(); if (t) headers.Authorization = `Bearer ${t}`;
     if (tenantContext.libraryId) headers['X-Library-Id'] = tenantContext.libraryId;
     const res = await fetch(`${API_BASE}${path}`, { headers });

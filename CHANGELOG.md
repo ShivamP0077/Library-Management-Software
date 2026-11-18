@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-18 (IST)
+
+- **Custom report builder** (branch `feat/report-builder`, not deployed). Reports can now pick any of these sections: All Student Payments, Revenue, Expenses, Net Profit, New Students, Student List + Seat Numbers, and Cancelled Students. Seat Revenue and Seat Expenses are not offered. Date chips cover the last 7 days, this month, last month, the last 2 months, the quarter, the year, and a custom from/to. A library with one branch or one section has that choice locked; with more than one, the report can be All or a single branch or section. A shared expense (no branch, or branch All) is included once in the All report and is not added again on each branch. The existing P&L CSV download is unchanged. The same report also downloads as a branded PDF (library name, headings, date range, page numbers) and as an Excel file with one worksheet per chosen section. Refunds and cancellations stay labelled apart in student payments and cancelled students. Staff still need the existing Reports view permission; staff without it get a refusal. No production data was rewritten. Nothing was deployed.
+
 ## 2026-11-14 (IST)
 
 - **Paid Razorpay checkouts showed as unpaid** (branch `fix/razorpay-captured-activation`, not deployed). After a real Razorpay payment the owner history showed past_due and no plan, and Super Admin billing history stayed empty. Cause 1: when Razorpay said the payment was captured, the server compared the payment id with the payment-link id and marked the invoice failed even though the amount was correct. Cause 2: the Super Admin Payments page never saved the invoice list (a missing variable). Fix: the webhook now ties a captured payment back to its payment link before activating the plan, and Super Admin history shows invoices again. A dry-run script (`server/scripts/reconcile-software-invoice.mjs`) can settle the two already-captured ₹1 invoices; it was not run. Not deployed.

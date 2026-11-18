@@ -50,7 +50,7 @@ test('seat map exposes three views with solid hex fills and white numbers', () =
   assert.match(jsx, /Seat Details/);
   assert.match(jsx, /No photo/);
   assert.match(jsx, /Search photo tiles/);
-  assert.match(jsx, /status === 'Active' \|\| status === 'Expiring Soon'/);
+  assert.match(jsx, /holdsDesk\(student, settings, todayIST\(\)\)/);
   assert.doesNotMatch(jsx, />Current</);
 
   for (const hex of Object.values(SEAT_COLORS.occupancy)) {

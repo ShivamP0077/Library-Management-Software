@@ -15,7 +15,7 @@ import { assertModule, staffContext, assertMoneySync, prepareStaffWrite, staffAl
 import { createNotificationRouter } from './notifications.js';
 import { createActionDismissalRouter } from './actionDismissals.js';
 import { createInsightsRouter } from './insights.js';
-import { createSupportRouter, createSupportAdminRouter } from './support.js';
+import { createSupportRouter, createSupportAdminRouter, createPublicSupportRouter } from './support.js';
 import { createPartnerAdminRouter, createPartnerPortalRouter } from './partners.js';
 import { createTemplateRouter } from './templates.js';
 import { createReminderRouter, autoSendReceipts, receiptsForNewStudents } from './reminders.js';
@@ -272,6 +272,7 @@ router.post('/auth/google', wrap(async (req, res) => {
 router.use(createPublicAccountRouter({ issueSession }));
 router.use(createSignupRouter({ issueSession })); // Issue #15 (off unless OWNER_SIGNUP_ENABLED=true)
 router.use(createPublicEnquiryRouter()); // public QR form; still accepts enquiries when the plan is locked
+router.use(createPublicSupportRouter()); // logged-out tickets in the same SupportTicket collection
 router.use(createPublicPlanRouter()); // read-only software-plan catalogue for the marketing site
 
 // Evolution delivery webhook: no login, verified by a per-instance HMAC token.

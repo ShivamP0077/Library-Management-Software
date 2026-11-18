@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { useAuth, googleOAuthErrorMessage } from './AuthContext';
 import { api } from '../utils/api';
 import { SignupPanel } from './SignupPanel';
+import { ContactChoices } from '../components/ContactChoices';
 import { readInviteToken } from '../utils/inviteToken';
 
 const GoogleIcon = () => (
@@ -512,6 +513,11 @@ export function LoginScreen({ onContinueOffline }) {
         )}
       </div>
     </div>
+    {mode === 'login' && (
+      <div style={{ maxWidth: 440, margin: '0 auto 8px', padding: '0 16px' }}>
+        <ContactChoices />
+      </div>
+    )}
     <footer style={{ padding: '4px 16px 20px', textAlign: 'center', fontSize: 12, lineHeight: 1.7, color: 'var(--text-tertiary, #6b7280)' }}>
       <a href="https://mylibraryos.in/privacy" style={{ color: 'inherit' }}>Privacy Policy</a>
       <span aria-hidden="true"> · </span>

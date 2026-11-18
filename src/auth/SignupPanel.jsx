@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../utils/api';
 import { SignupPlanPicker } from './SignupPlanPicker';
+import { ContactChoices } from '../components/ContactChoices';
 import { intervalOffered } from '../utils/softwarePlanForm';
 
 export function SignupPanel({ plans = [], googleSignup = false, mobileSignupAvailable = false, paymentsConfigured = false, googlePendingToken = '', onDone, onBack }) {
@@ -264,6 +265,9 @@ export function SignupPanel({ plans = [], googleSignup = false, mobileSignupAvai
           </button>
         </div>
       )}
+      <div style={{ marginTop: 16 }}>
+        <ContactChoices />
+      </div>
       <div style={{ marginTop: 12, textAlign: 'center' }}>
         <button type="button" className="btn btn-ghost" onClick={onBack} style={{ fontSize: 13, padding: '4px 8px' }}>Back to sign in</button>
       </div>

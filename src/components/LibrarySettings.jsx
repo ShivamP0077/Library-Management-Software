@@ -31,6 +31,7 @@ import { EnquiryQrCard } from './enquiry/EnquiryQrCard';
 import { EnquiryFormCard } from './enquiry/EnquiryFormCard';
 import { BrandImageField } from './BrandImageField';
 import { DEFAULT_LIBRARY_LOGO } from '../utils/libraryLogo';
+import { receiptInstructionsEditorValue } from '../utils/receiptInstructions';
 
 const ALL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -125,6 +126,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
     upiId: settings.upiId || '',
     upiQrUrl: settings.upiQrUrl || '',
     receiptFooter: settings.receiptFooter || '',
+    receiptInstructions: receiptInstructionsEditorValue(settings.receiptInstructions),
     billingCycleMode: settings.billingCycleMode || 'ANNIVERSARY',
     gracePeriodDays: settings.gracePeriodDays ?? 3,
     expiredPeriodDays: settings.expiredPeriodDays ?? DEFAULT_EXPIRED_PERIOD_DAYS,
@@ -149,6 +151,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
       upiId: settings.upiId || '',
       upiQrUrl: settings.upiQrUrl || '',
         receiptFooter: settings.receiptFooter || '',
+      receiptInstructions: receiptInstructionsEditorValue(settings.receiptInstructions),
       billingCycleMode: settings.billingCycleMode || 'ANNIVERSARY',
       gracePeriodDays: settings.gracePeriodDays ?? 3,
     expiredPeriodDays: settings.expiredPeriodDays ?? DEFAULT_EXPIRED_PERIOD_DAYS,
@@ -275,6 +278,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
       upiId: billingFormData.upiId,
       upiQrUrl: billingFormData.upiQrUrl,
       receiptFooter: billingFormData.receiptFooter,
+      receiptInstructions: billingFormData.receiptInstructions ?? '',
       billingCycleMode: billingFormData.billingCycleMode,
       gracePeriodDays: Number(billingFormData.gracePeriodDays) || 3,
       expiredPeriodDays: Number.isFinite(Number(billingFormData.expiredPeriodDays)) ? Number(billingFormData.expiredPeriodDays) : DEFAULT_EXPIRED_PERIOD_DAYS,
@@ -1720,8 +1724,23 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                   <input type="text" className="form-input" value={billingFormData.upiId} onChange={(e) => setBillingFormData(p => ({ ...p, upiId: e.target.value }))} />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Receipt instructions / footer note</label>
+                  <label className="form-label">Receipt Footer Note</label>
                   <input type="text" className="form-input" data-testid="settings-receipt-footer" value={billingFormData.receiptFooter} onChange={(e) => setBillingFormData(p => ({ ...p, receiptFooter: e.target.value }))} />
+                </div>
+                <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                  <label className="form-label" htmlFor="settings-receipt-instructions">Receipt instructions</label>
+                  <textarea
+                    id="settings-receipt-instructions"
+                    className="form-input"
+                    data-testid="settings-receipt-instructions"
+                    rows={4}
+                    value={billingFormData.receiptInstructions}
+                    onChange={(e) => setBillingFormData(p => ({ ...p, receiptInstructions: e.target.value }))}
+                    placeholder={"Fees are non-refundable.\nKeep this receipt for your records."}
+                  />
+                  <span style={{ display: 'block', marginTop: '6px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                    Each line is printed as a bullet under Instructions on the receipt. These defaults are used until you save your own. Clear the box if you do not want an Instructions section.
+                  </span>
                 </div>
               </div>
 

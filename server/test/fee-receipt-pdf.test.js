@@ -133,3 +133,40 @@ test('discount and fine rows appear only when those amounts are above zero', asy
   assert.match(text, /Two thousand two hundred only/);
   assert.match(text, /PARTIAL PAYMENT/);
 });
+
+test('receipt PDF prints shipped default instructions when the field has never been set', async () => {
+  const doc = await receiptDocument(paid, student, { settings });
+  const text = textOf(doc.buffer);
+  assert.match(text, /Instructions/);
+  assert.match(text, /Fees once paid are non-refundable and non-transferable/);
+  assert.match(text, /Please keep this receipt for your records/);
+  assert.match(text, /Pay the next fee on or before the due date to keep your seat/);
+  assert.match(text, /Maintain silence and keep the library clean/);
+  assert.match(text, /The library is not responsible for personal belongings/);
+  assert.match(text, /Fees once paid are non-refundable\. Keep this receipt for your records/);
+});
+
+test('receipt PDF uses custom instruction lines and still prints the footer note', async () => {
+  const doc = await receiptDocument(paid, student, {
+    settings: {
+      ...settings,
+      receiptInstructions: 'Fees are non-refundable.\nKeep this receipt for your records.\nLibrary timings: 6 AM - 11 PM',
+    },
+  });
+  const text = textOf(doc.buffer);
+  assert.match(text, /Instructions/);
+  assert.match(text, /Fees are non-refundable\./);
+  assert.match(text, /Keep this receipt for your records/);
+  assert.match(text, /Library timings: 6 AM - 11 PM/);
+  assert.doesNotMatch(text, /The library is not responsible for personal belongings/);
+  assert.match(text, /Fees once paid are non-refundable\. Keep this receipt for your records/);
+});
+
+test('receipt PDF hides the Instructions box when receiptInstructions is cleared', async () => {
+  const doc = await receiptDocument(paid, student, { settings: { ...settings, receiptInstructions: '' } });
+  const text = textOf(doc.buffer);
+  assert.doesNotMatch(text, /Instructions/);
+  assert.doesNotMatch(text, /non-transferable/);
+  assert.match(text, /Fees once paid are non-refundable\. Keep this receipt for your records/);
+  assert.match(text, /Powered by My Library OS/);
+});

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { getDocumentBlob } from '../../utils/idbStorage';
 import { findPhotoDoc } from '../../utils/studentPhoto';
 import { receiptView, money } from '../../utils/receipt';
+import { receiptInstructionLines } from '../../utils/receiptInstructions';
 import { useLibrary } from '../../context/LibraryContext';
 import { useAuth } from '../../auth/AuthContext';
 import { Printer, X } from 'lucide-react';
@@ -133,6 +134,7 @@ const ReceiptSlip = ({ receipt, settings, branch, photo, copyLabel, view }) => {
   const studentName = receipt.studentName || v.studentName || '—';
   const stamp = v.state.label || 'PAID';
   const terms = (settings.receiptFooter || '').trim() || DEFAULT_TERMS;
+  const instructionLines = receiptInstructionLines(settings.receiptInstructions);
   const contact = [phone ? `Phone: ${phone}` : '', gst ? `GST: ${gst}` : ''].filter(Boolean).join('  ·  ');
   const cells = [
     ['Receipt no', receipt.receiptNo || '—'],
@@ -238,6 +240,17 @@ const ReceiptSlip = ({ receipt, settings, branch, photo, copyLabel, view }) => {
 
       {words ? (
         <p className="receipt-words"><span>Amount in words</span> {words}</p>
+      ) : null}
+
+      {instructionLines.length ? (
+        <section className="receipt-instructions" data-testid="receipt-instructions" aria-label="Instructions">
+          <h3 className="receipt-instructions-title">Instructions</h3>
+          <ul>
+            {instructionLines.map((line, index) => (
+              <li key={index}>{line}</li>
+            ))}
+          </ul>
+        </section>
       ) : null}
 
       <footer className="receipt-slip-foot">

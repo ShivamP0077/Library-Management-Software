@@ -212,6 +212,8 @@ export const api = {
   updateTicket: (id, b) => apiRequest(`/support/tickets/${id}`, { method: 'PATCH', body: b }),
   ticketAttachment: (id, m, a) => apiRequest(`/support/tickets/${id}/messages/${m}/attachments/${a}`),
   adminTickets: (q = '') => apiRequest(`/admin/support/tickets${q}`),
+  adminDemoRequests: (q = '') => apiRequest(`/admin/demo-requests${q}`),
+  adminUpdateDemoRequest: (id, body) => apiRequest(`/admin/demo-requests/${encodeURIComponent(id)}`, { method: 'PATCH', body }),
   adminTicket: (id, opts = {}) => apiRequest(`/admin/support/tickets/${id}${opts.poll ? '?poll=1' : ''}`),
   adminReplyTicket: (id, b, opts = {}) => apiRequest(`/admin/support/tickets/${id}/messages`, { method: 'POST', body: b, retries: opts.retries ?? 2, timeoutMs: opts.timeoutMs }),
   adminUpdateTicket: (id, b) => apiRequest(`/admin/support/tickets/${id}`, { method: 'PATCH', body: b }),

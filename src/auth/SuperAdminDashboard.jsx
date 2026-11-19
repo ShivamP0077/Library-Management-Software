@@ -13,6 +13,7 @@ import { SupportDesk } from './SupportDesk';
 import { PlansAdmin } from './PlansAdmin';
 import { PaymentsAdmin } from './PaymentsAdmin';
 import { SystemWhatsAppAdmin } from './SystemWhatsAppAdmin';
+import { DemoRequestsAdmin } from './DemoRequestsAdmin';
 import { SaModal } from './SaModal';
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—');
@@ -140,6 +141,7 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
           <button role="tab" aria-selected={view === 'payments'} className={`btn btn-sm ${view === 'payments' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView('payments')}>Payments</button>
           <button role="tab" aria-selected={view === 'whatsapp'} className={`btn btn-sm ${view === 'whatsapp' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView('whatsapp')}>WhatsApp</button>
           <button role="tab" aria-selected={view === 'support'} className={`btn btn-sm ${view === 'support' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView('support')}>Support tickets{summary?.kpis?.support?.value ? ` (${summary.kpis.support.value})` : ''}</button>
+          <button role="tab" aria-selected={view === 'demos'} className={`btn btn-sm ${view === 'demos' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setView('demos')}>Demo requests</button>
         </div>
 
         {view === 'insights' && <LibraryInsights libraries={libraries} />}
@@ -148,6 +150,7 @@ export function SuperAdminDashboard({ onOpenLibrary }) {
         {view === 'whatsapp' && <SystemWhatsAppAdmin />}
         {view === 'partners' && <PartnersAdmin libraries={libraries} onChanged={load} />}
         {view === 'support' && <SupportDesk libraries={libraries} onAccessLibrary={(id) => { const l = libraries.find(x => x.libraryId === id); if (l) onOpenLibrary(l, true); }} />}
+        {view === 'demos' && <DemoRequestsAdmin />}
 
         {view === 'business' && summary && (
           <div id="sa-totals" style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>

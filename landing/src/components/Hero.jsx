@@ -2,7 +2,7 @@ import { useRef, useState, useEffect } from 'react';
 import { m, useScroll, useTransform } from 'framer-motion';
 import { ArrowRight, CalendarClock } from 'lucide-react';
 import Scene3D from './Scene3D.jsx';
-import { APP_URL, DEMO_HREF } from '../config.js';
+import { APP_URL, DEMO_PATH } from '../config.js';
 
 const ease = [0.22, 1, 0.36, 1];
 
@@ -58,7 +58,7 @@ export default function Hero() {
             <a href={APP_URL} className="btn-gold group !px-3 !py-3.5 !text-[15px] sm:!px-6 sm:!text-base">
               Start free trial <ArrowRight size={18} className="transition-transform group-hover:translate-x-0.5" />
             </a>
-            <a href={DEMO_HREF} className="btn-ghost-dark !px-3 !py-3.5 !text-[15px] sm:!px-6 sm:!text-base">
+            <a href={DEMO_PATH} className="btn-ghost-dark !px-3 !py-3.5 !text-[15px] sm:!px-6 sm:!text-base">
               <CalendarClock size={18} /> Book a demo
             </a>
           </m.div>

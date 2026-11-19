@@ -7,7 +7,9 @@ import Pricing from './components/Pricing.jsx';
 import FAQ from './components/FAQ.jsx';
 import Footer, { FinalCTA } from './components/Footer.jsx';
 import { usePathname, LEGAL_ROUTES } from './router.js';
+import { DEMO_PATH } from './config.js';
 import { LegalRoute } from './pages/LegalPages.jsx';
+import { DemoPage } from './pages/DemoPage.jsx';
 
 function Home() {
   return (
@@ -32,6 +34,7 @@ function Home() {
 
 export default function App() {
   const path = usePathname();
+  if (path === DEMO_PATH) return <DemoPage />;
   if (LEGAL_ROUTES[path]) return <LegalRoute path={path} />;
   return <Home />;
 }

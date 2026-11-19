@@ -419,43 +419,24 @@ const LibraryWorkspace = ({ libraryId, libraryName, readOnly = false, lockedStaf
 const RoleRouter = () => {
   const { status, user, library } = useAuth();
   const [drill, setDrill] = useState(null); // super admin: { library, readOnly }
-  const [offlineMode, setOfflineMode] = useState(() => {
-    return localStorage.getItem('library_mode_preference') === 'offline';
-  });
 
-  const handleContinueOffline = () => {
-    localStorage.setItem('library_mode_preference', 'offline');
-    setOfflineMode(true);
-  };
-
-  const handleSwitchToCloud = () => {
-    localStorage.removeItem('library_mode_preference');
-    setOfflineMode(false);
-  };
-
-  if (offlineMode) {
-    return (
-      <LibraryWorkspace
-        libraryId="local-workspace"
-        libraryName="Local Library"
-        isOffline={true}
-        onSwitchToCloud={handleSwitchToCloud}
-      />
-    );
-  }
+  // Older builds stored this when someone chose local mode. Do not honour it:
+  // login and the connecting screen no longer offer that path.
+  React.useEffect(() => {
+    try { localStorage.removeItem('library_mode_preference'); } catch { /* private mode */ }
+  }, []);
 
   if (status === 'loading') {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, background: 'var(--bg-primary, #f8fafc)' }}>
         <div style={{ fontSize: 36 }}>📖</div>
         <div style={{ fontSize: 16, fontWeight: 600 }}>Connecting to My Library OS…</div>
-        <button className="btn btn-secondary btn-sm" onClick={handleContinueOffline}>Continue in Local Offline Mode</button>
       </div>
     );
   }
 
   if (status !== 'authenticated' || !user) {
-    return <LoginScreen onContinueOffline={handleContinueOffline} />;
+    return <LoginScreen />;
   }
 
   if (user.role === 'superadmin') {

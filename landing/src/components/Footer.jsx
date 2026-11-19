@@ -1,5 +1,5 @@
 import { ArrowRight, CalendarClock } from 'lucide-react';
-import { APP_URL, DEMO_HREF, DEMO_EMAIL } from '../config.js';
+import { APP_URL, DEMO_PATH, DEMO_EMAIL } from '../config.js';
 import { Logo } from './Nav.jsx';
 import { Reveal } from './ui.jsx';
 
@@ -20,7 +20,7 @@ export function FinalCTA() {
             <a href={APP_URL} className="btn-gold group !px-7 !py-3.5 !text-base">
               Start free trial <ArrowRight size={18} className="transition-transform group-hover:translate-x-0.5" />
             </a>
-            <a href={DEMO_HREF} className="btn-ghost-dark !px-7 !py-3.5 !text-base">
+            <a href={DEMO_PATH} className="btn-ghost-dark !px-7 !py-3.5 !text-base">
               <CalendarClock size={18} /> Book a demo
             </a>
           </div>
@@ -34,7 +34,7 @@ export default function Footer({ home = true }) {
   const hash = (id) => (home ? id : `/${id}`);
   const cols = [
     ['Product', [['Features', hash('#features')], ['Product tour', hash('#product')], ['Pricing', hash('#pricing')]]],
-    ['Get started', [['Start free trial', APP_URL], ['Sign in', APP_URL], ['Book a demo', DEMO_HREF], ['FAQ', hash('#faq')]]],
+    ['Get started', [['Start free trial', APP_URL], ['Sign in', APP_URL], ['Book a demo', DEMO_PATH], ['FAQ', hash('#faq')]]],
     ['Legal', [
       ['Privacy Policy', '/privacy'],
       ['Terms & Conditions', '/terms'],

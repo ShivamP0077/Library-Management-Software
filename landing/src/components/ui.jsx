@@ -1,14 +1,16 @@
-import { m } from 'framer-motion';
+import { m, useReducedMotion } from 'framer-motion';
 
-export function Reveal({ children, delay = 0, y = 24, className = '', as = 'div' }) {
+export function Reveal({ children, className = '', as = 'div' }) {
+  const reduced = useReducedMotion();
   const M = m[as];
+  if (reduced) return <M className={className}>{children}</M>;
   return (
     <M
       className={className}
-      initial={{ opacity: 0, y }}
+      initial={{ opacity: 1, y: 0 }}
       whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: '-60px' }}
-      transition={{ duration: 0.6, delay, ease: [0.22, 1, 0.36, 1] }}
+      viewport={{ once: true, margin: '0px' }}
+      transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
     >
       {children}
     </M>
@@ -27,13 +29,13 @@ export function SectionHeading({ eyebrow, title, sub, dark = false, center = tru
           </span>
         </Reveal>
       )}
-      <Reveal delay={0.05}>
+      <Reveal>
         <h2 className={`text-balance mt-5 font-display text-3xl font-bold leading-[1.1] sm:text-5xl ${dark ? 'text-white' : 'text-ink-950'}`}>
           {title}
         </h2>
       </Reveal>
       {sub && (
-        <Reveal delay={0.1}>
+        <Reveal>
           <p className={`text-pretty mt-5 text-base leading-relaxed sm:text-lg ${dark ? 'text-stone-400' : 'text-stone-600'}`}>{sub}</p>
         </Reveal>
       )}

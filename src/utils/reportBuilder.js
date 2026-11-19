@@ -143,6 +143,115 @@ export function studentJoinDate(s) {
   return s?.startDate || s?.admissionDate || s?.joinedOn || '';
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** Letters and numbers stay. Spaces and other marks become one underscore. */
+export function slugReportPart(value) {
+  return String(value ?? '')
+    .replace(/[\\/:*?"<>|]/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
+}
+
+function reportTypeSlug(sections) {
+  const list = (Array.isArray(sections) ? sections : String(sections || '').split(',')).map(s => String(s || '').trim()).filter(Boolean);
+  if (list.length === 1) {
+    const known = REPORT_SECTIONS.find(s => s.id === list[0] || s.label === list[0]);
+    return slugReportPart(known ? known.label : list[0]) || 'Report';
+  }
+  return 'Combined_Report';
+}
+
+function formatReportDay(iso, withYear) {
+  const [y, m, d] = String(iso || '').split('-').map(Number);
+  const mon = MONTHS[(m || 1) - 1] || 'Jan';
+  const dd = String(d || 1).padStart(2, '0');
+  return withYear ? `${dd}${mon}${y || ''}` : `${dd}${mon}`;
+}
+
+/** Same year: 01Nov-19Nov2026. Different years: 01Nov2025-19Nov2026. */
+export function formatReportDateRange(from, to) {
+  const a = String(from || '');
+  const b = String(to || '');
+  const sameYear = a.slice(0, 4) && a.slice(0, 4) === b.slice(0, 4);
+  return `${formatReportDay(a, !sameYear)}-${formatReportDay(b, true)}`;
+}
+
+/**
+ * LibraryName_BranchName_ReportType_DateRange.ext
+ * Empty or "all" branch filter uses All_Branches.
+ */
+export function reportDownloadFilename({ libraryName, branchName, branchId, sections, from, to, ext } = {}) {
+  const allBranch = !branchId || branchId === 'all' || branchName === 'All Branches';
+  const branch = allBranch ? 'All_Branches' : (slugReportPart(branchName) || slugReportPart(branchId) || 'Branch');
+  const lib = slugReportPart(libraryName) || 'My_Library_OS';
+  const cleanExt = String(ext || 'pdf').replace(/^\./, '') || 'pdf';
+  return `${lib}_${branch}_${reportTypeSlug(sections)}_${formatReportDateRange(from, to)}.${cleanExt}`;
+}
+
+function asciiFallbackName(filename) {
+  return String(filename || 'report').replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_');
+}
+
+function rfc5987Encode(filename) {
+  return encodeURIComponent(String(filename || '')).replace(/['()*]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+export function contentDisposition(filename) {
+  return `attachment; filename="${asciiFallbackName(filename)}"; filename*=UTF-8''${rfc5987Encode(filename)}`;
+}
+
+/** Prefer filename* (RFC 5987), then filename="...". */
+export function parseContentDisposition(header) {
+  const h = String(header || '');
+  const star = /filename\*\s*=\s*(?:UTF-8''|utf-8'')([^;]+)/i.exec(h);
+  if (star) {
+    const raw = star[1].trim().replace(/^"(.*)"$/, '$1');
+    try { return decodeURIComponent(raw); } catch { return raw; }
+  }
+  const quoted = /filename\s*=\s*"([^"]*)"/i.exec(h);
+  if (quoted) return quoted[1];
+  const plain = /filename\s*=\s*([^;]+)/i.exec(h);
+  return plain ? plain[1].trim() : '';
+}
+
+function groupIndian(intPart) {
+  const s = String(intPart);
+  if (s.length <= 3) return s;
+  const tail = s.slice(-3);
+  let head = s.slice(0, -3);
+  const parts = [];
+  while (head.length > 2) {
+    parts.unshift(head.slice(-2));
+    head = head.slice(0, -2);
+  }
+  if (head) parts.unshift(head);
+  return `${parts.join(',')},${tail}`;
+}
+
+/** Indian grouping. Negatives use -₹100. Totals themselves are unchanged. */
+/** Asia/Kolkata display stamp, e.g. 19 Nov 2026, 10:28 am. */
+export function formatReportStamp(iso) {
+  const d = iso ? new Date(iso) : new Date();
+  if (Number.isNaN(d.getTime())) return '';
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true,
+  }).format(d);
+}
+
+export function formatReportMoney(n) {
+  const num = Number(n);
+  if (!Number.isFinite(num)) return '₹0';
+  const neg = num < 0;
+  const abs = Math.abs(num);
+  const whole = Math.round(abs);
+  const body = groupIndian(whole);
+  return neg ? `-₹${body}` : `₹${body}`;
+}
+
 export function cancellationDetail(student) {
   const hist = Array.isArray(student?.cancellationHistory) ? student.cancellationHistory[0] : null;
   const refund = Number(student?.refundAmount ?? hist?.refundAmount ?? 0);

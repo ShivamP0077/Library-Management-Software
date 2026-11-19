@@ -93,6 +93,13 @@ test('voided receipts stay stored but out of P&L totals', async () => {
 
 test('custom report: sections, shared expenses once, refunds vs cancellations, csv pdf xlsx, staff guard', async () => {
   const day = '2026-12-10';
+  assert.equal((await call('PUT', '/api/branches', { token: A(), body: [
+    { id: 'b1', name: 'Main Branch' },
+    { id: 'b2', name: 'Hall B' },
+  ]})).status, 200);
+  assert.equal((await call('PUT', '/api/sections', { token: A(), body: [
+    { id: 'sec1', name: 'Hall A', branchId: 'b1' },
+  ]})).status, 200);
   await call('POST', '/api/payments', { token: A(), body: { receiptNo: 'RB-COL', studentId: 'RB1', amount: 800, netTotal: 800, method: 'UPI', referenceNo: 'UTR-RB', date: day, branchId: 'b1', sectionId: 'sec1' } });
   await call('POST', '/api/payments', { token: A(), body: { receiptNo: 'RB-REF', studentId: 'RB1', amount: -100, netTotal: -100, method: 'Refund', date: day, branchId: 'b1', sectionId: 'sec1' } });
   await call('POST', '/api/expenses', { token: A(), body: { id: 'RB-SHARED', category: 'Rent', amount: 200, date: day, branchId: 'all' } });
@@ -135,26 +142,49 @@ test('custom report: sections, shared expenses once, refunds vs cancellations, c
   assert.ok(outcomes.includes('Cancellation'));
   assert.ok(outcomes.includes('Cancellation with refund'));
   assert.ok(all.body.blocks.find(b => b.title === 'New Students').rows.some(r => r[0] === 'Asha' && r[1] === 'S-12'));
+  assert.equal(all.body.period.branchId, 'all');
+  assert.equal(all.body.period.branchName, 'All Branches');
+  assert.equal(all.body.studentSummary.newInPeriod, 1);
+  assert.equal(all.body.studentSummary.cancelledInPeriod, 2);
+  const payRow = pay.rows.find(r => r[1] === 'RB-COL');
+  assert.equal(payRow[2], 'Asha');
+  const tea = all.body.blocks.find(b => b.title === 'Expenses').rows.find(r => r[1] === 'Tea' && r[4] === 40);
+  assert.equal(tea[2], 'Main Branch');
+  const newbie = all.body.blocks.find(b => b.title === 'New Students').rows.find(r => r[0] === 'Asha');
+  assert.equal(newbie[2], 'Main Branch');
+  assert.equal(newbie[3], 'Hall A');
 
   const csv = await call('GET', `/api/reports/custom.csv?from=${day}&to=${day}&sections=revenue`, { token: A() });
   assert.equal(csv.status, 200);
   assert.match(String(csv.body), /Revenue/);
+  assert.match(String(csv.body), /Main Branch|All Branches/);
+  assert.match(csv.headers.get('content-disposition') || '', /Library_A/);
+  assert.match(csv.headers.get('content-disposition') || '', /Revenue/);
+  assert.match(csv.headers.get('content-disposition') || '', /filename\*/);
   assert.equal((await call('GET', `/api/reports/pnl.csv?from=${day}&to=${day}`, { token: A() })).status, 200);
 
   const pdf = await call('GET', `/api/reports/custom.pdf?from=${day}&to=${day}&sections=revenue,expenses`, { token: A() });
   assert.equal(pdf.status, 200);
   assert.match(String(pdf.body), /%PDF/);
-  assert.match(String(pdf.body), /Revenue/);
-  assert.match(String(pdf.body), /Expenses/);
-  assert.match(String(pdf.body), /Page 1 of/);
+  const pdfDisp = pdf.headers.get('content-disposition') || '';
+  assert.match(pdfDisp, /Library_A/);
+  assert.match(pdfDisp, /Combined_Report/);
+  assert.match(pdfDisp, /\.pdf/);
+  assert.match(pdfDisp, /filename\*/);
+  const pdfRes = await fetch(`${ctx.base}/api/reports/custom.pdf?from=${day}&to=${day}&sections=revenue,expenses`, { headers: { Authorization: `Bearer ${A()}` } });
+  const { PDFDocument } = await import('pdf-lib');
+  const pdfDoc = await PDFDocument.load(Buffer.from(await pdfRes.arrayBuffer()));
+  assert.ok(pdfDoc.getPageCount() >= 1);
 
   const { reportToXlsx } = await import('../src/finance.js');
   const { xlsxSheetNames } = await import('../src/xlsx.js');
   const names = xlsxSheetNames(reportToXlsx(all.body));
-  assert.deepEqual(names, all.body.sections);
+  assert.deepEqual(names, ['Summary', ...all.body.sections]);
   const xlsx = await call('GET', `/api/reports/custom.xlsx?from=${day}&to=${day}&sections=net`, { token: A() });
   assert.equal(xlsx.status, 200);
   assert.match(xlsx.headers.get('content-type'), /spreadsheetml/);
+  assert.match(xlsx.headers.get('content-disposition') || '', /Net_Profit/);
+  assert.match(xlsx.headers.get('content-disposition') || '', /filename\*/);
 
   const preset = await call('GET', '/api/reports/custom?preset=lastMonth&today=2026-11-18&sections=net', { token: A() });
   assert.equal(preset.body.period.from, '2026-10-01');
@@ -173,4 +203,22 @@ test('custom report: sections, shared expenses once, refunds vs cancellations, c
   assert.equal((await call('GET', `/api/reports/custom?from=${day}&to=${day}&sections=net`, { token: noTok })).status, 403);
   assert.equal((await call('GET', `/api/reports/pnl.csv?from=${day}&to=${day}`, { token: noTok })).status, 403);
   assert.equal((await call('GET', `/api/reports/custom?from=${day}&to=${day}&sections=net`, { token: yesTok })).status, 200);
+});
+
+test('custom report pdf uses more than one page for a long student list', async () => {
+  const { reportToPdfBuffer } = await import('../src/finance.js');
+  const { PDFDocument } = await import('pdf-lib');
+  const rows = [['Name', 'Seat number', 'Branch', 'Section', 'Status']];
+  for (let i = 0; i < 85; i += 1) rows.push([`Student ${i}`, `S-${i}`, 'Main Branch', 'Hall A', 'Active']);
+  const buf = await reportToPdfBuffer({
+    libraryName: 'Library A',
+    period: { from: '2026-12-01', to: '2026-12-10', branchId: 'b1', sectionId: 'all', branchName: 'Main Branch', sectionName: 'All Sections' },
+    sections: ['Student List + Seat Numbers'],
+    totals: { feeCollections: 800, refunds: 100, netFees: 700, oneTime: 40, recurringPaid: 0, expenseTotal: 40, netProfit: 660 },
+    studentSummary: { active: 85, newInPeriod: 1, cancelledInPeriod: 0 },
+    generatedAt: '2026-12-10T04:30:00.000Z',
+    blocks: [{ title: 'Student List + Seat Numbers', rows }],
+  });
+  const doc = await PDFDocument.load(buf);
+  assert.ok(doc.getPageCount() >= 2);
 });

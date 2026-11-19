@@ -69,7 +69,7 @@ export default function Pricing() {
         {loading && <p className="mt-8 text-center text-sm text-stone-600">Loading plans…</p>}
         {error && <p className="mt-8 text-center text-sm text-stone-600" role="status">{error}</p>}
         <div className="mx-auto mt-12 grid max-w-6xl gap-5 lg:grid-cols-3">
-          {(plans || []).map((plan, i) => {
+          {(plans || []).map((plan) => {
             const price = intervalPrice(plan, interval);
             const featured = plan.planId === featuredId;
             const trial = Number(plan.trialDays) > 0 ? `${plan.trialDays}-day free trial` : null;
@@ -77,7 +77,6 @@ export default function Pricing() {
             return (
               <Reveal
                 key={plan.planId}
-                delay={i * 0.08}
                 className={`relative flex flex-col rounded-3xl p-7 sm:p-8 ${
                   featured ? 'bg-ink text-white shadow-[0_30px_80px_-30px_rgba(161,98,7,.6)] ring-1 ring-gold-400/40 lg:-my-4 lg:py-12' : 'border border-stone-200 bg-white shadow-card'
                 }`}
@@ -117,7 +116,6 @@ export default function Pricing() {
             );
           })}
           <Reveal
-            delay={0.16}
             className="relative flex flex-col rounded-3xl border border-stone-200 bg-white p-7 shadow-card sm:p-8"
           >
             <h3 className="font-display text-xl font-bold">{custom.name}</h3>

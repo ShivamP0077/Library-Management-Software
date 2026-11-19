@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   REPORT_SECTIONS, parseReportSections, resolveDateRange, branchFilterState, sectionFilterState, matchesScope, paymentKind,
+  reportDownloadFilename, contentDisposition, parseContentDisposition, formatReportMoney,
 } from '../src/utils/reportBuilder.js';
 
 test('section picker is only the approved list', () => {
@@ -63,6 +64,54 @@ test('shared rows count only when the filter is All', () => {
   assert.equal(sum('all'), 265);
   assert.equal(sum('b1') + sum('b2') + 200, sum('all'));
   assert.equal(sum('b1'), 40);
+});
+
+test('report file names, money, and content disposition', () => {
+  assert.equal(reportDownloadFilename({
+    libraryName: 'Accomplish Reading Zone',
+    branchName: 'Main Branch',
+    branchId: 'main',
+    sections: ['Revenue', 'Expenses'],
+    from: '2026-11-01',
+    to: '2026-11-19',
+    ext: 'pdf',
+  }), 'Accomplish_Reading_Zone_Main_Branch_Combined_Report_01Nov-19Nov2026.pdf');
+  assert.equal(reportDownloadFilename({
+    libraryName: 'Accomplish Reading Zone',
+    branchId: 'all',
+    sections: ['payments'],
+    from: '2026-11-01',
+    to: '2026-11-19',
+    ext: 'csv',
+  }), 'Accomplish_Reading_Zone_All_Branches_All_Student_Payments_01Nov-19Nov2026.csv');
+  assert.equal(reportDownloadFilename({
+    libraryName: 'Library A',
+    branchName: 'Main Branch',
+    branchId: 'b1',
+    sections: ['Revenue'],
+    from: '2025-11-01',
+    to: '2026-11-19',
+    ext: 'xlsx',
+  }), 'Library_A_Main_Branch_Revenue_01Nov2025-19Nov2026.xlsx');
+  const byId = reportDownloadFilename({
+    libraryName: 'Library X',
+    branchId: 'b1',
+    sections: ['revenue'],
+    from: '2026-11-01',
+    to: '2026-11-19',
+    ext: 'pdf',
+  });
+  assert.match(byId, /_b1_/);
+  assert.equal(byId.includes('All_Branches'), false);
+  assert.equal(formatReportMoney(800), '₹800');
+  assert.equal(formatReportMoney(1234), '₹1,234');
+  assert.equal(formatReportMoney(-100), '-₹100');
+  const named = 'Accomplish_Reading_Zone_Main_Branch_Combined_Report_01Nov-19Nov2026.pdf';
+  const header = contentDisposition(named);
+  assert.equal(parseContentDisposition(header), named);
+  assert.match(header, /filename\*=UTF-8''/);
+  assert.equal(parseContentDisposition(`attachment; filename="wrong.pdf"; filename*=UTF-8''${encodeURIComponent('Café_Report.pdf')}`), 'Café_Report.pdf');
+  assert.match(contentDisposition('Café_Report.pdf'), /filename="Caf._Report.pdf"/);
 });
 
 test('refunds and cancellations stay distinct from collections', () => {

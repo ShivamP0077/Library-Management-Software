@@ -40,6 +40,15 @@ export function PlansAdmin({ libraries = [], onChanged }) {
       setOpen(false); load();
     } catch (err) { toast.error(err.message); }
   };
+  const remove = async (p) => {
+    if (p.libraries > 0) return;
+    if (!window.confirm(`Delete ${p.name}? This cannot be undone. Archive a plan that libraries still use.`)) return;
+    try {
+      await api.adminDeletePlan(p.planId);
+      toast.success('Plan deleted');
+      load();
+    } catch (e) { toast.error(e.message); }
+  };
   const assign = async (lib, planId) => {
     try { await api.adminUpdateLibrary(lib.libraryId, { planId: planId || null }); toast.success(`${lib.name}: plan updated`); load(); onChanged?.(); } catch (e) { toast.error(e.message); }
   };
@@ -82,6 +91,9 @@ export function PlansAdmin({ libraries = [], onChanged }) {
                       load();
                     } catch (e) { toast.error(e.message); }
                   }}>{p.active ? 'Archive' : 'Restore'}</button>
+                  {p.libraries === 0
+                    ? <button className="btn btn-ghost btn-sm" onClick={() => remove(p)}>Delete</button>
+                    : <span style={{ fontSize: 11, color: 'var(--text-tertiary)', alignSelf: 'center' }}>In use — Archive instead</span>}
                 </span>
               </div>
             </div>

@@ -133,23 +133,3 @@ test('discount and fine rows appear only when those amounts are above zero', asy
   assert.match(text, /Two thousand two hundred only/);
   assert.match(text, /PARTIAL PAYMENT/);
 });
-
-const TINY_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8z8BQz0AEYBxVSF+FABJADveKw/eAAAAAElFTkSuQmCC';
-
-test('UPI QR caption and UPI ID are printed when upiQrUrl is a small PNG', async () => {
-  const withQr = await receiptDocument(paid, student, {
-    settings: { ...settings, upiId: 'library@upi', upiQrUrl: TINY_PNG },
-  });
-  const text = textOf(withQr.buffer);
-  assert.match(text, /Pay via UPI/);
-  assert.match(text, /library@upi/);
-  const without = await receiptDocument(paid, student, { settings });
-  assert.doesNotMatch(textOf(without.buffer), /Pay via UPI/);
-  assert.ok(withQr.buffer.length > without.buffer.length, 'expected the QR image to add bytes to the PDF');
-});
-
-test('receipt PDF still works when upiQrUrl is missing or not an image', async () => {
-  const doc = await receiptDocument(paid, student, { settings: { ...settings, upiQrUrl: '📖', upiId: '' } });
-  assert.equal(doc.buffer.subarray(0, 5).toString('ascii'), '%PDF-');
-  assert.doesNotMatch(textOf(doc.buffer), /Pay via UPI/);
-});

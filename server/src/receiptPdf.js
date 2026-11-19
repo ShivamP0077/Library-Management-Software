@@ -77,8 +77,6 @@ function mergeBranding(settings, library, branch) {
     taxId: String(s.taxId || '').trim(),
     logo: s.logo,
     receiptFooter: s.receiptFooter,
-    upiId: String(s.upiId || '').trim(),
-    upiQrUrl: s.upiQrUrl,
   };
 }
 
@@ -342,39 +340,6 @@ export async function renderFeeReceiptPdf(payment, student, { settings, library,
     drawText(page, line, left, y, regular, 8.5, MUTED);
     y -= 11;
   }
-  y -= 4;
-
-  const upiQrSpec = libraryLogoUrl(brand.upiQrUrl);
-  let upiImage = null;
-  if (upiQrSpec) {
-    try {
-      const bytes = await loadLogoSource(upiQrSpec);
-      upiImage = bytes ? await embedImage(pdf, bytes) : null;
-    } catch {
-      upiImage = null;
-    }
-  }
-  if (upiImage || brand.upiId) {
-    y -= 4;
-    if (upiImage) {
-      const qrSize = 64;
-      const scale = Math.min(qrSize / upiImage.width, qrSize / upiImage.height, 1);
-      const w = upiImage.width * scale;
-      const h = upiImage.height * scale;
-      page.drawImage(upiImage, { x: left, y: y - h, width: w, height: h });
-      drawText(page, 'Pay via UPI', left + w + 10, y - 16, bold, 9);
-      if (brand.upiId) drawText(page, brand.upiId, left + w + 10, y - 30, regular, 9, MUTED);
-      y -= h + 8;
-    } else {
-      drawText(page, 'Pay via UPI', left, y, bold, 9);
-      y -= 12;
-      if (brand.upiId) {
-        drawText(page, brand.upiId, left, y, regular, 9, MUTED);
-        y -= 12;
-      }
-    }
-  }
-
   y -= 4;
   drawText(page, 'Powered by My Library OS', left, y, regular, 8, MUTED);
   y -= 16;

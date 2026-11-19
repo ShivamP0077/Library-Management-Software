@@ -241,17 +241,6 @@ const ReceiptSlip = ({ receipt, settings, branch, photo, copyLabel, view }) => {
       ) : null}
 
       <footer className="receipt-slip-foot">
-        {(libraryLogoUrl(settings.upiQrUrl) || (settings.upiId || '').trim()) ? (
-          <div className="receipt-upi" data-testid="receipt-upi">
-            {libraryLogoUrl(settings.upiQrUrl) ? (
-              <img className="receipt-upi-qr" src={libraryLogoUrl(settings.upiQrUrl)} alt="UPI QR code" />
-            ) : null}
-            <div>
-              <strong>Pay via UPI</strong>
-              {(settings.upiId || '').trim() ? <p>{settings.upiId.trim()}</p> : null}
-            </div>
-          </div>
-        ) : null}
         <p className="receipt-terms">{terms}</p>
         <p className="receipt-powered">Powered by My Library OS</p>
       </footer>

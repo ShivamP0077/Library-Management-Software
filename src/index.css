@@ -705,10 +705,6 @@ body {
 .receipt-words span { display: block; font-weight: 700; color: #404040; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 1px; }
 
 .receipt-slip-foot { margin-top: 8px; padding-top: 6px; border-top: 1px solid #e5e5e5; text-align: center; }
-.receipt-upi { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 0 0 8px; text-align: left; }
-.receipt-upi-qr { width: 64px; height: 64px; object-fit: contain; }
-.receipt-upi strong { display: block; font-size: 11px; }
-.receipt-upi p { margin: 2px 0 0; font-size: 11px; color: #404040; }
 .receipt-terms { margin: 0; color: #404040; font-size: 11px; line-height: 1.35; }
 .receipt-powered { margin: 3px 0 0; color: #111; font-weight: 800; font-size: 11px; letter-spacing: 0.02em; }
 
@@ -840,7 +836,6 @@ body {
     white-space: nowrap;
   }
   .receipt-logo { width: 12mm; height: 12mm; }
-  .receipt-upi-qr { width: 16mm; height: 16mm; }
   .receipt-lib-name { font-size: 15pt; }
   .receipt-lib-meta { font-size: 10pt; color: #222; }
   .receipt-stamp { font-size: 10pt; padding: 0.6mm 2.4mm; }

@@ -148,7 +148,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
       taxId: settings.taxId || '',
       upiId: settings.upiId || '',
       upiQrUrl: settings.upiQrUrl || '',
-      receiptFooter: settings.receiptFooter || '',
+        receiptFooter: settings.receiptFooter || '',
       billingCycleMode: settings.billingCycleMode || 'ANNIVERSARY',
       gracePeriodDays: settings.gracePeriodDays ?? 3,
     expiredPeriodDays: settings.expiredPeriodDays ?? DEFAULT_EXPIRED_PERIOD_DAYS,
@@ -1719,15 +1719,6 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                   <label className="form-label">UPI ID (For QR Fee Collections)</label>
                   <input type="text" className="form-input" value={billingFormData.upiId} onChange={(e) => setBillingFormData(p => ({ ...p, upiId: e.target.value }))} />
                 </div>
-                <BrandImageField
-                  label="UPI QR"
-                  value={billingFormData.upiQrUrl}
-                  onChange={(upiQrUrl) => setBillingFormData(p => ({ ...p, upiQrUrl }))}
-                  documentKey="upi-qr"
-                  testId="settings-upi-qr"
-                  emptyLabel="No UPI QR"
-                  help="Printed on fee receipts so students can pay by scanning. Upload, replace or remove it any time."
-                />
                 <div className="form-group">
                   <label className="form-label">Receipt instructions / footer note</label>
                   <input type="text" className="form-input" data-testid="settings-receipt-footer" value={billingFormData.receiptFooter} onChange={(e) => setBillingFormData(p => ({ ...p, receiptFooter: e.target.value }))} />

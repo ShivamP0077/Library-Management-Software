@@ -2,6 +2,7 @@
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { setup, teardown, call, ctx } from './helpers.js';
+import { setSmsProvider } from '../src/messaging.js';
 import { outbox } from '../src/mailer.js';
 import { resetRateLimits } from '../src/accounts.js';
 import { User, Library } from '../src/models.js';
@@ -179,10 +180,45 @@ test('deleting the library does not remove trial hashes', async () => {
   assert.ok(before > 0);
   await deleteLibraryData(me.user.tenantId);
   assert.equal(await Library.countDocuments({ libraryId: me.user.tenantId }), 0);
+  assert.equal(await User.exists({ email: 'delete.me@example.com' }), null);
   assert.equal(await TrialUsage.countDocuments(), before);
   // Same email may request another code only after the one-per-minute window. The hash must still block a second trial.
   resetRateLimits();
   const again = await signup('delete.me@example.com');
+  assert.notEqual(again.status, 409);
+  assert.equal(again.status, 200, JSON.stringify(again.body));
   assert.equal(again.body.needsPayment, true);
   assert.equal(again.body.message, TRIAL_USED_MESSAGE);
+});
+
+test('deleting the library lets the same phone sign up again without a second trial', async () => {
+  const mobile = '9876500777';
+  const smsOutbox = [];
+  setSmsProvider({ name: 'test-sms', send: async ({ to, text }) => { smsOutbox.push({ to, text }); return { ok: true }; } });
+  try {
+    const start = await call('POST', '/api/auth/signup/start-mobile', { body: { mobile } });
+    assert.equal(start.status, 200, JSON.stringify(start.body));
+    const code = smsOutbox.at(-1).text.match(/code is (\d{6})/)[1];
+    const done = await call('POST', '/api/auth/signup/complete-mobile', {
+      body: { mobile, code, name: 'Phone Owner', libraryName: 'Phone Lib', password: 'OwnerPass-123', planId: 'pro' },
+    });
+    assert.equal(done.status, 200, JSON.stringify(done.body));
+    assert.equal(done.body.needsPayment, false);
+    const me = (await call('GET', '/api/auth/me', { token: done.body.token })).body;
+    await deleteLibraryData(me.user.tenantId);
+    assert.equal(await User.exists({ mobile: me.user.mobile }), null);
+    resetRateLimits();
+    const start2 = await call('POST', '/api/auth/signup/start-mobile', { body: { mobile } });
+    assert.equal(start2.status, 200, JSON.stringify(start2.body));
+    const code2 = smsOutbox.at(-1).text.match(/code is (\d{6})/)[1];
+    const again = await call('POST', '/api/auth/signup/complete-mobile', {
+      body: { mobile, code: code2, name: 'Phone Owner', libraryName: 'Phone Lib Again', password: 'OwnerPass-123', planId: 'pro' },
+    });
+    assert.notEqual(again.status, 409);
+    assert.equal(again.status, 200, JSON.stringify(again.body));
+    assert.equal(again.body.needsPayment, true);
+    assert.equal(again.body.message, TRIAL_USED_MESSAGE);
+  } finally {
+    setSmsProvider(null);
+  }
 });

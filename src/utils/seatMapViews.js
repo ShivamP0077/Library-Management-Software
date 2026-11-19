@@ -12,7 +12,7 @@ export const SEAT_COLORS = {
   occupancy: {
     male: '#2563eb',
     female: '#db2777',
-    vacant: '#16a34a',
+    vacant: '#f8fafc',
     maintenance: '#d97706',
     unavailable: '#64748b',
   },
@@ -53,10 +53,10 @@ export function paymentStatusClass(state) {
   return 'seat-unassigned';
 }
 
-export function occupancyStatusClass({ isUnavailable, isMaintenance, isOccupied, gender }) {
-  if (isUnavailable) return 'seat-unavailable';
+export function occupancyStatusClass({ isMaintenance, isOccupied, gender }) {
   if (isMaintenance) return 'seat-maintenance';
   if (isOccupied) return gender === 'Female' ? 'seat-occupied-female' : 'seat-occupied-male';
+  // Occupancy view only: an unavailable desk is shown as vacant. Stored flags are not changed.
   return 'seat-available';
 }
 

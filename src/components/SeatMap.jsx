@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 import { useLibrary } from '../context/LibraryContext';
-import { MoreVertical, Plus, Trash2, Settings, Ban, CheckCircle2, X, AlertCircle, Building2 } from 'lucide-react';
+import { MoreVertical, Plus, Trash2, Settings, CheckCircle2, X, AlertCircle, Building2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { NumericInput } from './NumericInput';
 import { resolveConfigurationScope, matchesScope } from '../utils/scopeResolver';
@@ -696,18 +696,16 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
               const totalSeats = sectionSeats.length;
               let occupiedCount = 0;
               let maintenanceCount = 0;
-              let unavailableCount = 0;
               let duplicateSeatCount = 0;
 
               sectionSeats.forEach(seat => {
                 const occupants = occupancyMap.get(getSeatKey(seat)) || [];
-                if (seat.isUnavailable) unavailableCount++;
-                else if (seat.isMaintenance) maintenanceCount++;
+                if (seat.isMaintenance) maintenanceCount++;
                 else if (occupants.length > 0) occupiedCount++;
                 if (hasOverlappingOccupants(occupants, shifts)) duplicateSeatCount++;
               });
 
-              const vacantEligibleCount = Math.max(0, totalSeats - occupiedCount - maintenanceCount - unavailableCount);
+              const vacantEligibleCount = Math.max(0, totalSeats - occupiedCount - maintenanceCount);
 
               // Non-fixed stats
               const nonFixedStats = nonFixedTypes.map(st => {
@@ -736,11 +734,10 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
                           </>
                         ) : (
                           <>
-                            <LegendSwatch color={SEAT_COLORS.occupancy.vacant} label={`Vacant (${vacantEligibleCount})`} />
+                            <LegendSwatch color={SEAT_COLORS.occupancy.vacant} border="1px solid #cbd5e1" label={`Vacant (${vacantEligibleCount})`} />
                             <LegendSwatch color={SEAT_COLORS.occupancy.male} label="Male" />
                             <LegendSwatch color={SEAT_COLORS.occupancy.female} label="Female" />
                             <LegendSwatch color={SEAT_COLORS.occupancy.maintenance} label={`Maintenance (${maintenanceCount})`} />
-                            <LegendSwatch color={SEAT_COLORS.occupancy.unavailable} label={`Unavailable (${unavailableCount})`} />
                           </>
                         )}
 
@@ -817,10 +814,6 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
                           <button type="button" role="menuitem" className="dropdown-item" onClick={() => handleMarkStatus({ isMaintenance: false, isUnavailable: false })}>
                             <CheckCircle2 size={15} color="#16a34a" />
                             <span>Mark Available</span>
-                          </button>
-                          <button type="button" role="menuitem" className="dropdown-item" onClick={() => handleMarkStatus({ isUnavailable: true, isMaintenance: false })}>
-                            <Ban size={15} color="#64748b" />
-                            <span>Mark Unavailable</span>
                           </button>
                           <div className="dropdown-divider" />
                           <button type="button" role="menuitem" className="dropdown-item danger" onClick={handleBulkRemove}>
@@ -992,14 +985,12 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
                 <button className="btn-ghost" onClick={() => setSelectedDesk(null)}><X size={20} /></button>
               </div>
               <div className="modal-body">
-                {selectedDesk.seat.isMaintenance || selectedDesk.seat.isUnavailable ? (
+                {selectedDesk.seat.isMaintenance ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                     <div style={{ textAlign: 'center', padding: '16px 0' }}>
-                      {selectedDesk.seat.isMaintenance
-                        ? <Settings size={42} color="#d97706" style={{ margin: '0 auto 12px' }} />
-                        : <Ban size={42} color="#64748b" style={{ margin: '0 auto 12px' }} />}
+                      <Settings size={42} color="#d97706" style={{ margin: '0 auto 12px' }} />
                       <h4 style={{ fontSize: '16px', fontWeight: 600 }}>
-                        {selectedDesk.seat.isMaintenance ? 'Desk Under Maintenance' : 'Desk Unavailable'}
+                        Desk Under Maintenance
                       </h4>
                       <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '4px' }}>
                         This desk is not available for student allocation.
@@ -1240,10 +1231,10 @@ export const SeatMap = ({ onSelectStudent, onRelocateStudent, onOpenNewStudent }
   );
 };
 
-function LegendSwatch({ color, label }) {
+function LegendSwatch({ color, label, border }) {
   return (
     <div className="seat-legend-item">
-      <div style={{ width: '12px', height: '12px', borderRadius: '3px', background: color }} />
+      <div style={{ width: '12px', height: '12px', borderRadius: '3px', background: color, border: border || '1px solid transparent' }} />
       <span>{label}</span>
     </div>
   );

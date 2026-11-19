@@ -15,7 +15,7 @@ import { TeamAccess } from './TeamAccess';
 import { resolveConfigurationScope, matchesScope } from '../utils/scopeResolver';
 import { 
   STAFF_MODULES, STAFF_ACTIONS, STAFF_ROLES, 
-  createEmptyPermissions, getDefaultPermissionsForRole, countAllowedActions,
+  createEmptyPermissions, getDefaultPermissionsForRole, countAllowedActions, sanitizeStaffPermissions,
   FINANCIAL_MODULE_IDS, FINANCIAL_MATRIX, applyAllowAllFinancial, isWalletBlockedRole, emptyModuleActions,
 } from '../utils/staffPermissions';
 import { getCanonicalSeatTypes } from '../utils/seatTypeUtils';
@@ -25,6 +25,8 @@ import { DEFAULT_EXPIRED_PERIOD_DAYS } from '../utils/subscriptionLifecycle.js';
 import { PlanDurationFields } from './PlanDurationFields';
 import { PlanPricingFields } from './PlanPricingFields';
 import toast from 'react-hot-toast';
+import { api } from '../utils/api';
+import { copyText } from '../utils/copyText';
 import { EnquiryQrCard } from './enquiry/EnquiryQrCard';
 
 const ALL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -236,6 +238,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
 
   // 👥 Staff Management State
   const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
+  const [staffInvite, setStaffInvite] = useState(null);
   const [editingStaffId, setEditingStaffId] = useState(null);
   const [staffFormData, setStaffFormData] = useState({
     name: '',
@@ -685,10 +688,12 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
       branchId: activeBranchId !== 'all' ? activeBranchId : 'all',
       status: 'Active'
     });
+    setStaffInvite(null);
     setIsStaffModalOpen(true);
   };
 
   const handleOpenEditStaff = (staff) => {
+    setStaffInvite(null);
     setEditingStaffId(staff.id);
     setStaffFormData({
       name: staff.name || '',
@@ -701,7 +706,35 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
     setIsStaffModalOpen(true);
   };
 
-  const handleSaveStaffForm = (e) => {
+  const closeStaffModal = () => {
+    setIsStaffModalOpen(false);
+    setStaffInvite(null);
+  };
+
+  const createStaffInvite = async (staff) => {
+    setStaffInvite({ staff, link: '', error: '', busy: true });
+    try {
+      const result = await api.createInvite({
+        email: staff.email.trim(),
+        name: staff.name,
+        role: 'staff',
+        staffId: staff.id,
+        permissions: sanitizeStaffPermissions(staff.permissions, staff.role),
+      });
+      const link = result?.link || '';
+      setStaffInvite({
+        staff,
+        link,
+        error: link ? '' : 'Invite link was not returned. You can try again.',
+        busy: false,
+      });
+      if (link) toast.success('Invite created.');
+    } catch (err) {
+      setStaffInvite({ staff, link: '', error: err.message || 'Could not create the invite.', busy: false });
+    }
+  };
+
+  const handleSaveStaffForm = async (e) => {
     e.preventDefault();
     if (!staffFormData.name.trim()) {
       return toast.error('Please enter full name of staff member');
@@ -712,11 +745,22 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
 
     if (editingStaffId) {
       const ok = updateStaffMember(editingStaffId, staffFormData);
-      if (ok) setIsStaffModalOpen(false);
-    } else {
-      const created = addStaffMember(staffFormData);
-      if (created) setIsStaffModalOpen(false);
+      if (ok) closeStaffModal();
+      return;
     }
+    if (!staffFormData.email.trim()) {
+      return toast.error('Email is required to invite this staff member.');
+    }
+    const created = addStaffMember(staffFormData);
+    if (!created) return;
+    await createStaffInvite(created);
+  };
+
+  const handleCopyStaffInvite = async () => {
+    if (!staffInvite?.link) return;
+    const ok = await copyText(staffInvite.link);
+    if (ok) toast.success('Copied');
+    else toast.error('Could not copy the link. Please select and copy it manually.');
   };
 
   const handleOpenPermMatrix = (staff) => {
@@ -2184,7 +2228,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                     </p>
                   </div>
                 </div>
-                <button type="button" className="btn btn-ghost" onClick={() => setIsStaffModalOpen(false)} style={{ padding: '6px' }}>
+                <button type="button" className="btn btn-ghost" onClick={closeStaffModal} style={{ padding: '6px' }}>
                   <X size={18} />
                 </button>
               </div>
@@ -2222,7 +2266,8 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                       id="staff-email-input"
                       type="email" 
                       className="form-input" 
-                      placeholder="e.g. staff@library.com" 
+                      placeholder="e.g. staff@library.com"
+                      required={editingStaffId ? false : true}
                       value={staffFormData.email} 
                       onChange={e => setStaffFormData(p => ({ ...p, email: e.target.value }))} 
                     />
@@ -2283,13 +2328,40 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                   </div>
                 </div>
 
+                {!editingStaffId && staffInvite && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px', background: '#f8fafc', border: '1px solid var(--border-light)', borderRadius: '8px' }}>
+                    <label className="form-label" htmlFor="staff-invite-link" style={{ fontSize: '12px', fontWeight: 600 }}>Invite link</label>
+                    {staffInvite.error && (
+                      <p style={{ margin: 0, fontSize: '13px', color: '#b91c1c' }}>{staffInvite.error}</p>
+                    )}
+                    {staffInvite.link && (
+                      <input id="staff-invite-link" className="form-input" type="text" readOnly value={staffInvite.link} onFocus={e => e.target.select()} />
+                    )}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                      {staffInvite.link && (
+                        <>
+                          <button type="button" className="btn btn-secondary" onClick={handleCopyStaffInvite}>Copy</button>
+                          <a className="btn btn-secondary" href={`https://wa.me/?text=${encodeURIComponent(staffInvite.link)}`} target="_blank" rel="noreferrer">Share</a>
+                        </>
+                      )}
+                      {staffInvite.error && (
+                        <button type="button" className="btn btn-primary" disabled={staffInvite.busy} onClick={() => createStaffInvite(staffInvite.staff)}>
+                          Retry invite
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
-                  <button type="button" className="btn btn-ghost" onClick={() => setIsStaffModalOpen(false)}>
-                    Cancel
+                  <button type="button" className="btn btn-ghost" onClick={closeStaffModal}>
+                    {staffInvite?.link ? 'Done' : 'Cancel'}
                   </button>
-                  <button id="btn-save-staff" type="submit" className="btn btn-primary" style={{ background: '#4f46e5', borderColor: '#4338ca' }}>
-                    <Save size={15} /> {editingStaffId ? 'Update Staff Details' : 'Save Staff Member'}
-                  </button>
+                  {editingStaffId || !staffInvite ? (
+                    <button id="btn-save-staff" type="submit" className="btn btn-primary" style={{ background: '#4f46e5', borderColor: '#4338ca' }}>
+                      <Save size={15} /> {editingStaffId ? 'Update Staff Details' : 'Save Staff Member'}
+                    </button>
+                  ) : null}
                 </div>
               </form>
             </motion.div>

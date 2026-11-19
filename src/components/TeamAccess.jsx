@@ -1,12 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Users, Copy, ShieldCheck, ChevronDown, ChevronRight, RefreshCw, Send, Clock
+  Users, ShieldCheck, ChevronDown, ChevronRight, RefreshCw, Clock
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../auth/AuthContext';
-import { useLibrary } from '../context/LibraryContext';
 import { api } from '../utils/api';
-import { sanitizeStaffPermissions } from '../utils/staffPermissions';
 
 const ROLE_LABELS = { staff: 'Staff', client_admin: 'Co-admin', superadmin: 'Super Admin' };
 const roleLabel = (role) => ROLE_LABELS[role] || role || 'Staff';
@@ -28,13 +26,8 @@ const formatDate = (value) => {
 
 export function TeamAccess() {
   const { user } = useAuth() || {};
-  const { staffMembers = [] } = useLibrary() || {};
 
   const canManage = user?.role === 'client_admin' || user?.role === 'superadmin';
-
-  const [form, setForm] = useState({ email: '', name: '', role: 'staff', staffId: '', expiresInHours: '72' });
-  const [creating, setCreating] = useState(false);
-  const [created, setCreated] = useState(null);
 
   const [invites, setInvites] = useState([]);
   const [invitesLoading, setInvitesLoading] = useState(true);
@@ -78,44 +71,6 @@ export function TeamAccess() {
 
   if (!canManage) return null;
 
-  const handleCreate = async (e) => {
-    e.preventDefault();
-    if (!form.email.trim()) {
-      toast.error('Email is required.');
-      return;
-    }
-    setCreating(true);
-    try {
-      const linked = staffMembers.find(st => st.id === form.staffId);
-      const result = await api.createInvite({
-        email: form.email.trim(),
-        name: form.name.trim() || undefined,
-        role: form.role,
-        staffId: form.staffId || undefined,
-        permissions: linked ? sanitizeStaffPermissions(linked.permissions, linked.role) : undefined,
-        expiresInHours: Number(form.expiresInHours) || 72,
-      });
-      setCreated(result || null);
-      setForm(prev => ({ ...prev, email: '', name: '', staffId: '' }));
-      toast.success('Invite created.');
-      loadInvites();
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const handleCopy = async () => {
-    if (!created?.link) return;
-    try {
-      await navigator.clipboard.writeText(created.link);
-      toast.success('Invite link copied.');
-    } catch {
-      toast.error('Could not copy the link. Please select and copy it manually.');
-    }
-  };
-
   const handleRevoke = async (invite) => {
     setRevokingId(invite.id);
     try {
@@ -138,126 +93,9 @@ export function TeamAccess() {
         </h3>
       </div>
       <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 16px 0' }}>
-        Invite staff or co-admins to sign in. Each link works once and expires automatically.
+        New staff get their sign-in link from Add Staff Member. Each link works once and expires automatically.
         Money access, including Allow all financial permissions, comes from the linked staff record. Librarians never receive Wallet.
       </p>
-
-      {/* Create invite form */}
-      <form onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="form-label" htmlFor="invite-email" style={{ fontSize: '12px', fontWeight: 600 }}>Email</label>
-            <input
-              id="invite-email"
-              type="email"
-              className="form-input"
-              placeholder="staff@library.com"
-              value={form.email}
-              onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
-              required
-            />
-          </div>
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="form-label" htmlFor="invite-person-name" style={{ fontSize: '12px', fontWeight: 600 }}>Name</label>
-            <input
-              id="invite-person-name"
-              type="text"
-              className="form-input"
-              placeholder="e.g. Ramesh Sharma"
-              value={form.name}
-              onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
-            />
-          </div>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="form-label" htmlFor="invite-role" style={{ fontSize: '12px', fontWeight: 600 }}>Role</label>
-            <select
-              id="invite-role"
-              className="form-select"
-              value={form.role}
-              onChange={e => setForm(p => ({ ...p, role: e.target.value }))}
-            >
-              <option value="staff">Staff</option>
-              <option value="client_admin">Co-admin</option>
-            </select>
-          </div>
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="form-label" htmlFor="invite-staff" style={{ fontSize: '12px', fontWeight: 600 }}>
-              Link to staff member (optional)
-            </label>
-            <select
-              id="invite-staff"
-              className="form-select"
-              value={form.staffId}
-              onChange={e => setForm(p => ({ ...p, staffId: e.target.value }))}
-            >
-              <option value="">No linked staff member</option>
-              {staffMembers.map(st => (
-                <option key={st.id} value={st.id}>{st.name}</option>
-              ))}
-            </select>
-          </div>
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="form-label" htmlFor="invite-expiry" style={{ fontSize: '12px', fontWeight: 600 }}>Link valid for</label>
-            <select
-              id="invite-expiry"
-              className="form-select"
-              value={form.expiresInHours}
-              onChange={e => setForm(p => ({ ...p, expiresInHours: e.target.value }))}
-            >
-              <option value="24">24 hours</option>
-              <option value="72">72 hours</option>
-              <option value="168">7 days</option>
-            </select>
-          </div>
-        </div>
-
-        <div>
-          <button
-            type="submit"
-            className="btn btn-primary"
-            disabled={creating}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}
-          >
-            <Send size={15} /> {creating ? 'Creating…' : 'Create invite'}
-          </button>
-        </div>
-      </form>
-
-      {/* Newly created invite link */}
-      {created?.link && (
-        <div style={{ marginTop: '16px', padding: '14px', background: '#f8fafc', border: '1px solid var(--border-light)', borderRadius: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <label className="form-label" htmlFor="created-invite-link" style={{ fontSize: '12px', fontWeight: 600 }}>
-            Invite link
-          </label>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
-            <input
-              id="created-invite-link"
-              className="form-input"
-              type="text"
-              readOnly
-              value={created.link}
-              onFocus={e => e.target.select()}
-              style={{ flex: '1 1 240px', minWidth: 0, width: '100%' }}
-            />
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={handleCopy}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}
-            >
-              <Copy size={14} /> Copy link
-            </button>
-          </div>
-          <span style={{ fontSize: '12px', color: created.emailed ? '#15803d' : 'var(--text-secondary)' }}>
-            {created.emailed
-              ? 'Emailed'
-              : 'Email not configured — share this link yourself (it works once)'}
-          </span>
-        </div>
-      )}
 
       {/* Invites list */}
       <div style={{ marginTop: '20px' }}>

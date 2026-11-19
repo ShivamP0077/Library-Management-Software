@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { NotificationBell } from './NotificationBell';
 import { createPortal } from 'react-dom';
 import { useLibrary } from '../context/LibraryContext';
+import { DEFAULT_LIBRARY_LOGO, libraryLogoUrl } from '../utils/libraryLogo';
 import { 
   Building2, 
   UserCheck, 
@@ -108,9 +109,17 @@ export const Header = ({ activeTab, setActiveTab, onOpenNewStudent }) => {
           >
             {drawerOpen ? <X size={20} /> : <Menu size={20} />}
           </button>
-          <div style={{ fontSize: '28px', lineHeight: 1 }}>{settings.logo}</div>
+          {libraryLogoUrl(settings.logo) ? (
+            <img
+              src={libraryLogoUrl(settings.logo)}
+              alt=""
+              style={{ height: 36, width: 36, objectFit: 'contain', borderRadius: 8, flexShrink: 0 }}
+            />
+          ) : (
+            <div style={{ fontSize: '28px', lineHeight: 1 }}>{settings.logo || DEFAULT_LIBRARY_LOGO}</div>
+          )}
           <div style={{ minWidth: 0 }}>
-            <h1 className="header-title" style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>{settings.name}</h1>
+            <h1 className="header-title" style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.02em' }}>{libraryName}</h1>
             <p style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>My Library OS</p>
           </div>
         </div>

@@ -77,10 +77,10 @@ function PosterPreview({ poster, libraryName, logoUrl, qr }) {
 }
 
 export function EnquiryQrCard() {
-  const { user } = useAuth() || {};
+  const { user, library: authLibrary } = useAuth() || {};
   const library = useLibrary() || {};
   const settings = library.settings || {};
-  const libraryName = settings.name || 'Library';
+  const libraryName = settings.name || authLibrary?.name || 'Library';
   const logoUrl = libraryLogoUrl(settings.logo);
   const canRegenerate = user?.role === 'client_admin' || user?.role === 'superadmin';
   const [link, setLink] = useState(null);

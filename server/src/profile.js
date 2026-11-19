@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import express from 'express';
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
-import { User, Library } from './models.js';
+import { User, Library, Settings } from './models.js';
 import { hashPassword, validatePassword } from './services.js';
 import { audit } from './audit.js';
 import { sendMail, mailEnabled } from './mailer.js';
@@ -257,6 +257,9 @@ export function createProfileRouter() {
         if (raw && !libSet.contactEmail) return res.status(400).json({ error: 'Enter a valid library contact email' });
       }
       await Library.updateOne({ libraryId: req.tenantId }, { $set: libSet });
+      if (libSet.name) {
+        await Settings.updateOne({ tenantId: req.tenantId }, { $set: { name: libSet.name } });
+      }
     }
 
     await user.save();

@@ -28,6 +28,9 @@ import toast from 'react-hot-toast';
 import { api } from '../utils/api';
 import { copyText } from '../utils/copyText';
 import { EnquiryQrCard } from './enquiry/EnquiryQrCard';
+import { EnquiryFormCard } from './enquiry/EnquiryFormCard';
+import { BrandImageField } from './BrandImageField';
+import { DEFAULT_LIBRARY_LOGO } from '../utils/libraryLogo';
 
 const ALL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -1687,6 +1690,15 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                   <label className="form-label">Library Name *</label>
                   <input type="text" className="form-input" value={billingFormData.name} onChange={(e) => setBillingFormData(p => ({ ...p, name: e.target.value }))} required />
                 </div>
+                <BrandImageField
+                  label="Library logo"
+                  value={billingFormData.logo}
+                  onChange={(logo) => setBillingFormData(p => ({ ...p, logo }))}
+                  fallbackText={DEFAULT_LIBRARY_LOGO}
+                  documentKey="library-logo"
+                  testId="settings-library-logo"
+                  help="Used in the header, receipts, QR posters, the public enquiry form and report PDFs. Upload, replace or remove it any time."
+                />
                 <div className="form-group">
                   <label className="form-label">Phone</label>
                   <input type="text" className="form-input" value={billingFormData.phone} onChange={(e) => setBillingFormData(p => ({ ...p, phone: e.target.value }))} />
@@ -1700,12 +1712,25 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                   <input type="text" className="form-input" value={billingFormData.address} onChange={(e) => setBillingFormData(p => ({ ...p, address: e.target.value }))} />
                 </div>
                 <div className="form-group">
+                  <label className="form-label">Tax ID / GST</label>
+                  <input type="text" className="form-input" data-testid="settings-tax-id" value={billingFormData.taxId} onChange={(e) => setBillingFormData(p => ({ ...p, taxId: e.target.value }))} />
+                </div>
+                <div className="form-group">
                   <label className="form-label">UPI ID (For QR Fee Collections)</label>
                   <input type="text" className="form-input" value={billingFormData.upiId} onChange={(e) => setBillingFormData(p => ({ ...p, upiId: e.target.value }))} />
                 </div>
+                <BrandImageField
+                  label="UPI QR"
+                  value={billingFormData.upiQrUrl}
+                  onChange={(upiQrUrl) => setBillingFormData(p => ({ ...p, upiQrUrl }))}
+                  documentKey="upi-qr"
+                  testId="settings-upi-qr"
+                  emptyLabel="No UPI QR"
+                  help="Printed on fee receipts so students can pay by scanning. Upload, replace or remove it any time."
+                />
                 <div className="form-group">
-                  <label className="form-label">Receipt Footer Note</label>
-                  <input type="text" className="form-input" value={billingFormData.receiptFooter} onChange={(e) => setBillingFormData(p => ({ ...p, receiptFooter: e.target.value }))} />
+                  <label className="form-label">Receipt instructions / footer note</label>
+                  <input type="text" className="form-input" data-testid="settings-receipt-footer" value={billingFormData.receiptFooter} onChange={(e) => setBillingFormData(p => ({ ...p, receiptFooter: e.target.value }))} />
                 </div>
               </div>
 
@@ -2984,6 +3009,8 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
       </AnimatePresence>
 
       <EnquiryQrCard />
+
+      <EnquiryFormCard />
 
       {/* ======================================================== */}
       {/* MODAL: SETUP WIZARD (EDIT / RESUME MODE) */}

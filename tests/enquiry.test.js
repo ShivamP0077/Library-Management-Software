@@ -67,17 +67,24 @@ test('enquiry QR offers six actions and a full A4 poster', async () => {
   assert.equal(String.fromCharCode(...bytes.slice(0, 5)), '%PDF-');
 });
 
-test('public enquiry form rules: gender, no preferred plan, locked branch, read-only plans', () => {
-  const form = fs.readFileSync(new URL('../src/components/enquiry/PublicEnquiryForm.jsx', import.meta.url), 'utf8');
-  assert.equal(form.includes('Preferred'), false);
+test('public enquiry form rules: field order, documents and plan sections, locked branch', () => {
+  const source = fs.readFileSync(new URL('../src/components/enquiry/PublicEnquiryForm.jsx', import.meta.url), 'utf8');
+  const form = source.slice(source.indexOf('phase === \'form\''));
+  const order = ['enquiry-name', 'enquiry-mobile', 'enquiry-email', '>Gender', 'enquiry-branch', 'enquiry-section', 'enquiry-documents', 'enquiry-plan', 'enquiry-message'];
+  let last = -1;
+  for (const token of order) {
+    const at = form.indexOf(token);
+    assert.ok(at > last, `${token} is missing or out of order`);
+    last = at;
+  }
   assert.equal(form.includes('enquiry-preferred'), false);
-  assert.match(form, /Gender/);
-  assert.match(form, /enquiry-email/);
+  assert.match(source, /preferredPlan/);
+  assert.match(form, /Mobile number/);
   assert.match(form, /enquiry-aadhaar/);
   assert.match(form, /enquiry-photo/);
   assert.equal(form.includes('type="radio"'), true);
-  assert.equal(form.includes('viewOnlyPlans'), true);
-  assert.equal(form.includes('aria-readonly'), true);
+  assert.equal(source.includes('planChoiceOptions'), true);
+  assert.equal(source.includes('aria-readonly'), true);
   assert.equal(genderError(''), 'Select male, female or other');
   assert.equal(genderError('female'), '');
   assert.equal(ENQUIRY_IMAGE_LIMITS.maxEdge, 1600);

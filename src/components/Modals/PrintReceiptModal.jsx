@@ -4,6 +4,7 @@ import { getDocumentBlob } from '../../utils/idbStorage';
 import { findPhotoDoc } from '../../utils/studentPhoto';
 import { receiptView, money } from '../../utils/receipt';
 import { useLibrary } from '../../context/LibraryContext';
+import { useAuth } from '../../auth/AuthContext';
 import { Printer, X } from 'lucide-react';
 
 const APP_LOGO = '/logo-icon.png';
@@ -240,6 +241,17 @@ const ReceiptSlip = ({ receipt, settings, branch, photo, copyLabel, view }) => {
       ) : null}
 
       <footer className="receipt-slip-foot">
+        {(libraryLogoUrl(settings.upiQrUrl) || (settings.upiId || '').trim()) ? (
+          <div className="receipt-upi" data-testid="receipt-upi">
+            {libraryLogoUrl(settings.upiQrUrl) ? (
+              <img className="receipt-upi-qr" src={libraryLogoUrl(settings.upiQrUrl)} alt="UPI QR code" />
+            ) : null}
+            <div>
+              <strong>Pay via UPI</strong>
+              {(settings.upiId || '').trim() ? <p>{settings.upiId.trim()}</p> : null}
+            </div>
+          </div>
+        ) : null}
         <p className="receipt-terms">{terms}</p>
         <p className="receipt-powered">Powered by My Library OS</p>
       </footer>
@@ -267,6 +279,8 @@ function ReceiptStack({ slips, receipt, settings, branch, photo, view }) {
 
 export const PrintReceiptModal = ({ receipt, onClose }) => {
   const { settings, branches, students } = useLibrary();
+  const authLibrary = useAuth()?.library;
+  const receiptSettings = { ...settings, name: settings?.name || authLibrary?.name || '' };
   const [photo, setPhoto] = useState(null);
   const [photoLoading, setPhotoLoading] = useState(false);
   const photoPendingRef = useRef(false);
@@ -325,7 +339,7 @@ export const PrintReceiptModal = ({ receipt, onClose }) => {
   const receiptStudent = (students || []).find(s => s.id === receipt.studentId || s.studentId === receipt.studentId);
   const view = receiptView(receipt, { student: receiptStudent, branch, settings });
   const slips = slipsForChoice(copyChoice);
-  const slipProps = { slips, receipt, settings, branch, photo, view };
+  const slipProps = { slips, receipt, settings: receiptSettings, branch, photo, view };
 
   const handlePrint = async () => {
     const photoDeadline = Date.now() + 3000;

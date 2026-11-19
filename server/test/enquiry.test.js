@@ -2,7 +2,7 @@
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { setup, teardown, call, ctx } from './helpers.js';
-import { Library, models } from '../src/models.js';
+import { Library, models, Settings } from '../src/models.js';
 import { Enquiry } from '../src/enquiry.js';
 import { SoftwarePlan } from '../src/plans.js';
 import { resetRateLimits } from '../src/accounts.js';
@@ -203,4 +203,81 @@ test('catalogue is fee plans only; branch and section are checked; images are li
   assert.equal(again.token, before);
   assert.equal(again.poster.heading, 'Welcome');
   assert.equal(models.plans.modelName, 'Plan');
+});
+
+test('public GET includes enquiryForm defaults and keeps plans visible', async () => {
+  const link = await linkOf(ctx.tokens.a);
+  const pub = await call('GET', `/api/public/enquiry/${link.token}`);
+  assert.equal(pub.status, 200);
+  assert.equal(pub.body.enquiryForm.fields.name.required, true);
+  assert.equal(pub.body.enquiryForm.fields.gender.required, true);
+  assert.equal(pub.body.enquiryForm.documents.show, true);
+  assert.equal(pub.body.enquiryForm.plan.show, true);
+  assert.equal(pub.body.plans[0].id, 'p-s1');
+});
+
+test('hiding gender lets a POST succeed without it, and hidden documents are stripped', async () => {
+  const link = await linkOf(ctx.tokens.a);
+  const save = await call('PUT', '/api/settings', {
+    token: ctx.tokens.a,
+    body: {
+      logo: 'LOGO-A',
+      enquiryForm: {
+        fields: { gender: { show: false, required: true }, email: { show: true, required: false }, branch: { show: false }, section: { show: false } },
+        documents: { show: false, required: false },
+        plan: { show: true, required: false },
+      },
+    },
+  });
+  assert.equal(save.status, 200, JSON.stringify(save.body));
+  const pub = await call('GET', `/api/public/enquiry/${link.token}`);
+  assert.equal(pub.body.enquiryForm.fields.gender.show, false);
+  const ok = await call('POST', `/api/public/enquiry/${link.token}`, {
+    body: { name: 'Kiran', mobile: '9876500123', aadhaar: 'data:image/jpeg;base64,aaaa', photo: 'data:image/jpeg;base64,bbbb' },
+  });
+  assert.equal(ok.status, 201, JSON.stringify(ok.body));
+  const list = await call('GET', '/api/enquiries', { token: ctx.tokens.a });
+  const row = list.body.items.find((item) => item.mobile === '919876500123' || item.name === 'Kiran');
+  assert.ok(row, JSON.stringify(list.body));
+  assert.equal(row.gender, '');
+  const stored = await Enquiry.findOne({ tenantId: 'lib-a', mobile: '919876500123' }).lean();
+  assert.equal(stored.aadhaar, '');
+  assert.equal(stored.photo, '');
+});
+
+test('plan toggle off hides plans and does not require a plan; plan on accepts a valid preferredPlan', async () => {
+  const link = await linkOf(ctx.tokens.a);
+  let save = await call('PUT', '/api/settings', {
+    token: ctx.tokens.a,
+    body: { logo: 'LOGO-A', enquiryForm: { plan: { show: false, required: false }, documents: { show: true, required: false }, fields: { gender: { show: true, required: true }, branch: { show: false }, section: { show: false } } } },
+  });
+  assert.equal(save.status, 200, JSON.stringify(save.body));
+  const hidden = await call('GET', `/api/public/enquiry/${link.token}`);
+  assert.equal(hidden.body.enquiryForm.plan.show, false);
+  assert.deepEqual(hidden.body.plans, []);
+  const without = await call('POST', `/api/public/enquiry/${link.token}`, {
+    body: { name: 'Neha', mobile: '9876500456', gender: 'female', preferredPlan: 'p-s1' },
+  });
+  assert.equal(without.status, 201, JSON.stringify(without.body));
+  let stored = await Enquiry.findOne({ tenantId: 'lib-a', mobile: '919876500456' }).lean();
+  assert.equal(stored.preferredPlan || '', '');
+
+  save = await call('PUT', '/api/settings', {
+    token: ctx.tokens.a,
+    body: { logo: 'LOGO-A', enquiryForm: { plan: { show: true, required: false }, fields: { gender: { show: true, required: true }, branch: { show: false }, section: { show: false } } } },
+  });
+  assert.equal(save.status, 200, JSON.stringify(save.body));
+  const shown = await call('GET', `/api/public/enquiry/${link.token}`);
+  assert.equal(shown.body.enquiryForm.plan.show, true);
+  assert.equal(shown.body.plans[0].id, 'p-s1');
+  const withPlan = await call('POST', `/api/public/enquiry/${link.token}`, {
+    body: { name: 'Vikram', mobile: '9876500789', gender: 'male', preferredPlan: 'p-s1' },
+  });
+  assert.equal(withPlan.status, 201, JSON.stringify(withPlan.body));
+  stored = await Enquiry.findOne({ tenantId: 'lib-a', mobile: '919876500789' }).lean();
+  assert.equal(stored.preferredPlan, 'p-s1');
+  const bad = await call('POST', `/api/public/enquiry/${link.token}`, {
+    body: { name: 'Bad Plan', mobile: '9876500999', gender: 'other', preferredPlan: 'not-a-plan' },
+  });
+  assert.equal(bad.status, 400);
 });

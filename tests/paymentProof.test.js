@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { paymentProofRefs } from '../src/utils/paymentProof.js';
+import { paymentProofRefs, paymentProofModeOf, paymentProofsMissing, paymentProofModeChanged } from '../src/utils/paymentProof.js';
 import { collectorIdentity, collectorRoleLabel } from '../src/utils/paymentCollector.js';
 
 test('payment proof keeps image references and drops embedded bytes', () => {
@@ -35,4 +35,16 @@ test('collector identity uses the signed-in user and never invents Admin', () =>
     staffName: 'desk@x',
   });
   assert.deepEqual(collectorIdentity({ role: 'client_admin' }), { collectedByRole: 'Owner' });
+});
+
+test('payment proof mode defaults to Optional and detects a missing required proof', () => {
+  assert.equal(paymentProofModeOf({}), 'OPTIONAL');
+  assert.equal(paymentProofModeOf({ paymentProofMode: 'required' }), 'REQUIRED');
+  assert.equal(paymentProofModeOf({ paymentProofMode: 'nope' }), 'OPTIONAL');
+  assert.equal(paymentProofsMissing('REQUIRED', []), true);
+  assert.equal(paymentProofsMissing('REQUIRED', [{ storageKey: 'payproof_1', fileType: 'image/jpeg' }]), false);
+  assert.equal(paymentProofsMissing('OPTIONAL', []), false);
+  assert.equal(paymentProofsMissing('OFF', []), false);
+  assert.equal(paymentProofModeChanged({ paymentProofMode: 'OPTIONAL' }, { paymentProofMode: 'REQUIRED' }), true);
+  assert.equal(paymentProofModeChanged({}, { paymentProofMode: 'optional' }), false);
 });

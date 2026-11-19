@@ -9,6 +9,7 @@ import { effectiveCycleConfig } from '../../utils/billingCycle';
 import { paymentReferenceError } from '../../utils/paymentReference';
 import { ReferenceField } from '../ReferenceField';
 import { PaymentProofFields } from '../PaymentProofFields';
+import { paymentProofModeOf, paymentProofsMissing, PAYMENT_PROOF_REQUIRED_MESSAGE } from '../../utils/paymentProof';
 import { getCanonicalSeatTypes } from '../../utils/seatTypeUtils';
 
 export const BulkStudentModal = ({ isOpen, onClose }) => {
@@ -18,6 +19,8 @@ export const BulkStudentModal = ({ isOpen, onClose }) => {
   } = useLibrary();
 
   const libId = settings.libraryId;
+  const proofMode = paymentProofModeOf(settings);
+  const [proofRequiredError, setProofRequiredError] = useState(false);
 
   const [quantity, setQuantity] = useState('');
   const [selectedBranch, setSelectedBranch] = useState('all');
@@ -174,6 +177,12 @@ export const BulkStudentModal = ({ isOpen, onClose }) => {
       toast.error(referenceErr);
       return;
     }
+    if (paymentProofsMissing(proofMode, paymentProofs)) {
+      setProofRequiredError(true);
+      toast.error(PAYMENT_PROOF_REQUIRED_MESSAGE);
+      return;
+    }
+    setProofRequiredError(false);
 
     if (canAdmitNow === 0 && !addToWaitlist) {
       toast.error("Capacity is 0 and Waiting List is disabled.");
@@ -444,7 +453,7 @@ export const BulkStudentModal = ({ isOpen, onClose }) => {
                   <ReferenceField mode={paymentMethod} value={referenceNo} onChange={setReferenceNo} />
                 </div>
                 <div style={{ marginTop: '8px' }}>
-                  <PaymentProofFields value={paymentProofs} onChange={setPaymentProofs} />
+                  <PaymentProofFields value={paymentProofs} onChange={setPaymentProofs} mode={proofMode} showRequiredError={proofRequiredError} />
                 </div>
               </div>
 

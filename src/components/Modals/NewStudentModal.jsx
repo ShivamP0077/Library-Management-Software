@@ -14,6 +14,7 @@ import { saveDocumentBlobNow, deleteDocumentBlob, getDocumentBlob } from '../../
 import { api } from '../../utils/api';
 import { uploadAttachmentFile, makeAttachmentKey } from '../../utils/attachmentUpload';
 import { PaymentProofFields } from '../PaymentProofFields';
+import { paymentProofModeOf, paymentProofsMissing, PAYMENT_PROOF_REQUIRED_MESSAGE } from '../../utils/paymentProof';
 import { allDocumentFiles, addFilesToDocuments, removeDocumentFile } from '../../utils/studentDocuments';
 
 const formatFileSize = (bytes) => {
@@ -35,6 +36,8 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
     currentStaff, lockedStaffId
   } = useLibrary();
   const canEditAmount = clientCanEditAmount({ lockedStaffId, currentStaff, settings });
+  const proofMode = paymentProofModeOf(settings);
+  const [proofRequiredError, setProofRequiredError] = useState(false);
 
   const libId = settings.libraryId;
 
@@ -434,8 +437,12 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
     if (effectiveDocRequirement === 'Required' && !docFileAttached && !submitDocLater) {
       errs.document = `Admission document (${selectedDocType}) is required.`;
     }
+    if (paymentProofsMissing(proofMode, paymentProofs)) {
+      errs.paymentProofs = PAYMENT_PROOF_REQUIRED_MESSAGE;
+    }
 
     setErrors(errs);
+    setProofRequiredError(!!errs.paymentProofs);
     return Object.keys(errs).length === 0;
   };
 
@@ -1053,7 +1060,7 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                     {errors.paymentMethod && <div className="form-error" style={{ color: 'red', fontSize: '11px', marginTop: '4px' }}>{errors.paymentMethod}</div>}
                   </div>
                   <ReferenceField mode={paymentMethod} value={referenceNo} onChange={setReferenceNo} error={errors.referenceNo} />
-                  <PaymentProofFields value={paymentProofs} onChange={setPaymentProofs} />
+                  <PaymentProofFields value={paymentProofs} onChange={setPaymentProofs} mode={proofMode} showRequiredError={proofRequiredError} />
 
                   {paymentMethod === 'Split' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>

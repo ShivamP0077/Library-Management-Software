@@ -11,7 +11,7 @@ import { todayIST, validatePaidOn, applyRenewalToStudent, formatDate } from '../
 import { periodSnapshots, holdsDesk, NEW_LIBRARY_GRACE_DAYS, DEFAULT_EXPIRED_PERIOD_DAYS } from '../utils/subscriptionLifecycle.js';
 import { stampPaymentReference } from '../utils/paymentReference';
 import { collectorIdentity } from '../utils/paymentCollector';
-import { paymentProofRefs } from '../utils/paymentProof';
+import { paymentProofRefs, paymentProofModeOf, paymentProofsMissing, PAYMENT_PROOF_REQUIRED_MESSAGE } from '../utils/paymentProof';
 import { useAuth } from '../auth/AuthContext';
 import { scopedStorage, canSeedServer } from '../utils/tenantCache';
 // Issue #2: all cache reads/writes in this file go to the current library's own namespace.
@@ -32,6 +32,7 @@ const INITIAL_SETTINGS = {
   upiQrUrl: "",
   receiptFooter: "Thank you for choosing our Library!",
   idProofRequirement: "Required", // 'Required' | 'Can Be Submitted Later' | 'Not Required'
+  paymentProofMode: "OPTIONAL", // OFF | OPTIONAL | REQUIRED
   allowedDocuments: ["Aadhaar Card", "Student ID", "Address Proof", "Photograph"],
   documentTypes: [
     { id: "doc-aadhaar", name: "Aadhaar Card", requirement: "Required", active: true },
@@ -961,6 +962,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         libraryId: libId,
         migrationVersion: 4,
         idProofRequirement: prev.idProofRequirement || 'Required',
+        paymentProofMode: paymentProofModeOf(prev),
         allowedDocuments: prev.allowedDocuments || ["Aadhaar Card", "Student ID", "Address Proof", "Photograph"],
         documentTypes: prev.documentTypes && prev.documentTypes.length > 0 ? prev.documentTypes : [
           { id: "doc-aadhaar", name: "Aadhaar Card", requirement: "Required", active: true },
@@ -1561,8 +1563,35 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
     staffRole: authUser?.role === 'staff' ? (currentStaff?.role || '') : '',
   });
   const withPaymentProofs = (source) => {
+    if (paymentProofModeOf(settings) === 'OFF') return {};
     const proofs = paymentProofRefs(source?.paymentProofs);
     return proofs.length ? { paymentProofs: proofs } : {};
+  };
+
+  const canManagePaymentProofs = !lockedStaffId;
+
+  const updatePaymentProofs = (receiptNo, proofs) => {
+    if (!receiptNo) return false;
+    if (!canManagePaymentProofs) {
+      toast.error('Only the library owner can change payment proof photos on a saved payment.');
+      return false;
+    }
+    const nextProofs = paymentProofRefs(proofs);
+    if (paymentProofsMissing(paymentProofModeOf(settings), nextProofs)) {
+      toast.error(PAYMENT_PROOF_REQUIRED_MESSAGE);
+      return false;
+    }
+    const payload = nextProofs;
+    setPayments(prev => prev.map(p => (p.receiptNo === receiptNo || p.id === receiptNo) ? { ...p, paymentProofs: payload } : p));
+    setStudents(prev => prev.map(s => {
+      const history = Array.isArray(s.paymentHistory) ? s.paymentHistory : [];
+      if (!history.some(p => p.receiptNo === receiptNo || p.id === receiptNo)) return s;
+      return {
+        ...s,
+        paymentHistory: history.map(p => (p.receiptNo === receiptNo || p.id === receiptNo) ? { ...p, paymentProofs: payload } : p),
+      };
+    }));
+    return true;
   };
 
   const addStudent = (studentData) => {
@@ -2879,6 +2908,8 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       updateStudentDetails,
       addBulkStudents,
       renewSubscription,
+      updatePaymentProofs,
+      canManagePaymentProofs,
       changeSeat,
       addStudentDocument,
       extendStudentDueDate,

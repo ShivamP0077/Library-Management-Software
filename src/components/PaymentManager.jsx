@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { isVoidedPayment } from '../utils/paymentVoid';
 import { receiptReferenceText } from '../utils/paymentReference';
 import { PaymentProofViewer } from './PaymentProofFields';
+import { paymentProofModeOf } from '../utils/paymentProof';
 
 const DetailRow = ({ label, value }) => (
   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', fontSize: '13px' }}>
@@ -14,7 +15,8 @@ const DetailRow = ({ label, value }) => (
 );
 
 export const PaymentManager = ({ onPrintReceipt }) => {
-  const { payments, branches, activeBranchId } = useLibrary();
+  const { payments, branches, activeBranchId, updatePaymentProofs, canManagePaymentProofs, settings } = useLibrary();
+  const proofMode = paymentProofModeOf(settings);
   const [searchQuery, setSearchQuery] = useState('');
   const [methodFilter, setMethodFilter] = useState('All');
   const [staffFilter, setStaffFilter] = useState('All');
@@ -433,7 +435,15 @@ export const PaymentManager = ({ onPrintReceipt }) => {
               {(viewPayment.collectedByName || viewPayment.staffName) && (
                 <DetailRow label="Received by" value={`${viewPayment.collectedByName || viewPayment.staffName}${viewPayment.collectedByRole ? ` (${viewPayment.collectedByRole})` : ''}`} />
               )}
-              <PaymentProofViewer proofs={viewPayment.paymentProofs} />
+              <PaymentProofViewer
+                proofs={viewPayment.paymentProofs}
+                canEdit={canManagePaymentProofs}
+                mode={proofMode}
+                onChange={(next) => {
+                  const ok = updatePaymentProofs(viewPayment.receiptNo || viewPayment.id, next);
+                  if (ok) setViewPayment(p => p ? { ...p, paymentProofs: next } : p);
+                }}
+              />
             </div>
 
             <div className="modal-footer">

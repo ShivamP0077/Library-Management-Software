@@ -20,6 +20,7 @@ import { handleSplitAmountChange, handleAddSplitComponent, handleRemoveSplitComp
 import { paymentReferenceError } from '../utils/paymentReference';
 import { ReferenceField } from './ReferenceField';
 import { PaymentProofFields, PaymentProofViewer } from './PaymentProofFields';
+import { paymentProofModeOf, paymentProofsMissing, PAYMENT_PROOF_REQUIRED_MESSAGE } from '../utils/paymentProof';
 import { getSubscriptionStatus, validatePaidOn, renewalPeriodForStudent, isMoreThanOneMonthLate } from '../utils/dateUtils';
 import { getDocumentBlob, deleteDocumentBlob, saveDocumentBlobNow } from '../utils/idbStorage';
 import { uploadAttachmentFile, makeAttachmentKey, isPdfAttachment } from '../utils/attachmentUpload';
@@ -236,12 +237,15 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     renewSubscription, changeSeat, extendStudentDueDate, archiveStudent,
     cancelAdmission, cancelRenewalTransaction, getValidDesksList, getAvailableEligibleSeats, 
     currentStaff, waitingList, removeFromWaitingList, updateWaitingListStatus, hasPermission, updateStudentDetails,
-    lockedStaffId, getMatchingPlans, todayStr, readOnly: isReadOnly
+    lockedStaffId, getMatchingPlans, todayStr, readOnly: isReadOnly, updatePaymentProofs, canManagePaymentProofs
   } = useLibrary();
   const { user, subscriptionAccess } = useAuth() || {};
   const enquiryWaiting = useWaitingEnquiryCount(isLibraryLocked(subscriptionAccess, user));
   const waitingBadge = badgeCount(waitingList.length + (Number(enquiryWaiting) || 0));
   const canEditAmount = clientCanEditAmount({ lockedStaffId, currentStaff, settings });
+  const proofMode = paymentProofModeOf(settings);
+  const [renewProofError, setRenewProofError] = useState(false);
+  const [relocProofError, setRelocProofError] = useState(false);
   const cycleCfg = cycleConfig(settings);
   const cycleForPlan = (plan, { aligned = false } = {}) => (aligned ? cycleCfg : effectiveCycleConfig(settings, plan));
 
@@ -663,6 +667,12 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       toast.error(referenceErr);
       return;
     }
+    if (paymentProofsMissing(proofMode, renewProofs)) {
+      setRenewProofError(true);
+      toast.error(PAYMENT_PROOF_REQUIRED_MESSAGE);
+      return;
+    }
+    setRenewProofError(false);
 
     const paidOnError = validatePaidOn(renewPaidOn, todayStr);
     if (paidOnError) {
@@ -735,6 +745,12 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
         toast.error(relocRefErr);
         return;
       }
+      if (paymentProofsMissing(proofMode, relocProofs)) {
+        setRelocProofError(true);
+        toast.error(PAYMENT_PROOF_REQUIRED_MESSAGE);
+        return;
+      }
+      setRelocProofError(false);
     }
     const pc = relocPriceChange;
     const priceChange = pc && pc.amount !== 0 ? {
@@ -811,7 +827,13 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       toast.error(bulkRefErr);
       return;
     }
-    
+    if (paymentProofsMissing(proofMode, renewProofs)) {
+      setRenewProofError(true);
+      toast.error(PAYMENT_PROOF_REQUIRED_MESSAGE);
+      return;
+    }
+    setRenewProofError(false);
+
     const paidOnError = validatePaidOn(renewPaidOn, todayStr);
     if (paidOnError) {
       toast.error(paidOnError);
@@ -1571,7 +1593,12 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                         <div>
                           <div style={{ fontWeight: 600, fontSize: '14px' }}>{pay.receiptNo}</div>
                           <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>{pay.date} • {pay.method}{pay.referenceNo ? ` • Ref: ${pay.referenceNo}` : ''}{(pay.collectedByName || pay.staffName) ? ` • Staff: ${pay.collectedByName || pay.staffName}` : ''}</div>
-                          <PaymentProofViewer proofs={pay.paymentProofs} />
+                          <PaymentProofViewer
+                          proofs={pay.paymentProofs}
+                          canEdit={canManagePaymentProofs}
+                          mode={proofMode}
+                          onChange={(next) => updatePaymentProofs(pay.receiptNo || pay.id, next)}
+                        />
                           {pay.method === 'Split' && Array.isArray(pay.breakdown) && pay.breakdown.some(b => b.referenceNo) && (
                             <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '2px' }}>
                               {pay.breakdown.filter(b => b.referenceNo).map(b => `${b.method} Ref: ${b.referenceNo}`).join(' · ')}
@@ -1830,7 +1857,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                     </div>
                   </div>
                   <ReferenceField mode={renewPaymentMethod} value={renewReferenceNo} onChange={setRenewReferenceNo} />
-                  <PaymentProofFields value={renewProofs} onChange={setRenewProofs} />
+                  <PaymentProofFields value={renewProofs} onChange={setRenewProofs} mode={proofMode} showRequiredError={renewProofError} />
                   <div className="form-group">
                     <label className="form-label">Payment date</label>
                     <input type="date" className="form-input" value={renewPaidOn} max={todayStr} min={addDays(todayStr, -60)} onChange={(e) => {
@@ -2001,7 +2028,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                     </div>
                   </div>
                   <ReferenceField mode={renewPaymentMethod} value={renewReferenceNo} onChange={setRenewReferenceNo} />
-                  <PaymentProofFields value={renewProofs} onChange={setRenewProofs} />
+                  <PaymentProofFields value={renewProofs} onChange={setRenewProofs} mode={proofMode} showRequiredError={renewProofError} />
                   {(() => {
                     const period = renewalPeriodForStudent(selectedStudent, {
                       paidOn: renewPaidOn,
@@ -2265,7 +2292,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                             <option>Cash</option><option>UPI</option><option>Card</option><option>Bank Transfer</option><option>Net Banking</option><option>Cheque</option>
                           </select>
                           <ReferenceField mode={relocMethod} value={relocReferenceNo} onChange={setRelocReferenceNo} />
-                          <PaymentProofFields value={relocProofs} onChange={setRelocProofs} />
+                          <PaymentProofFields value={relocProofs} onChange={setRelocProofs} mode={proofMode} showRequiredError={relocProofError} />
                         </>
                       )}
                     </div>

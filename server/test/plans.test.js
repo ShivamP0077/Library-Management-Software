@@ -29,11 +29,27 @@ test('only super admin manages plans; CRUD + archive', async () => {
   await call('PATCH', '/api/admin/plans/starter', { token: SA(), body: { active: true } });
   const list = (await call('GET', '/api/admin/plans', { token: SA() })).body;
   assert.equal(list.length, 1); assert.equal(list[0].libraries, 0);
+
+  assert.equal((await call('DELETE', '/api/admin/plans/starter', { token: ctx.tokens.a })).status, 403);
+  assert.equal((await call('DELETE', '/api/admin/plans/missing-plan', { token: SA() })).status, 404);
+  const spare = await call('POST', '/api/admin/plans', { token: SA(), body: { name: 'Spare', planId: 'spare', priceMonthly: 10 } });
+  assert.equal(spare.status, 201);
+  const del = await call('DELETE', '/api/admin/plans/spare', { token: SA() });
+  assert.equal(del.status, 200, JSON.stringify(del.body));
+  assert.equal(del.body.ok, true);
+  const after = (await call('GET', '/api/admin/plans', { token: SA() })).body;
+  assert.equal(after.some(p => p.planId === 'spare'), false);
+  assert.equal(after.some(p => p.planId === 'starter'), true);
 });
 
 test('assigning a plan enforces its student, staff and branch limits on lib-a only', async () => {
   assert.equal((await call('PATCH', '/api/admin/libraries/lib-a', { token: SA(), body: { planId: 'missing' } })).status, 400);
   assert.equal((await call('PATCH', '/api/admin/libraries/lib-a', { token: SA(), body: { planId: 'starter' } })).status, 200);
+  const blocked = await call('DELETE', '/api/admin/plans/starter', { token: SA() });
+  assert.equal(blocked.status, 409, JSON.stringify(blocked.body));
+  assert.equal(blocked.body.code, 'plan_in_use');
+  assert.ok(blocked.body.libraries >= 1);
+  assert.equal((await call('GET', '/api/admin/plans', { token: SA() })).body.some(p => p.planId === 'starter'), true);
   const libs = (await call('GET', '/api/admin/libraries', { token: SA() })).body;
   assert.equal(libs.find(l => l.libraryId === 'lib-a').planId, 'starter');
 

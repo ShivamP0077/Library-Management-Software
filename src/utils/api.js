@@ -209,6 +209,7 @@ export const api = {
   adminList: (part) => apiRequest(`/admin${part}`),
   adminCreatePlan: (body) => apiRequest('/admin/plans', { method: 'POST', body }),
   adminUpdatePlan: (planId, body) => apiRequest(`/admin/plans/${encodeURIComponent(planId)}`, { method: 'PATCH', body }),
+  adminDeletePlan: (planId) => apiRequest(`/admin/plans/${encodeURIComponent(planId)}`, { method: 'DELETE' }),
   adminMetrics: () => apiRequest('/admin/metrics'),
   adminSaasSummary: () => apiRequest('/admin/saas-summary'),
   adminInsights: (q = '') => apiRequest(`/admin/insights${q}`),

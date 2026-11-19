@@ -24,7 +24,7 @@ export default function HowItWorks() {
           </div>
           <ol className="grid gap-10 md:grid-cols-3 md:gap-8">
             {steps.map((s, i) => (
-              <Reveal as="li" key={s.title} delay={i * 0.12} className="relative text-center">
+              <Reveal as="li" key={s.title} className="relative text-center">
                 <div className="relative mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-ink text-gold-400 shadow-card ring-8 ring-paper">
                   <s.icon size={22} />
                   <span className="absolute -right-2 -top-2 grid h-6 w-6 place-items-center rounded-full bg-gold-400 text-xs font-bold text-ink-950">{i + 1}</span>

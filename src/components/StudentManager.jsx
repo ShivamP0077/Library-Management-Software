@@ -19,6 +19,7 @@ import { EditStudentModal } from './Modals/EditStudentModal';
 import { handleSplitAmountChange, handleAddSplitComponent, handleRemoveSplitComponent, validateSplitPayment } from '../utils/splitPaymentUtils';
 import { paymentReferenceError } from '../utils/paymentReference';
 import { ReferenceField } from './ReferenceField';
+import { PaymentProofFields, PaymentProofViewer } from './PaymentProofFields';
 import { getSubscriptionStatus, validatePaidOn, renewalPeriodForStudent, isMoreThanOneMonthLate } from '../utils/dateUtils';
 import { getDocumentBlob, deleteDocumentBlob, saveDocumentBlobNow } from '../utils/idbStorage';
 import { uploadAttachmentFile, makeAttachmentKey, isPdfAttachment } from '../utils/attachmentUpload';
@@ -319,6 +320,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       setRenewFine(0);
       setRenewPaymentMethod('');
       setRenewSplitBreakdown([{ method: '', amount: '' }]);
+      setRenewProofs([]);
       setIsRenewModalOpen(true);
       if (setRenewActionStudent) setRenewActionStudent(null);
     }
@@ -327,6 +329,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   useEffect(() => {
     if (relocateActionStudent) {
       setSelectedStudent(relocateActionStudent);
+      setRelocProofs([]);
       setIsSeatModalOpen(true);
       if (setRelocateActionStudent) setRelocateActionStudent(null);
     }
@@ -350,6 +353,8 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   const [renewShiftId, setRenewShiftId] = useState('');
   const [renewPaymentMethod, setRenewPaymentMethod] = useState('');
   const [renewReferenceNo, setRenewReferenceNo] = useState('');
+  const [renewProofs, setRenewProofs] = useState([]);
+  const [relocProofs, setRelocProofs] = useState([]);
   const [renewSplitBreakdown, setRenewSplitBreakdown] = useState([{ method: '', amount: '' }]);
   const [renewAmount, setRenewAmountRaw] = useState(0);
   // Issue #9: system-computed price, so a manual change is flagged for the server permission check + audit.
@@ -625,6 +630,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     setRenewPaidOn(todayStr);
     setRenewChoice('continue');
     setRenewFreshStart(todayStr);
+    setRenewProofs([]);
     setIsRenewModalOpen(true);
   };
 
@@ -691,6 +697,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       fine: renewFine,
       paymentMethod: renewPaymentMethod,
       referenceNo: renewReferenceNo,
+      paymentProofs: renewProofs,
       breakdown: renewPaymentMethod === 'Split' ? renewSplitBreakdown : undefined,
       paidOn: renewPaidOn,
       billingAnchorDay: period.billingAnchorDay,
@@ -735,7 +742,8 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
       amount: relocOverride != null ? Number(relocOverride) : pc.amount,
       suggestedAmount: pc.suggestedAmount ?? pc.amount,
       ...(relocOverride != null && Number(relocOverride) !== pc.amount ? { amountEdited: true } : {}),
-      collect: relocCollect, method: relocMethod, referenceNo: relocReferenceNo
+      collect: relocCollect, method: relocMethod, referenceNo: relocReferenceNo,
+      paymentProofs: relocCollect ? relocProofs : [],
     } : null;
     const success = changeSeat(selectedStudent.id, newBlockId, newSeatTypeId, newSeatNo, seatChangeReason, newShiftId, effectiveBranchId, priceChange);
     if (success !== false) {
@@ -778,6 +786,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
     setRenewPaidOn(todayStr);
     setRenewChoice('continue');
     setRenewFreshStart(todayStr);
+    setRenewProofs([]);
     setIsBulkRenewModalOpen(true);
   };
 
@@ -858,6 +867,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
         fine: renewFine,
         paymentMethod: renewPaymentMethod,
         referenceNo: renewReferenceNo,
+        paymentProofs: renewProofs,
         paidOn: renewPaidOn,
         billingAnchorDay: period.billingAnchorDay,
       });
@@ -1348,7 +1358,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
 
               <div style={{ padding: '16px 24px', display: 'flex', gap: '12px', borderTop: '1px solid var(--border-light)', borderBottom: '1px solid var(--border-light)', flexWrap: 'wrap' }}>
                 <button className="btn btn-primary" onClick={handleOpenRenewModal}><RefreshCw size={14} /> Renew Subscription</button>
-                <button className="btn btn-secondary" onClick={() => setIsSeatModalOpen(true)}>
+                <button className="btn btn-secondary" onClick={() => { setRelocProofs([]); setIsSeatModalOpen(true); }}>
                   <ArrowRightLeft size={14} /> Relocate Desk
                 </button>
                 <button className="btn btn-secondary" onClick={() => {
@@ -1560,7 +1570,8 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                       >
                         <div>
                           <div style={{ fontWeight: 600, fontSize: '14px' }}>{pay.receiptNo}</div>
-                          <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>{pay.date} • {pay.method}{pay.referenceNo ? ` • Ref: ${pay.referenceNo}` : ''} • Staff: {pay.staffName || "Admin"}</div>
+                          <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>{pay.date} • {pay.method}{pay.referenceNo ? ` • Ref: ${pay.referenceNo}` : ''}{(pay.collectedByName || pay.staffName) ? ` • Staff: ${pay.collectedByName || pay.staffName}` : ''}</div>
+                          <PaymentProofViewer proofs={pay.paymentProofs} />
                           {pay.method === 'Split' && Array.isArray(pay.breakdown) && pay.breakdown.some(b => b.referenceNo) && (
                             <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '2px' }}>
                               {pay.breakdown.filter(b => b.referenceNo).map(b => `${b.method} Ref: ${b.referenceNo}`).join(' · ')}
@@ -1819,6 +1830,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                     </div>
                   </div>
                   <ReferenceField mode={renewPaymentMethod} value={renewReferenceNo} onChange={setRenewReferenceNo} />
+                  <PaymentProofFields value={renewProofs} onChange={setRenewProofs} />
                   <div className="form-group">
                     <label className="form-label">Payment date</label>
                     <input type="date" className="form-input" value={renewPaidOn} max={todayStr} min={addDays(todayStr, -60)} onChange={(e) => {
@@ -1989,6 +2001,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                     </div>
                   </div>
                   <ReferenceField mode={renewPaymentMethod} value={renewReferenceNo} onChange={setRenewReferenceNo} />
+                  <PaymentProofFields value={renewProofs} onChange={setRenewProofs} />
                   {(() => {
                     const period = renewalPeriodForStudent(selectedStudent, {
                       paidOn: renewPaidOn,
@@ -2252,6 +2265,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                             <option>Cash</option><option>UPI</option><option>Card</option><option>Bank Transfer</option><option>Net Banking</option><option>Cheque</option>
                           </select>
                           <ReferenceField mode={relocMethod} value={relocReferenceNo} onChange={setRelocReferenceNo} />
+                          <PaymentProofFields value={relocProofs} onChange={setRelocProofs} />
                         </>
                       )}
                     </div>

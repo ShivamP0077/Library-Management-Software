@@ -334,6 +334,14 @@ export async function renderFeeReceiptPdf(payment, student, { settings, library,
     y -= 6;
   }
 
+  if (view.receivedByLine) {
+    for (const line of wrapText(view.receivedByLine, bold, 10, width).slice(0, 2)) {
+      drawText(page, line, left, y, bold, 10);
+      y -= 13;
+    }
+    y -= 4;
+  }
+
   page.drawLine({ start: { x: left, y }, end: { x: right, y }, thickness: 0.6, color: LINE });
   y -= 16;
   for (const line of wrapText(terms, regular, 8.5, width).slice(0, 3)) {

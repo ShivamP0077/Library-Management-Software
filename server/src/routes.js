@@ -8,6 +8,7 @@ import { createLibrary, createUser, computeMetrics, hashPassword, validatePasswo
 import { verifyGoogleIdToken, googleEnabled, googleConfig, buildAuthUrl, exchangeCode } from './google.js';
 import { createWhatsappRouter, createWhatsappWebhookRouter } from './whatsapp.js';
 import { createFinanceRouter, validatePaymentBatch, normalizeStudentPaymentDates, applyPaidOn, applyPaymentReference } from './finance.js';
+import { collectorStampFor, stampNewPayment, preservePaymentCollector, stampStudentPaymentHistory } from './paymentCollector.js';
 import { createStudentRouter, recordStudentDiff, recordArchiveDiff, checkCapacity, countsTowardStudentLimit } from './students.js';
 import { audit, AuditLog } from './audit.js';
 import { enforceAmountEdits, amountSettingsChanged, isOwnerRole } from './amountPermission.js';
@@ -660,6 +661,7 @@ async function createOne(req, res) {
     const existing = await req.Model.find({ tenantId: req.tenantId }).lean();
     const prev = existing.filter(s => countsTowardStudentLimit(s, { settings: billing })).length;
     normalizeStudentPaymentDates(body, null);
+    stampStudentPaymentHistory(body, null, await collectorStampFor(req));
     stampPeriodSnapshots(body, null, billing);
     const next = prev + (countsTowardStudentLimit(body, { settings: billing }) ? 1 : 0);
     await checkCapacity(req.tenantId, next, prev);
@@ -669,7 +671,11 @@ async function createOne(req, res) {
     const n = await req.Model.countDocuments({ tenantId: req.tenantId });
     await checkDeskLimit(req.tenantId, n + 1, n);
   }
-  if (req.params.col === 'payments') { validatePaymentBatch([body]); await enforceAmountEdits(req, [body]); }
+  if (req.params.col === 'payments') {
+    stampNewPayment(body, await collectorStampFor(req));
+    validatePaymentBatch([body]);
+    await enforceAmountEdits(req, [body]);
+  }
   if (req.params.col === 'branches') { const n = await req.Model.countDocuments({ tenantId: req.tenantId }); await checkBranchLimit(req.tenantId, n + 1, n); }
   const d = await req.Model.create({ ...body, _key, tenantId: req.tenantId, libraryId: req.tenantId });
   if (req.params.col === 'students') await recordStudentDiff(req.tenantId, new Map(), [{ ...body, id: _key }], req.user.email);
@@ -683,6 +689,8 @@ tenant.put('/:col/:key', colParam, wrap(async (req, res) => {
     if (!prev) return res.status(404).json({ error: 'Not found' });
     const merged = { ...clean(prev), ...stripMeta(req.body), id: prev.id ?? req.params.key };
     normalizeStudentPaymentDates(merged, prev);
+    stampStudentPaymentHistory(merged, prev, await collectorStampFor(req));
+    if (Array.isArray(merged.paymentHistory)) req.body.paymentHistory = merged.paymentHistory;
     stampPeriodSnapshots(merged, prev, await billingSettings(req.tenantId));
     req.body.graceDaysSnapshot = merged.graceDaysSnapshot;
     req.body.expiredPeriodDaysSnapshot = merged.expiredPeriodDaysSnapshot;
@@ -703,8 +711,13 @@ tenant.put('/:col/:key', colParam, wrap(async (req, res) => {
     const prev = await req.Model.findOne({ tenantId: req.tenantId, _key: req.params.key }).lean();
     applyPaymentReference(patch, { required: !prev });
     const mergedPay = { ...(prev ? clean(prev) : {}), ...patch, receiptNo: prev?.receiptNo ?? req.params.key };
-    if (prev) validatePaymentBatch([mergedPay], new Map([[req.params.key, prev]]));
-    else validatePaymentBatch([mergedPay]);
+    if (prev) {
+      preservePaymentCollector(patch, prev);
+      validatePaymentBatch([mergedPay], new Map([[req.params.key, prev]]));
+    } else {
+      for (const key of ['collectedByUserId', 'collectedByName', 'collectedByRole']) delete patch[key];
+      validatePaymentBatch([mergedPay]);
+    }
     if (mergedPay.paidOn) { patch.paidOn = mergedPay.paidOn; patch.date = mergedPay.date; patch.enteredAt = mergedPay.enteredAt; }
     await enforceAmountEdits(req, [mergedPay], prev ? new Map([[String(prev.receiptNo ?? req.params.key), prev]]) : new Map());
     const moneyChanged = prev && ['amount', 'discount', 'fine', 'netTotal'].some(k => Number(prev[k] ?? 0) !== Number(mergedPay[k] ?? 0));
@@ -784,6 +797,8 @@ async function replaceCollection(req, res) {
     const had = new Set(prevDocs.map(d => String(d._key)));
     newPayments = req.body.map(stripMeta).map(b => ({ ...b, _key: keyOf(col, b) })).filter(b => b._key && !had.has(String(b._key)));
   }
+  const collectorStamp = (col === 'payments' || col === 'students') ? await collectorStampFor(req) : null;
+  if (newPayments?.length && collectorStamp) newPayments = newPayments.map(row => stampNewPayment(row, collectorStamp));
   if (col === 'branches') {
     const n = await req.Model.countDocuments({ tenantId: req.tenantId });
     await checkBranchLimit(req.tenantId, new Set(req.body.map(stripMeta).map(b => keyOf(col, b)).filter(Boolean)).size, n);
@@ -820,8 +835,14 @@ async function replaceCollection(req, res) {
       const prevPay = prevPayByKey.get(String(_key));
       applyPaymentReference(body, { required: !prevPay });
       if (!prevPay || prevPay.paidOn !== body.paidOn) applyPaidOn(body);
+      if (prevPay) preservePaymentCollector(body, prevPay);
+      else stampNewPayment(body, collectorStamp);
     }
-    if (col === 'students') normalizeStudentPaymentDates(body, req.studentDiff?.previous?.get(String(_key)));
+    if (col === 'students') {
+      const prevStudent = req.studentDiff?.previous?.get(String(_key));
+      normalizeStudentPaymentDates(body, prevStudent);
+      stampStudentPaymentHistory(body, prevStudent, collectorStamp);
+    }
     seen.add(_key);
     ops.push({ replaceOne: { filter: { tenantId: req.tenantId, _key }, replacement: { ...body, _key, _order: i, tenantId: req.tenantId, libraryId: req.tenantId }, upsert: true } });
   });

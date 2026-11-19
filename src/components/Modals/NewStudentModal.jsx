@@ -13,6 +13,7 @@ import { effectiveCycleConfig, firstAdmissionCharge, addDays } from '../../utils
 import { saveDocumentBlobNow, deleteDocumentBlob, getDocumentBlob } from '../../utils/idbStorage';
 import { api } from '../../utils/api';
 import { uploadAttachmentFile, makeAttachmentKey } from '../../utils/attachmentUpload';
+import { PaymentProofFields } from '../PaymentProofFields';
 import { allDocumentFiles, addFilesToDocuments, removeDocumentFile } from '../../utils/studentDocuments';
 
 const formatFileSize = (bytes) => {
@@ -158,6 +159,7 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
   const [discountValue, setDiscountValue] = useState(0);
   const [fine, setFine] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState('');
+  const [paymentProofs, setPaymentProofs] = useState([]);
   const [referenceNo, setReferenceNo] = useState('');
   const [splitBreakdown, setSplitBreakdown] = useState([{ method: '', amount: '' }]);
   const [paidOn, setPaidOn] = useState(todayStr);
@@ -520,6 +522,7 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
       fine: Number(fine),
       paymentMethod,
       referenceNo,
+      paymentProofs,
       breakdown: paymentMethod === 'Split' ? splitBreakdown : undefined,
       internalNotes,
       documents: docRecords,
@@ -1050,6 +1053,7 @@ export const NewStudentModal = ({ isOpen, onClose, onPrintReceipt, waitlistPaylo
                     {errors.paymentMethod && <div className="form-error" style={{ color: 'red', fontSize: '11px', marginTop: '4px' }}>{errors.paymentMethod}</div>}
                   </div>
                   <ReferenceField mode={paymentMethod} value={referenceNo} onChange={setReferenceNo} error={errors.referenceNo} />
+                  <PaymentProofFields value={paymentProofs} onChange={setPaymentProofs} />
 
                   {paymentMethod === 'Split' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>

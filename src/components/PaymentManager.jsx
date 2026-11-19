@@ -4,6 +4,7 @@ import { CreditCard, Printer, Search, DollarSign, Calendar, UserCheck, Filter, X
 import { motion } from 'framer-motion';
 import { isVoidedPayment } from '../utils/paymentVoid';
 import { receiptReferenceText } from '../utils/paymentReference';
+import { PaymentProofViewer } from './PaymentProofFields';
 
 const DetailRow = ({ label, value }) => (
   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', fontSize: '13px' }}>
@@ -428,7 +429,11 @@ export const PaymentManager = ({ onPrintReceipt }) => {
               />
               <DetailRow label="Discount" value={`₹${Number(viewPayment.discount || 0).toLocaleString()}`} />
               <DetailRow label="Fine" value={`₹${Number(viewPayment.fine || 0).toLocaleString()}`} />
-              <DetailRow label="Staff" value={viewPayment.staffName || '—'} />
+              <DetailRow label="Staff" value={viewPayment.collectedByName || viewPayment.staffName || '—'} />
+              {(viewPayment.collectedByName || viewPayment.staffName) && (
+                <DetailRow label="Received by" value={`${viewPayment.collectedByName || viewPayment.staffName}${viewPayment.collectedByRole ? ` (${viewPayment.collectedByRole})` : ''}`} />
+              )}
+              <PaymentProofViewer proofs={viewPayment.paymentProofs} />
             </div>
 
             <div className="modal-footer">

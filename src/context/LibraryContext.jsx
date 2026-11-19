@@ -10,6 +10,9 @@ import { buildRenewalVoid, markPaymentVoided } from '../utils/paymentVoid.js';
 import { todayIST, validatePaidOn, applyRenewalToStudent, formatDate } from '../utils/dateUtils';
 import { periodSnapshots, holdsDesk, NEW_LIBRARY_GRACE_DAYS, DEFAULT_EXPIRED_PERIOD_DAYS } from '../utils/subscriptionLifecycle.js';
 import { stampPaymentReference } from '../utils/paymentReference';
+import { collectorIdentity } from '../utils/paymentCollector';
+import { paymentProofRefs } from '../utils/paymentProof';
+import { useAuth } from '../auth/AuthContext';
 import { scopedStorage, canSeedServer } from '../utils/tenantCache';
 // Issue #2: all cache reads/writes in this file go to the current library's own namespace.
 const localStorage = scopedStorage;
@@ -527,6 +530,7 @@ export const reconcileSeats = ({ savedSeats, students = [], sections = [], branc
 };
 
 export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = null }) => {
+  const authUser = useAuth()?.user || null;
   const todayStr = todayIST();
   const paidStamp = (paidOn, period) => {
     const paid = paidOn || todayStr;
@@ -1553,6 +1557,14 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
   };
 
   // Add New Student
+  const feeCollector = () => collectorIdentity(authUser, {
+    staffRole: authUser?.role === 'staff' ? (currentStaff?.role || '') : '',
+  });
+  const withPaymentProofs = (source) => {
+    const proofs = paymentProofRefs(source?.paymentProofs);
+    return proofs.length ? { paymentProofs: proofs } : {};
+  };
+
   const addStudent = (studentData) => {
     if (!hasPermission('students', 'create')) {
       toast.error('Permission Denied: You do not have permission to add students.');
@@ -1642,7 +1654,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       fine,
       receiptNo: newReceiptNo,
       ...paid,
-      staffName: currentStaff?.name || "Admin"
+      staffName: feeCollector().staffName || currentStaff?.name || ''
     };
 
     const newSeatLog = {
@@ -1679,7 +1691,8 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       ...(studentData.amountEdited ? { amountEdited: true } : {}),
       ...(studentData.proRated ? { proRated: studentData.proRated } : {}),
       ...paidStamp(paidOn, { start: studentData.startDate, end: studentData.expiryDate }),
-      staffName: currentStaff?.name || "Admin"
+      ...feeCollector(),
+      ...withPaymentProofs(studentData),
     };
 
     const stampedPayment = stampPaymentReference(newPayment);
@@ -1792,7 +1805,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         fine: studentData.fine,
         receiptNo: newReceiptNo,
         ...paidStamp(studentData.paidOn || todayStr),
-        staffName: currentStaff?.name || "Admin"
+        staffName: feeCollector().staffName || currentStaff?.name || ''
       };
 
       const newSeatLog = {
@@ -1819,7 +1832,8 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         referenceNo: studentData.referenceNo,
         breakdown: studentData.breakdown,
         ...paidStamp(studentData.paidOn || todayStr, { start: studentData.startDate, end: studentData.expiryDate }),
-        staffName: currentStaff?.name || "Admin"
+        ...feeCollector(),
+        ...withPaymentProofs(studentData),
       });
 
       const newStudentObj = {
@@ -1904,7 +1918,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       fine,
       receiptNo: newReceiptNo,
       ...paidStamp(paidOn),
-      staffName: currentStaff?.name || "Admin",
+      staffName: feeCollector().staffName || currentStaff?.name || '',
       seatNo: student.seatNo
     };
 
@@ -1933,7 +1947,8 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
       ...(renewalData.amountEdited ? { amountEdited: true } : {}),
       ...(renewalData.bridge ? { bridge: renewalData.bridge } : {}),
       ...paidStamp(paidOn, { start: renewalData.startDate, end: renewalData.expiryDate }),
-      staffName: currentStaff?.name || "Admin"
+      ...feeCollector(),
+      ...withPaymentProofs(renewalData),
     });
 
     setStudents(prev => prev.map(s => {
@@ -2086,7 +2101,8 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         suggestedAmount: priceChange.suggestedAmount != null ? Number(priceChange.suggestedAmount) : Number(priceChange.amount),
         ...(priceChange.amountEdited ? { amountEdited: true } : {}),
         date: todayStr,
-        staffName: currentStaff?.name || "Admin"
+        ...feeCollector(),
+        ...withPaymentProofs(priceChange),
       });
       newSeatLog.receiptNo = upgradePayment.receiptNo;
     }
@@ -2248,7 +2264,7 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         netTotal: -Math.abs(refundAmount),
         method: "Refund",
         date: todayStr,
-        staffName: currentStaff?.name || "Admin"
+        ...feeCollector(),
       };
       setPayments(prev => [newPayment, ...prev]);
     }
@@ -2698,7 +2714,8 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         fine: 0,
         receiptNo,
         ...historyPaid,
-        staffName: currentStaff?.name || "Admin (Test Generator)"
+        staffName: feeCollector().staffName || 'Test Generator',
+        ...feeCollector(),
       };
 
       const newStudentObj = {
@@ -2751,7 +2768,8 @@ export const LibraryProvider = ({ children, readOnly = false, lockedStaffId = nu
         method: i % 3 === 0 ? "Cash" : "UPI",
         ...(i % 3 === 0 ? {} : { referenceNo: `TEST-${receiptNo}` }),
         ...historyPaid,
-        staffName: currentStaff?.name || "Admin (Test Generator)",
+        ...feeCollector(),
+        staffName: feeCollector().staffName || 'Test Generator',
         isTestData: true,
         source: 'TEST_GENERATOR'
       };

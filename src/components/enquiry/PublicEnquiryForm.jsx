@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { API_BASE } from '../../utils/api';
 import { indianMobileError } from '../../utils/enquiry';
-import { branchSectionState, genderError, viewOnlyPlans } from '../../utils/enquiryForm';
+import { branchSectionState, genderError } from '../../utils/enquiryForm';
+import { normalizeEnquiryForm, planChoiceOptions } from '../../utils/enquiryFormConfig';
 import { compressEnquiryImage } from '../../utils/compressEnquiryImage';
 
 async function publicEnquiry(path, { method = 'GET', body } = {}) {
@@ -50,6 +51,7 @@ export function PublicEnquiryForm({ token }) {
   const [sectionId, setSectionId] = useState('');
   const [aadhaar, setAadhaar] = useState('');
   const [photo, setPhoto] = useState('');
+  const [preferredPlan, setPreferredPlan] = useState('');
   const [mobileTouched, setMobileTouched] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -80,7 +82,8 @@ export function PublicEnquiryForm({ token }) {
   useEffect(() => { load(); }, [token]);
 
   const place = info ? branchSectionState(info, branchId, sectionId) : null;
-  const plans = viewOnlyPlans(info?.plans);
+  const formCfg = normalizeEnquiryForm(info?.enquiryForm);
+  const plans = formCfg.plan.show ? planChoiceOptions(info?.plans) : [];
   const mobileMessage = mobileTouched || mobile ? indianMobileError(mobile) : '';
 
   const onBranch = (id) => {
@@ -107,11 +110,18 @@ export function PublicEnquiryForm({ token }) {
     if (!name.trim()) { setSubmitError('Name is required'); return; }
     const mobileProblem = indianMobileError(mobile);
     if (mobileProblem) { setSubmitError(mobileProblem); return; }
-    const genderProblem = genderError(gender);
-    if (genderProblem) { setSubmitError(genderProblem); return; }
+    if (formCfg.fields.email.show && formCfg.fields.email.required && !email.trim()) { setSubmitError('Email is required'); return; }
+    if (formCfg.fields.gender.show) {
+      const genderProblem = genderError(gender);
+      if (formCfg.fields.gender.required && genderProblem) { setSubmitError(genderProblem); return; }
+      if (gender && genderProblem) { setSubmitError(genderProblem); return; }
+    }
+    if (formCfg.fields.message.show && formCfg.fields.message.required && !message.trim()) { setSubmitError('Message is required'); return; }
     if (message.length > 500) { setSubmitError('Message must be 500 characters or less'); return; }
-    if (place && !place.branch.hidden && !place.branch.value) { setSubmitError('Choose a branch'); return; }
-    if (place && !place.section.hidden && !place.section.value) { setSubmitError('Choose a section'); return; }
+    if (formCfg.fields.branch.show && formCfg.fields.branch.required && place && !place.branch.hidden && !place.branch.value) { setSubmitError('Choose a branch'); return; }
+    if (formCfg.fields.section.show && formCfg.fields.section.required && place && !place.section.hidden && !place.section.value) { setSubmitError('Choose a section'); return; }
+    if (formCfg.documents.show && formCfg.documents.required && (!aadhaar || !photo)) { setSubmitError('Please attach the required documents'); return; }
+    if (formCfg.plan.show && formCfg.plan.required && plans.length > 0 && !preferredPlan) { setSubmitError('Choose a membership plan'); return; }
     setBusy(true);
     try {
       await publicEnquiry(`/public/enquiry/${encodeURIComponent(token)}`, {
@@ -119,14 +129,15 @@ export function PublicEnquiryForm({ token }) {
         body: {
           name: name.trim(),
           mobile,
-          gender,
-          email: email.trim(),
-          message: message.trim(),
+          gender: formCfg.fields.gender.show ? gender : '',
+          email: formCfg.fields.email.show ? email.trim() : '',
+          message: formCfg.fields.message.show ? message.trim() : '',
           website,
-          branchId: place?.branch.value || '',
-          sectionId: place?.section.value || '',
-          ...(aadhaar ? { aadhaar } : {}),
-          ...(photo ? { photo } : {}),
+          branchId: formCfg.fields.branch.show ? (place?.branch.value || '') : '',
+          sectionId: formCfg.fields.section.show ? (place?.section.value || '') : '',
+          ...(formCfg.documents.show && aadhaar ? { aadhaar } : {}),
+          ...(formCfg.documents.show && photo ? { photo } : {}),
+          ...(formCfg.plan.show && preferredPlan ? { preferredPlan } : {}),
         },
       });
       setPhase('done');
@@ -139,20 +150,20 @@ export function PublicEnquiryForm({ token }) {
     }
   };
 
-  const choiceField = (id, label, control, onChange) => {
+  const choiceField = (id, label, control, onChange, required = true) => {
     if (!control || control.hidden) return null;
     if (control.locked) {
       return (
         <div className="form-group">
-          <span className="form-label">{label}</span>
+          <span className="form-label">{label}{required ? ' *' : ''}</span>
           <input className="form-input" style={{ borderRadius: 10, minHeight: 44 }} value={control.options[0]?.name || ''} readOnly aria-readonly="true" />
         </div>
       );
     }
     return (
       <div className="form-group">
-        <label className="form-label" htmlFor={id}>{label} *</label>
-        <select id={id} className="form-select" style={{ borderRadius: 10, minHeight: 44 }} value={control.value} onChange={e => onChange(e.target.value)} required>
+        <label className="form-label" htmlFor={id}>{label}{required ? ' *' : ''}</label>
+        <select id={id} className="form-select" style={{ borderRadius: 10, minHeight: 44 }} value={control.value} onChange={e => onChange(e.target.value)} required={required}>
           <option value="">Select</option>
           {control.options.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}
         </select>
@@ -203,57 +214,65 @@ export function PublicEnquiryForm({ token }) {
                 <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: 14 }}>Tell the library you are interested. They will contact you.</p>
               </div>
 
-              {plans.length > 0 && (
-                <section aria-label="Membership plans" style={{ marginBottom: 16 }}>
-                  <h2 style={{ fontSize: 15, margin: '0 0 8px' }}>Membership plans</h2>
-                  <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 8 }}>
-                    {plans.map(plan => (
-                      <li key={plan.id} style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: '8px 12px', fontSize: 14 }}>
-                        {plan.name}{plan.price != null ? ` · ₹${plan.price}` : ''}
-                      </li>
-                    ))}
-                  </ul>
-                  <p style={{ margin: '8px 0 0', fontSize: 12, color: 'var(--text-secondary)' }}>For information only. You cannot choose or buy a plan on this form.</p>
-                </section>
-              )}
-
               <div className="form-group">
                 <label className="form-label" htmlFor="enquiry-name">Name *</label>
                 <input id="enquiry-name" className="form-input" style={{ borderRadius: 10, minHeight: 44 }} autoComplete="name" value={name} onChange={e => setName(e.target.value)} required maxLength={80} />
               </div>
               <div className="form-group">
-                <label className="form-label" htmlFor="enquiry-mobile">Mobile *</label>
+                <label className="form-label" htmlFor="enquiry-mobile">Mobile number *</label>
                 <input id="enquiry-mobile" className="form-input" style={{ borderRadius: 10, minHeight: 44 }} type="tel" inputMode="tel" autoComplete="tel" placeholder="10-digit mobile" value={mobile} onBlur={() => setMobileTouched(true)} onChange={e => setMobile(e.target.value)} required aria-invalid={Boolean(mobileMessage)} />
                 {mobileMessage && <span role="alert" style={{ color: '#dc2626', fontSize: 12 }}>{mobileMessage}</span>}
               </div>
-              <fieldset className="form-group" style={{ border: 0, padding: 0, margin: 0 }}>
-                <legend className="form-label">Gender *</legend>
-                {['male', 'female', 'other'].map(value => (
-                  <label key={value} style={{ display: 'inline-flex', gap: 6, marginRight: 12, minHeight: 44, alignItems: 'center' }}>
-                    <input type="radio" name="gender" value={value} checked={gender === value} onChange={() => setGender(value)} required />
-                    {value[0].toUpperCase() + value.slice(1)}
-                  </label>
-                ))}
-              </fieldset>
-              <div className="form-group">
-                <label className="form-label" htmlFor="enquiry-email">Email</label>
-                <input id="enquiry-email" className="form-input" style={{ borderRadius: 10, minHeight: 44 }} type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} />
-              </div>
-              {choiceField('enquiry-branch', 'Branch', place?.branch, onBranch)}
-              {choiceField('enquiry-section', 'Section', place?.section, setSectionId)}
-              <div className="form-group">
-                <label className="form-label" htmlFor="enquiry-aadhaar">Aadhaar</label>
-                <input id="enquiry-aadhaar" className="form-input" style={{ borderRadius: 10 }} type="file" accept="image/jpeg,image/webp" onChange={e => onFile(e.target.files?.[0], setAadhaar)} />
-              </div>
-              <div className="form-group">
-                <label className="form-label" htmlFor="enquiry-photo">Student photo</label>
-                <input id="enquiry-photo" className="form-input" style={{ borderRadius: 10 }} type="file" accept="image/jpeg,image/webp" onChange={e => onFile(e.target.files?.[0], setPhoto)} />
-              </div>
-              <div className="form-group">
-                <label className="form-label" htmlFor="enquiry-message">Message</label>
-                <textarea id="enquiry-message" className="form-textarea" style={{ borderRadius: 10, minHeight: 96 }} maxLength={500} value={message} onChange={e => setMessage(e.target.value)} />
-                <span style={{ fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'right' }}>{message.length}/500</span>
-              </div>
+              {formCfg.fields.email.show && (
+                <div className="form-group">
+                  <label className="form-label" htmlFor="enquiry-email">Email{formCfg.fields.email.required ? ' *' : ''}</label>
+                  <input id="enquiry-email" className="form-input" style={{ borderRadius: 10, minHeight: 44 }} type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} required={formCfg.fields.email.required} />
+                </div>
+              )}
+              {formCfg.fields.gender.show && (
+                <fieldset className="form-group" style={{ border: 0, padding: 0, margin: 0 }}>
+                  <legend className="form-label">Gender{formCfg.fields.gender.required ? ' *' : ''}</legend>
+                  {['male', 'female', 'other'].map(value => (
+                    <label key={value} style={{ display: 'inline-flex', gap: 6, marginRight: 12, minHeight: 44, alignItems: 'center' }}>
+                      <input type="radio" name="gender" value={value} checked={gender === value} onChange={() => setGender(value)} required={formCfg.fields.gender.required} />
+                      {value[0].toUpperCase() + value.slice(1)}
+                    </label>
+                  ))}
+                </fieldset>
+              )}
+              {formCfg.fields.branch.show && choiceField('enquiry-branch', 'Branch', place?.branch, onBranch, formCfg.fields.branch.required)}
+              {formCfg.fields.section.show && choiceField('enquiry-section', 'Section', place?.section, setSectionId, formCfg.fields.section.required)}
+              {formCfg.documents.show && (
+                <section aria-label="Documents" data-testid="enquiry-documents" style={{ margin: '8px 0 16px', padding: 12, border: '1px solid #e5e7eb', borderRadius: 12 }}>
+                  <h2 style={{ fontSize: 15, margin: '0 0 8px' }}>Documents{formCfg.documents.required ? ' *' : ''}</h2>
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="enquiry-aadhaar">Aadhaar{formCfg.documents.required ? ' *' : ''}</label>
+                    <input id="enquiry-aadhaar" className="form-input" style={{ borderRadius: 10 }} type="file" accept="image/jpeg,image/webp" required={formCfg.documents.required} onChange={e => onFile(e.target.files?.[0], setAadhaar)} />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" htmlFor="enquiry-photo">Student photo{formCfg.documents.required ? ' *' : ''}</label>
+                    <input id="enquiry-photo" className="form-input" style={{ borderRadius: 10 }} type="file" accept="image/jpeg,image/webp" required={formCfg.documents.required} onChange={e => onFile(e.target.files?.[0], setPhoto)} />
+                  </div>
+                </section>
+              )}
+              {formCfg.plan.show && plans.length > 0 && (
+                <div className="form-group" data-testid="enquiry-plan">
+                  <label className="form-label" htmlFor="enquiry-plan">Plan{formCfg.plan.required ? ' *' : ''}</label>
+                  <select id="enquiry-plan" className="form-select" style={{ borderRadius: 10, minHeight: 44 }} value={preferredPlan} required={formCfg.plan.required} onChange={e => setPreferredPlan(e.target.value)}>
+                    <option value="">Select a plan</option>
+                    {plans.map(plan => (
+                      <option key={plan.id} value={plan.id}>{plan.name}{plan.price != null ? ` · ₹${plan.price}` : ''}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {formCfg.fields.message.show && (
+                <div className="form-group">
+                  <label className="form-label" htmlFor="enquiry-message">Message{formCfg.fields.message.required ? ' *' : ''}</label>
+                  <textarea id="enquiry-message" className="form-textarea" style={{ borderRadius: 10, minHeight: 96 }} maxLength={500} value={message} required={formCfg.fields.message.required} onChange={e => setMessage(e.target.value)} />
+                  <span style={{ fontSize: 12, color: 'var(--text-tertiary)', textAlign: 'right' }}>{message.length}/500</span>
+                </div>
+              )}
               <input name="website" value={website} onChange={e => setWebsite(e.target.value)} tabIndex={-1} autoComplete="off" aria-hidden="true" style={{ position: 'absolute', left: '-10000px', width: 1, height: 1, opacity: 0 }} />
               {submitError && <div role="alert" style={{ color: '#dc2626', fontSize: 13, marginBottom: 12 }}>{submitError}</div>}
               <button className="btn btn-primary" type="submit" disabled={busy} style={{ width: '100%', justifyContent: 'center', minHeight: 46, borderRadius: 10 }}>

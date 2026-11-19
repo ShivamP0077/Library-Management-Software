@@ -28,6 +28,10 @@ import toast from 'react-hot-toast';
 import { api } from '../utils/api';
 import { copyText } from '../utils/copyText';
 import { EnquiryQrCard } from './enquiry/EnquiryQrCard';
+import { EnquiryFormCard } from './enquiry/EnquiryFormCard';
+import { BrandImageField } from './BrandImageField';
+import { DEFAULT_LIBRARY_LOGO } from '../utils/libraryLogo';
+import { receiptInstructionsEditorValue } from '../utils/receiptInstructions';
 
 const ALL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -122,6 +126,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
     upiId: settings.upiId || '',
     upiQrUrl: settings.upiQrUrl || '',
     receiptFooter: settings.receiptFooter || '',
+    receiptInstructions: receiptInstructionsEditorValue(settings.receiptInstructions),
     billingCycleMode: settings.billingCycleMode || 'ANNIVERSARY',
     gracePeriodDays: settings.gracePeriodDays ?? 3,
     expiredPeriodDays: settings.expiredPeriodDays ?? DEFAULT_EXPIRED_PERIOD_DAYS,
@@ -146,7 +151,8 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
       taxId: settings.taxId || '',
       upiId: settings.upiId || '',
       upiQrUrl: settings.upiQrUrl || '',
-      receiptFooter: settings.receiptFooter || '',
+        receiptFooter: settings.receiptFooter || '',
+      receiptInstructions: receiptInstructionsEditorValue(settings.receiptInstructions),
       billingCycleMode: settings.billingCycleMode || 'ANNIVERSARY',
       gracePeriodDays: settings.gracePeriodDays ?? 3,
     expiredPeriodDays: settings.expiredPeriodDays ?? DEFAULT_EXPIRED_PERIOD_DAYS,
@@ -274,6 +280,7 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
       upiId: billingFormData.upiId,
       upiQrUrl: billingFormData.upiQrUrl,
       receiptFooter: billingFormData.receiptFooter,
+      receiptInstructions: billingFormData.receiptInstructions ?? '',
       billingCycleMode: billingFormData.billingCycleMode,
       gracePeriodDays: Number(billingFormData.gracePeriodDays) || 3,
       expiredPeriodDays: Number.isFinite(Number(billingFormData.expiredPeriodDays)) ? Number(billingFormData.expiredPeriodDays) : DEFAULT_EXPIRED_PERIOD_DAYS,
@@ -1710,6 +1717,15 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                   <label className="form-label">Library Name *</label>
                   <input type="text" className="form-input" value={billingFormData.name} onChange={(e) => setBillingFormData(p => ({ ...p, name: e.target.value }))} required />
                 </div>
+                <BrandImageField
+                  label="Library logo"
+                  value={billingFormData.logo}
+                  onChange={(logo) => setBillingFormData(p => ({ ...p, logo }))}
+                  fallbackText={DEFAULT_LIBRARY_LOGO}
+                  documentKey="library-logo"
+                  testId="settings-library-logo"
+                  help="Used in the header, receipts, QR posters, the public enquiry form and report PDFs. Upload, replace or remove it any time."
+                />
                 <div className="form-group">
                   <label className="form-label">Phone</label>
                   <input type="text" className="form-input" value={billingFormData.phone} onChange={(e) => setBillingFormData(p => ({ ...p, phone: e.target.value }))} />
@@ -1723,12 +1739,31 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                   <input type="text" className="form-input" value={billingFormData.address} onChange={(e) => setBillingFormData(p => ({ ...p, address: e.target.value }))} />
                 </div>
                 <div className="form-group">
+                  <label className="form-label">Tax ID / GST</label>
+                  <input type="text" className="form-input" data-testid="settings-tax-id" value={billingFormData.taxId} onChange={(e) => setBillingFormData(p => ({ ...p, taxId: e.target.value }))} />
+                </div>
+                <div className="form-group">
                   <label className="form-label">UPI ID (For QR Fee Collections)</label>
                   <input type="text" className="form-input" value={billingFormData.upiId} onChange={(e) => setBillingFormData(p => ({ ...p, upiId: e.target.value }))} />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Receipt Footer Note</label>
-                  <input type="text" className="form-input" value={billingFormData.receiptFooter} onChange={(e) => setBillingFormData(p => ({ ...p, receiptFooter: e.target.value }))} />
+                  <input type="text" className="form-input" data-testid="settings-receipt-footer" value={billingFormData.receiptFooter} onChange={(e) => setBillingFormData(p => ({ ...p, receiptFooter: e.target.value }))} />
+                </div>
+                <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                  <label className="form-label" htmlFor="settings-receipt-instructions">Receipt instructions</label>
+                  <textarea
+                    id="settings-receipt-instructions"
+                    className="form-input"
+                    data-testid="settings-receipt-instructions"
+                    rows={4}
+                    value={billingFormData.receiptInstructions}
+                    onChange={(e) => setBillingFormData(p => ({ ...p, receiptInstructions: e.target.value }))}
+                    placeholder={"Fees are non-refundable.\nKeep this receipt for your records."}
+                  />
+                  <span style={{ display: 'block', marginTop: '6px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                    Each line is printed as a bullet under Instructions on the receipt. These defaults are used until you save your own. Clear the box if you do not want an Instructions section.
+                  </span>
                 </div>
               </div>
 
@@ -3007,6 +3042,8 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
       </AnimatePresence>
 
       <EnquiryQrCard />
+
+      <EnquiryFormCard />
 
       {/* ======================================================== */}
       {/* MODAL: SETUP WIZARD (EDIT / RESUME MODE) */}

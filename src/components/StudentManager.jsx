@@ -25,6 +25,7 @@ import { uploadAttachmentFile, makeAttachmentKey, isPdfAttachment } from '../uti
 import { addFilesToDocuments, removeDocumentFile, groupStudentDocuments } from '../utils/studentDocuments';
 import { useBackClose } from '../utils/useBackClose';
 import { useStudentPhoto } from '../utils/useStudentPhoto';
+import { StudentPhotoThumb, StudentPhotoLightbox } from './StudentPhotoThumb';
 import { getCanonicalShifts, matchesShiftFilter, isShiftInPlan, resolveCanonicalShift, normalizeShiftName } from '../utils/shiftUtils';
 import { getPlanBasePrice, getPlanDefaultDuration, planPricingUnit, durationUnitWord, formatDurationLabel } from '../utils/pricingCalculator';
 import { isVoidedPayment } from '../utils/paymentVoid';
@@ -248,6 +249,7 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
   const [shiftFilter, setShiftFilter] = useState('All');
   const [activeDrawerTab, setActiveDrawerTab] = useState('history');
   const profilePhoto = useStudentPhoto(selectedStudent);
+  const [photoLightbox, setPhotoLightbox] = useState(null);
   const [viewMode, setViewMode] = useState('active'); // active | waiting 
   const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
   const [isExcelViewOpen, setIsExcelViewOpen] = useState(false);
@@ -1127,8 +1129,11 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
                 </span>
               )}
               <span className="st-c st-name">
-                <b title={student.name}>{student.name}</b>
-                <small className="st-meta">{student.id} • {student.phone}</small>
+                <StudentPhotoThumb student={student} onOpen={(src, name) => setPhotoLightbox({ src, name })} />
+                <span className="st-name-text">
+                  <b title={student.name}>{student.name}</b>
+                  <small className="st-meta">{student.id} • {student.phone}</small>
+                </span>
               </span>
               <span className="st-c st-branch">{getBranchCode(student.branchId)}</span>
               <span className="st-c st-seat">
@@ -1305,7 +1310,9 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
               <div className="modal-header sp-header">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
                   {profilePhoto
-                    ? <img src={profilePhoto} alt={`${selectedStudent.name || 'Student'} photo`} className="sp-avatar" style={{ width: '48px', height: '48px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+                    ? <button type="button" className="sp-avatar" aria-label={`Open photo of ${selectedStudent.name || 'Student'}`} onClick={(e) => { e.stopPropagation(); setPhotoLightbox({ src: profilePhoto, name: selectedStudent.name }); }} style={{ width: '48px', height: '48px', borderRadius: '50%', padding: 0, border: 'none', background: 'transparent', cursor: 'pointer', flexShrink: 0 }}>
+                        <img src={profilePhoto} alt={`${selectedStudent.name || 'Student'} photo`} style={{ width: '48px', height: '48px', borderRadius: '50%', objectFit: 'cover', display: 'block' }} />
+                      </button>
                     : <div className="sp-avatar" style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--brand-primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '18px', flexShrink: 0 }}>
                         {((selectedStudent.name || 'S').charAt(0)).toUpperCase()}
                       </div>}
@@ -2264,6 +2271,12 @@ export const StudentManager = ({ onOpenNewStudent, selectedStudent, setSelectedS
           </motion.div>
         )}
       </AnimatePresence>
+
+      <StudentPhotoLightbox
+        src={photoLightbox?.src}
+        name={photoLightbox?.name}
+        onClose={() => setPhotoLightbox(null)}
+      />
 
       {/* Document Viewer Modal */}
       <AnimatePresence>

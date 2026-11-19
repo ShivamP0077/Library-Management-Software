@@ -20,6 +20,8 @@ test('payment view marks a shared desk mixed only when states differ', () => {
   assert.equal(paymentStatusClass('mixed'), 'seat-mixed');
   assert.equal(occupancyStatusClass({ isOccupied: true, gender: 'Female' }), 'seat-occupied-female');
   assert.equal(occupancyStatusClass({ isMaintenance: true, isOccupied: true }), 'seat-maintenance');
+  assert.equal(occupancyStatusClass({ isUnavailable: true }), 'seat-available');
+  assert.equal(occupancyStatusClass({ isUnavailable: true, isMaintenance: true }), 'seat-maintenance');
 });
 
 test('photo search filters by name or desk', () => {
@@ -53,7 +55,7 @@ test('seat map exposes three views with solid hex fills and white numbers', () =
   assert.match(jsx, /holdsDesk\(student, settings, todayIST\(\)\)/);
   assert.doesNotMatch(jsx, />Current</);
 
-  for (const hex of Object.values(SEAT_COLORS.occupancy)) {
+  for (const hex of [SEAT_COLORS.occupancy.male, SEAT_COLORS.occupancy.female, SEAT_COLORS.occupancy.maintenance, SEAT_COLORS.occupancy.vacant]) {
     assert.match(css, new RegExp(hex));
   }
   for (const hex of Object.values(SEAT_COLORS.payment)) {
@@ -62,7 +64,14 @@ test('seat map exposes three views with solid hex fills and white numbers', () =
   assert.match(css, /\.seat-3d \.seat-number \{ color: #ffffff/);
   assert.match(css, /\.seat-occupied-male \{ background: #2563eb/);
   assert.match(css, /\.seat-occupied-female \{ background: #db2777/);
-  assert.match(css, /\.seat-available \{ background: #16a34a/);
+  assert.match(css, /\.seat-available \{ background: #f8fafc/);
+  assert.match(css, /\.seat-3d\.seat-available \.seat-number \{ color: #0f172a/);
+  assert.match(css, /html\[data-theme="dark"\] \.seat-3d\.seat-available \.seat-number \{ color: #0f172a/);
+  assert.match(jsx, /totalSeats - occupiedCount - maintenanceCount/);
+  assert.doesNotMatch(jsx, /Unavailable \(/);
+  assert.doesNotMatch(jsx, /Mark Unavailable/);
+  assert.doesNotMatch(jsx, /Desk Unavailable/);
+  assert.match(jsx, /border: '1px solid #cbd5e1'/);
   assert.match(css, /\.seat-paid \{ background: #16a34a/);
   assert.match(css, /\.seat-unpaid \{ background: #dc2626/);
   assert.match(css, /\.seat-mixed \{ background: #eab308/);

@@ -428,9 +428,11 @@ body {
   z-index: 10;
 }
 
-/* Seat Status Colors — solid fills; seat numbers stay white */
+/* Seat colours. Occupied, payment, and maintenance numbers stay white.
+   Vacant occupancy seats are grey-white, so their numbers must be dark. */
 .seat-3d .seat-number { color: #ffffff; font-weight: 700; }
-.seat-available { background: #16a34a; border-color: #15803d; color: #ffffff; }
+.seat-available { background: #f8fafc; border-color: #cbd5e1; color: #0f172a; }
+.seat-3d.seat-available .seat-number { color: #0f172a; }
 .seat-disabled { background: #e5e7eb; border-color: #d1d5db; color: #9ca3af; cursor: not-allowed; }
 .seat-occupied-male { background: #2563eb; border-color: #1d4ed8; color: #ffffff; }
 .seat-occupied-female { background: #db2777; border-color: #be185d; color: #ffffff; }
@@ -1030,6 +1032,8 @@ html[data-theme="dark"] {
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
   --shadow-md: 0 8px 16px rgba(0, 0, 0, 0.35);
 }
+html[data-theme="dark"] .seat-3d.seat-available { background: #f8fafc; border-color: #cbd5e1; color: #0f172a; }
+html[data-theme="dark"] .seat-3d.seat-available .seat-number { color: #0f172a; }
 html[data-theme="dark"] body { background: var(--bg-main); color: var(--text-primary); }
 html[data-theme="dark"] .btn-primary { color: #1c1917; }
 html[data-theme="dark"] #session-bar { background: #1c1917 !important; color: #fafaf9 !important; }

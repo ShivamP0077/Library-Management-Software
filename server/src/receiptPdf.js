@@ -27,7 +27,7 @@ const PAPER = rgb(1, 1, 1);
 let fontBytesCache;
 let defaultLogoCache;
 
-async function fontBytes() {
+export async function fontBytes() {
   if (!fontBytesCache) {
     fontBytesCache = {
       regular: await fs.readFile(path.join(fontDir, 'DejaVuSans.ttf')),
@@ -37,7 +37,7 @@ async function fontBytes() {
   return fontBytesCache;
 }
 
-async function defaultLogoBytes() {
+export async function defaultLogoBytes() {
   if (!defaultLogoCache) defaultLogoCache = await fs.readFile(DEFAULT_LOGO);
   return defaultLogoCache;
 }
@@ -80,7 +80,7 @@ function mergeBranding(settings, library, branch) {
   };
 }
 
-async function loadLogoSource(spec) {
+export async function loadLogoSource(spec) {
   if (/^data:image\/(png|jpe?g|gif|webp);base64,/i.test(spec)) {
     if (spec.length > LOGO_MAX * 2) return null;
     const b64 = spec.slice(spec.indexOf(',') + 1).replace(/\s/g, '');
@@ -115,7 +115,7 @@ async function loadLogoSource(spec) {
   return null;
 }
 
-async function embedImage(pdf, bytes) {
+export async function embedImage(pdf, bytes) {
   if (!bytes?.length) return null;
   const png = bytes[0] === 0x89 && bytes[1] === 0x50;
   const jpg = bytes[0] === 0xff && bytes[1] === 0xd8;

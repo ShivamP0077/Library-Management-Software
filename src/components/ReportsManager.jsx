@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import { api } from '../utils/api';
 import toast from 'react-hot-toast';
 import { isVoidedPayment, sumActivePayments } from '../utils/paymentVoid';
-import { REPORT_SECTIONS, resolveDateRange, branchFilterState, sectionFilterState } from '../utils/reportBuilder';
+import { REPORT_SECTIONS, resolveDateRange, branchFilterState, sectionFilterState, reportDownloadFilename, reportSectionById } from '../utils/reportBuilder';
 
 const PRESETS = [
   { id: 'last7', label: 'Last 7 days' },
@@ -23,7 +23,7 @@ const firstOfMonth = (dateStr) => {
 };
 
 export const ReportsManager = () => {
-  const { payments, expenses, students, branches, sections, activeBranchId, todayStr, hasPermission } = useLibrary();
+  const { payments, expenses, students, branches, sections, settings, activeBranchId, todayStr, hasPermission } = useLibrary();
   const showNetProfit = hasPermission('reports', 'netProfit');
   const canExport = hasPermission('reports', 'export');
   const showCollections = hasPermission('payments', 'view');
@@ -62,7 +62,17 @@ export const ReportsManager = () => {
         sections: picked.join(','),
         today: todayStr || '',
       });
-      await api.downloadFile(`/reports/custom.${format}?${q}`, `report.${format}`);
+      const branchName = branches.find(b => b.id === effectiveBranch)?.name || '';
+      const fallback = reportDownloadFilename({
+        libraryName: settings?.name || 'My Library OS',
+        branchName: !effectiveBranch || effectiveBranch === 'all' ? '' : branchName,
+        branchId: effectiveBranch || 'all',
+        sections: picked.map(id => reportSectionById(id)?.label || id),
+        from: fromDate,
+        to: toDate,
+        ext: format,
+      });
+      await api.downloadFile(`/reports/custom.${format}?${q}`, fallback);
     } catch (e) {
       toast.error(e.message || 'Download failed');
     }

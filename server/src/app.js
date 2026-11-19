@@ -15,7 +15,7 @@ export function createApp() {
     .flatMap(value => String(value || '').split(','))
     .map(s => s.trim().replace(/\/+$/, ''))
     .filter(Boolean);
-  app.use(cors({ origin: corsOrigins.includes('*') ? true : corsOrigins }));
+  app.use(cors({ origin: corsOrigins.includes('*') ? true : corsOrigins, exposedHeaders: ['Content-Disposition'] }));
   app.set('trust proxy', 1);
   // Issue #19: raw body for payment webhook HMAC (must be before express.json).
   app.use('/api/payments/webhook', express.raw({ type: '*/*' }), createPaymentsWebhookRouter());

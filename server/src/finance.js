@@ -5,13 +5,14 @@
  */
 import mongoose from 'mongoose';
 import express from 'express';
-import { reportToPdf } from './pdf.js';
 import { sheetsToXlsx } from './xlsx.js';
 import {
   REPORT_SECTIONS, parseReportSections, resolveDateRange, inDateRange, matchesScope, paymentKind, studentJoinDate, cancellationDetail,
+  reportDownloadFilename, contentDisposition, formatReportMoney, formatReportStamp,
 } from '../../src/utils/reportBuilder.js';
+import { renderCustomReportPdf } from './reportPdf.js';
 import tenantGuard, { applyBulkWriteGuard } from './tenantGuard.js';
-import { Library, models } from './models.js';
+import { Library, Settings, models } from './models.js';
 import { normalizePaymentReferences, referenceError, trimReference } from '../../src/utils/paymentReference.js';
 import { assertModule, canSeeNetProfit, redactPnl, staffContext } from './staffAccess.js';
 
@@ -349,20 +350,45 @@ async function staffCanViewReports(req) {
 
 const scoped = (row, branchId, sectionId) => matchesScope(row?.branchId, branchId) && matchesScope(row?.sectionId, sectionId);
 
+function lookupName(list, id) {
+  const key = String(id ?? '');
+  const hit = (list || []).find(row => String(row?.id ?? '') === key || String(row?._key ?? '') === key);
+  return hit?.name || '';
+}
+
+function branchCell(id, branches) {
+  if (!id || id === 'all') return 'All Branches';
+  if (id === 'shared') return 'Shared';
+  return lookupName(branches, id) || id;
+}
+
+function sectionCell(id, sections) {
+  if (!id || id === 'all') return 'All Sections';
+  return lookupName(sections, id) || id;
+}
+
 /** Custom report. Sections are only the approved list. Shared branch/section rows count once, and only under All. */
-export async function buildCustomReport(tenantId, { preset, from, to, today, branchId = 'all', sectionId = 'all', sections } = {}) {
+export async function buildCustomReport(tenantId, { preset, from, to, today, branchId = 'all', sectionId = 'all', sections, now } = {}) {
   const ids = parseReportSections(sections);
   const period = resolveDateRange(preset, { today, from, to });
   const branch = branchId || 'all';
   const section = sectionId || 'all';
-  const [payments, expenses, instances, students, archived, library] = await Promise.all([
+  const [payments, expenses, instances, students, archived, library, branchRows, sectionRows, settings] = await Promise.all([
     models.payments.find({ tenantId }).lean(),
     models.expenses.find({ tenantId }).lean(),
     ExpenseInstance.find({ tenantId }).lean(),
     models.students.find({ tenantId }).lean(),
     models.archivedStudents.find({ tenantId }).lean(),
     Library.findOne({ libraryId: tenantId }).lean(),
+    models.branches.find({ tenantId }).lean(),
+    models.sections.find({ tenantId }).lean(),
+    Settings.findOne({ tenantId }).lean(),
   ]);
+  const studentLabel = (id) => {
+    const key = String(id ?? '');
+    const hit = [...students, ...archived].find(s => String(s?.id ?? '') === key || String(s?._key ?? '') === key);
+    return hit?.name || id || '';
+  };
   const payRows = payments.filter(p => inDateRange(p.date, period.from, period.to) && scoped(p, branch, section));
   const expRows = expenses.filter(e => inDateRange(e.date, period.from, period.to) && scoped(e, branch, section));
   const seenExpense = new Set();
@@ -373,7 +399,7 @@ export async function buildCustomReport(tenantId, { preset, from, to, today, bra
     return true;
   });
   let feeCollections = 0, refunds = 0, oneTime = 0, recurringPaid = 0;
-  const paymentTable = [['Date', 'Receipt', 'Student', 'Kind', 'Method', 'Amount (INR)']];
+  const paymentTable = [['Date', 'Receipt', 'Student', 'Kind', 'Method', 'Amount (₹)']];
   for (const p of payRows) {
     const kind = paymentKind(p);
     const n = Number(p.netTotal ?? p.amount ?? 0);
@@ -381,14 +407,14 @@ export async function buildCustomReport(tenantId, { preset, from, to, today, bra
       if (kind === 'Refund') refunds += Math.abs(n);
       else if (kind === 'Collection') feeCollections += n;
     }
-    paymentTable.push([p.date || '', p.receiptNo || p.id || '', p.studentId || '', kind, p.method || '', n]);
+    paymentTable.push([p.date || '', p.receiptNo || p.id || '', studentLabel(p.studentId), kind, p.method || '', n]);
   }
-  const expenseTable = [['Date', 'Category', 'Branch', 'Shared', 'Amount (INR)']];
+  const expenseTable = [['Date', 'Category', 'Branch', 'Shared', 'Amount (₹)']];
   for (const e of uniqueExp) {
     const a = Number(e.amount || 0);
     oneTime += a;
     const shared = !e.branchId || e.branchId === 'all' || e.branchId === 'shared';
-    expenseTable.push([e.date || '', e.category || 'Other', e.branchId || 'all', shared ? 'Yes' : 'No', a]);
+    expenseTable.push([e.date || '', e.category || 'Other', branchCell(e.branchId, branchRows), shared ? 'Yes' : 'No', a]);
   }
   for (const i of instances) {
     if (!scoped(i, branch, section)) continue;
@@ -396,7 +422,7 @@ export async function buildCustomReport(tenantId, { preset, from, to, today, bra
       if (!inDateRange(pay.date, period.from, period.to)) continue;
       const a = Number(pay.amount || 0);
       recurringPaid += a;
-      expenseTable.push([pay.date || '', i.category || 'Other', i.branchId || 'all', 'No', a]);
+      expenseTable.push([pay.date || '', i.category || 'Other', branchCell(i.branchId, branchRows), 'No', a]);
     }
   }
   const netFees = feeCollections - refunds;
@@ -404,45 +430,54 @@ export async function buildCustomReport(tenantId, { preset, from, to, today, bra
   const netProfit = netFees - expenseTotal;
   const blocks = {};
   if (ids.includes('payments')) blocks.payments = { title: 'All Student Payments', rows: paymentTable };
-  if (ids.includes('revenue')) blocks.revenue = { title: 'Revenue', rows: [['Line', 'Amount (INR)'], ['Fee collections', feeCollections], ['Refunds', refunds], ['Net fees', netFees]] };
-  if (ids.includes('expenses')) blocks.expenses = { title: 'Expenses', rows: [...expenseTable, [], ['One-time', oneTime], ['Recurring paid', recurringPaid], ['Total expenses', expenseTotal]] };
-  if (ids.includes('net')) blocks.net = { title: 'Net Profit', rows: [['Line', 'Amount (INR)'], ['Net fees', netFees], ['Total expenses', expenseTotal], ['Net profit', netProfit]] };
+  if (ids.includes('revenue')) blocks.revenue = { title: 'Revenue', rows: [['Line', 'Amount (₹)'], ['Fee collections', feeCollections], ['Refunds', refunds], ['Net fees', netFees]] };
+  if (ids.includes('expenses')) blocks.expenses = { title: 'Expenses', rows: [...expenseTable, [], ['One-time', '', '', '', oneTime], ['Recurring paid', '', '', '', recurringPaid], ['Total expenses', '', '', '', expenseTotal]] };
+  if (ids.includes('net')) blocks.net = { title: 'Net Profit', rows: [['Line', 'Amount (₹)'], ['Net fees', netFees], ['Total expenses', expenseTotal], ['Net profit', netProfit]] };
   const activeStudents = students.filter(s => scoped(s, branch, section) && s.status !== 'Archived');
-  if (ids.includes('newStudents')) {
-    const rows = [['Name', 'Seat', 'Branch', 'Section', 'Start date']];
-    for (const s of activeStudents) {
-      const joined = studentJoinDate(s);
-      if (!inDateRange(joined, period.from, period.to)) continue;
-      rows.push([s.name || '', s.seatNo || '', s.branchId || '', s.sectionId || '', joined]);
-    }
-    blocks.newStudents = { title: 'New Students', rows };
+  let newInPeriod = 0;
+  const newRows = [['Name', 'Seat', 'Branch', 'Section', 'Start date']];
+  for (const s of activeStudents) {
+    const joined = studentJoinDate(s);
+    if (!inDateRange(joined, period.from, period.to)) continue;
+    newInPeriod += 1;
+    newRows.push([s.name || '', s.seatNo || '', branchCell(s.branchId, branchRows), sectionCell(s.sectionId, sectionRows), joined]);
   }
+  if (ids.includes('newStudents')) blocks.newStudents = { title: 'New Students', rows: newRows };
   if (ids.includes('studentList')) {
     const rows = [['Name', 'Seat number', 'Branch', 'Section', 'Status']];
-    for (const s of activeStudents) rows.push([s.name || '', s.seatNo || '', s.branchId || '', s.sectionId || '', s.status || 'Active']);
+    for (const s of activeStudents) rows.push([s.name || '', s.seatNo || '', branchCell(s.branchId, branchRows), sectionCell(s.sectionId, sectionRows), s.status || 'Active']);
     blocks.studentList = { title: 'Student List + Seat Numbers', rows };
   }
-  if (ids.includes('cancelled')) {
-    const rows = [['Name', 'Seat', 'Date', 'Outcome', 'Refund (INR)', 'Reason']];
-    const pool = [...students.filter(s => s.status === 'Cancelled'), ...archived];
-    const seen = new Set();
-    for (const s of pool) {
-      if (!scoped(s, branch, section)) continue;
-      const key = String(s.id || s._key || s._id);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const c = cancellationDetail(s);
-      if (!inDateRange(c.date, period.from, period.to)) continue;
-      rows.push([s.name || '', s.seatNo || '', c.date || '', c.outcome, c.refundAmount, c.reason]);
-    }
-    blocks.cancelled = { title: 'Cancelled Students', rows };
+  const cancelledRows = [['Name', 'Seat', 'Date', 'Outcome', 'Refund (₹)', 'Reason']];
+  let cancelledInPeriod = 0;
+  const pool = [...students.filter(s => s.status === 'Cancelled'), ...archived];
+  const seen = new Set();
+  for (const s of pool) {
+    if (!scoped(s, branch, section)) continue;
+    const key = String(s.id || s._key || s._id);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const c = cancellationDetail(s);
+    if (!inDateRange(c.date, period.from, period.to)) continue;
+    cancelledInPeriod += 1;
+    cancelledRows.push([s.name || '', s.seatNo || '', c.date || '', c.outcome, c.refundAmount, c.reason]);
   }
+  if (ids.includes('cancelled')) blocks.cancelled = { title: 'Cancelled Students', rows: cancelledRows };
   const ordered = ids.filter(id => blocks[id]).map(id => blocks[id]);
+  const generated = now ? new Date(now) : new Date();
   return {
-    libraryName: library?.name || 'My Library OS',
-    period: { ...period, branchId: branch, sectionId: section },
+    libraryName: settings?.name || library?.name || 'My Library OS',
+    period: {
+      ...period,
+      branchId: branch,
+      sectionId: section,
+      branchName: branch === 'all' ? 'All Branches' : (lookupName(branchRows, branch) || branch),
+      sectionName: section === 'all' ? 'All Sections' : (lookupName(sectionRows, section) || section),
+    },
     sections: ids.map(id => REPORT_SECTIONS.find(s => s.id === id).label),
     totals: { feeCollections, refunds, netFees, oneTime, recurringPaid, expenseTotal, netProfit },
+    studentSummary: { active: activeStudents.length, newInPeriod, cancelledInPeriod },
+    generatedAt: generated.toISOString(),
     blocks: ordered,
   };
 }
@@ -464,33 +499,55 @@ function redactCustomReport(report, ctx) {
 }
 
 
+function summaryRows(report, { money = false } = {}) {
+  const p = report.period || {};
+  const t = report.totals || {};
+  const s = report.studentSummary || {};
+  const amount = (n) => (money ? formatReportMoney(n) : n);
+  const rows = [
+    ['Library', report.libraryName || 'My Library OS'],
+    ['Branch', p.branchName || 'All Branches'],
+    ['Section', p.sectionName || 'All Sections'],
+    ['Date range', `${p.from || ''} to ${p.to || ''}`],
+    ['Generated', formatReportStamp(report.generatedAt) || ''],
+    [],
+    ['Financial summary', money ? '' : 'Amount (₹)'],
+    ['Fee collections', amount(t.feeCollections)],
+    ['Refunds', amount(t.refunds)],
+    ['Net fees', amount(t.netFees)],
+    ['One-time expenses', amount(t.oneTime)],
+    ['Recurring paid', amount(t.recurringPaid)],
+    ['Total expenses', amount(t.expenseTotal)],
+  ];
+  if (t.netProfit !== undefined) rows.push(['Net profit', amount(t.netProfit)]);
+  rows.push(
+    [],
+    ['Student summary', 'Count'],
+    ['Active', s.active ?? 0],
+    ['New in period', s.newInPeriod ?? 0],
+    ['Cancelled in period', s.cancelledInPeriod ?? 0],
+    [],
+  );
+  return rows;
+}
+
 export function reportToCsv(report) {
-  const rows = [['My Library OS', report.libraryName], ['From', report.period.from], ['To', report.period.to], ['Branch', report.period.branchId], ['Section', report.period.sectionId], []];
+  const rows = summaryRows(report, { money: true });
   for (const b of report.blocks) {
     rows.push([b.title]);
     rows.push(...b.rows);
     rows.push([]);
   }
-  return toCsv(rows);
+  return `\uFEFF${toCsv(rows)}`;
 }
 
-export function reportToPdfBuffer(report) {
-  const lines = [
-    `Period: ${report.period.from} to ${report.period.to}`,
-    `Branch: ${report.period.branchId}    Section: ${report.period.sectionId}`,
-    `Sections: ${report.sections.join(', ')}`,
-    '',
-  ];
-  for (const b of report.blocks) {
-    lines.push(b.title);
-    for (const row of b.rows) lines.push(row.map(c => (c === '' || c === undefined ? '' : String(c))).join(' | '));
-    lines.push('');
-  }
-  return reportToPdf(lines.join('\n'), { title: 'My Library OS', subtitle: report.libraryName });
+export async function reportToPdfBuffer(report, assets = {}) {
+  return renderCustomReportPdf(report, assets);
 }
 
 export function reportToXlsx(report) {
-  return sheetsToXlsx(report.blocks.map(b => ({ name: b.title, rows: b.rows })));
+  const sheets = [{ name: 'Summary', rows: summaryRows(report) }, ...report.blocks.map(b => ({ name: b.title, rows: b.rows }))];
+  return sheetsToXlsx(sheets);
 }
 
 /* ------------------------------------------------------------------ routes */
@@ -605,21 +662,28 @@ export function createFinanceRouter() {
       throw e;
     }
     report = redactCustomReport(report, await staffContext(req));
-    const stamp = `${report.period.from || 'all'}-${report.period.to || 'all'}`;
-    if (format === 'csv') {
-      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-      res.setHeader('Content-Disposition', `attachment; filename="report-${stamp}.csv"`);
-      return res.send(reportToCsv(report));
-    }
-    if (format === 'pdf') {
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="report-${stamp}.pdf"`);
-      return res.send(reportToPdfBuffer(report));
-    }
-    if (format === 'xlsx') {
-      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition', `attachment; filename="report-${stamp}.xlsx"`);
-      return res.send(reportToXlsx(report));
+    if (format === 'csv' || format === 'pdf' || format === 'xlsx') {
+      const filename = reportDownloadFilename({
+        libraryName: report.libraryName,
+        branchName: report.period.branchName,
+        branchId: report.period.branchId,
+        sections: report.sections,
+        from: report.period.from,
+        to: report.period.to,
+        ext: format,
+      });
+      const types = {
+        csv: 'text/csv; charset=utf-8',
+        pdf: 'application/pdf',
+        xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      };
+      res.setHeader('Content-Type', types[format]);
+      res.setHeader('Content-Disposition', contentDisposition(filename));
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+      if (format === 'csv') return res.send(reportToCsv(report));
+      if (format === 'xlsx') return res.send(reportToXlsx(report));
+      const settings = await Settings.findOne({ tenantId: req.tenantId }).lean();
+      return res.send(await reportToPdfBuffer(report, { logo: settings?.logo }));
     }
     res.json(report);
   });

@@ -8,6 +8,7 @@ const RAW_BASE = (viteEnv?.VITE_API_URL || '').trim().replace(/\/+$/, '');
 export const API_BASE = RAW_BASE ? (RAW_BASE.endsWith('/api') ? RAW_BASE : `${RAW_BASE}/api`) : '/api';
 
 import { parseJsonSafe } from './parseJsonSafe';
+import { parseContentDisposition } from './reportBuilder.js';
 import { requestWithRetry, RequestError } from './request';
 import { createSyncQueue as makeSyncQueue } from './syncQueue.js';
 export { parseJsonSafe, requestWithRetry, RequestError };
@@ -51,7 +52,44 @@ export async function apiRequest(path, { method = 'GET', body, signal, retries =
   return data;
 }
 
-/** Download an authenticated file (CSV etc.) from the API and save it in the browser. */
+function mimeForDownload(name, headerType) {
+  const header = String(headerType || '').split(';')[0].trim();
+  if (header && header !== 'application/octet-stream') return header;
+  const ext = String(name || '').split('.').pop().toLowerCase();
+  if (ext === 'pdf') return 'application/pdf';
+  if (ext === 'csv') return 'text/csv';
+  if (ext === 'xlsx') return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  if (ext === 'txt') return 'text/plain';
+  return header || 'application/octet-stream';
+}
+
+function wantsShareSheet() {
+  if (typeof navigator === 'undefined') return false;
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+}
+
+async function saveDownload(blob, name) {
+  const file = new File([blob], name, { type: blob.type || 'application/octet-stream' });
+  const nav = typeof navigator !== 'undefined' ? navigator : null;
+  if (wantsShareSheet() && nav?.canShare?.({ files: [file] }) && nav.share) {
+    try {
+      await nav.share({ files: [file], title: name });
+      return;
+    } catch (err) {
+      if (err?.name === 'AbortError') return;
+    }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** Download an authenticated file from the API and save it in the browser. */
 export async function downloadFile(path, fallbackName = 'export.csv') {
   const headers = {};
   const token = getToken();
@@ -60,10 +98,10 @@ export async function downloadFile(path, fallbackName = 'export.csv') {
   if (tenantContext.readOnly) headers['X-Read-Only'] = '1';
   const res = await fetch(`${API_BASE}${path}`, { headers });
   if (!res.ok) { let msg = `Download failed (${res.status})`; try { msg = (await res.json()).error || msg; } catch { /* not json */ } throw new Error(msg); }
-  const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '')?.[1] || fallbackName;
-  const url = URL.createObjectURL(await res.blob());
-  const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const name = parseContentDisposition(res.headers.get('Content-Disposition') || '') || fallbackName;
+  const type = mimeForDownload(name, res.headers.get('Content-Type'));
+  const buf = await res.arrayBuffer();
+  await saveDownload(new Blob([buf], { type }), name);
 }
 
 export const api = {
@@ -195,14 +233,7 @@ export const api = {
   payExpenseInstance: (id, body) => apiRequest(`/expense-instances/${encodeURIComponent(id)}/payments`, { method: 'POST', body }),
   pnl: (q = '') => apiRequest(`/reports/pnl${q}`),
   downloadCsv: async (path, filename) => api.downloadFile(path, filename),
-  downloadFile: async (path, filename) => {
-    const headers = {}; const t = getToken(); if (t) headers.Authorization = `Bearer ${t}`;
-    if (tenantContext.libraryId) headers['X-Library-Id'] = tenantContext.libraryId;
-    const res = await fetch(`${API_BASE}${path}`, { headers });
-    if (!res.ok) throw new Error(`Download failed (${res.status})`);
-    const url = URL.createObjectURL(await res.blob());
-    const a = document.createElement('a'); a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url);
-  },
+  downloadFile: (path, filename) => downloadFile(path, filename),
   // Super admin
   adminLibraries: () => apiRequest('/admin/libraries'),
   adminPlans: () => apiRequest('/admin/plans'),

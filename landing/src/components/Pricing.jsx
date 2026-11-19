@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Check } from 'lucide-react';
-import { APP_URL, DEMO_HREF } from '../config.js';
+import { APP_URL, DEMO_PATH } from '../config.js';
 import { catalogueUrl, formatInrFromMinor, intervalPrice, recommendedId } from '../planCatalogue.js';
 import { Reveal, SectionHeading } from './ui.jsx';
 
@@ -16,8 +16,8 @@ const custom = {
   note: 'talk to us',
   desc: 'For operators running many client libraries.',
   features: ['Everything in Growth', 'Super admin overview across clients', 'Per-client data isolation', 'Onboarding help', 'Custom terms'],
-  cta: ['Book a demo', DEMO_HREF],
-  secondary: ['Contact sales', DEMO_HREF],
+  cta: ['Book a demo', DEMO_PATH],
+  secondary: ['Contact sales', DEMO_PATH],
 };
 
 export default function Pricing() {

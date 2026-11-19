@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { DEMO_PATH } from './config.js';
 
 /** Public origin used in canonical and social tags. Never empty. */
 export const SITE_ORIGIN = (import.meta.env.VITE_SITE_URL || 'https://mylibraryos.in').replace(/\/$/, '');
@@ -6,7 +7,7 @@ export const SITE_ORIGIN = (import.meta.env.VITE_SITE_URL || 'https://mylibraryo
 export const HOME_TITLE = 'My Library OS – library management software for study libraries in India';
 export const HOME_DESCRIPTION = HOME_TITLE;
 
-/** Path → document title. These are the only client routes besides home. */
+/** Path → document title for legal pages. Home and /demo are the other client routes. */
 export const LEGAL_ROUTES = {
   '/privacy': 'Privacy Policy | My Library OS',
   '/terms': 'Terms & Conditions | My Library OS',
@@ -21,6 +22,15 @@ const LEGAL_DESCRIPTIONS = {
   '/contact': 'Contact My Library OS by email. Bangalore, Karnataka, India.',
 };
 
+/** Public pages that are not legal documents. */
+export const SITE_ROUTES = {
+  [DEMO_PATH]: 'Book a demo | My Library OS',
+};
+
+const SITE_DESCRIPTIONS = {
+  [DEMO_PATH]: 'Request a My Library OS demo for your study library or reading room. Share your library name, city and seat capacity.',
+};
+
 export function normalizePath(pathname) {
   if (!pathname) return '/';
   const trimmed = pathname.replace(/\/+$/, '');
@@ -32,7 +42,7 @@ function readPath() {
 }
 
 function isKnownPath(path) {
-  return path === '/' || Object.prototype.hasOwnProperty.call(LEGAL_ROUTES, path);
+  return path === '/' || Object.prototype.hasOwnProperty.call(LEGAL_ROUTES, path) || Object.prototype.hasOwnProperty.call(SITE_ROUTES, path);
 }
 
 function setMeta(selector, attr, value) {
@@ -108,16 +118,16 @@ export function usePathname() {
   }, []);
 
   useEffect(() => {
-    const legalTitle = LEGAL_ROUTES[path];
-    document.title = legalTitle || HOME_TITLE;
-    const description = LEGAL_DESCRIPTIONS[path] || HOME_DESCRIPTION;
+    const pageTitle = LEGAL_ROUTES[path] || SITE_ROUTES[path];
+    document.title = pageTitle || HOME_TITLE;
+    const description = LEGAL_DESCRIPTIONS[path] || SITE_DESCRIPTIONS[path] || HOME_DESCRIPTION;
     const url = `${SITE_ORIGIN}${path === '/' ? '/' : path}`;
     setMeta('meta[name="description"]', 'content', description);
     setMeta('link[rel="canonical"]', 'href', url);
     setMeta('meta[property="og:url"]', 'content', url);
-    setMeta('meta[property="og:title"]', 'content', legalTitle || HOME_TITLE);
+    setMeta('meta[property="og:title"]', 'content', pageTitle || HOME_TITLE);
     setMeta('meta[property="og:description"]', 'content', description);
-    setMeta('meta[name="twitter:title"]', 'content', legalTitle || HOME_TITLE);
+    setMeta('meta[name="twitter:title"]', 'content', pageTitle || HOME_TITLE);
     setMeta('meta[name="twitter:description"]', 'content', description);
     const hashId = window.location.hash.slice(1);
     if (skipFirstScroll.current && path === '/' && !hashId) {

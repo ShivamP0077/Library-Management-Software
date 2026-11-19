@@ -173,7 +173,7 @@ GOOGLE_CLIENT_ID=
 |---|---|---|---|---|
 | `VITE_APP_URL` | recommended | `/app` | Target of the Sign in / Start free trial buttons | Local: `http://localhost:3001`. Production: `https://library-os-app.vercel.app` |
 | `VITE_SITE_URL` | recommended for production | empty | The landing's own public URL, used for canonical and social-preview tags at build time | Production: `https://library-os-ashy.vercel.app` (or your custom domain) |
-| `VITE_DEMO_EMAIL` | optional | `mylibraryosadmin@gmail.com` | Address for the "Book a demo" mailto link | Official support email |
+| `VITE_DEMO_EMAIL` | optional | `mylibraryosadmin@gmail.com` | Support address for the footer and legal/contact mailto links. Book a demo is `/demo`, not a mailto. | Official support email |
 
 ### Google sign-in (not set up yet)
 1. Google Cloud Console → APIs & Services → **OAuth consent screen**: set it up (External, app name, support email). While testing, add test users.
@@ -290,7 +290,7 @@ Careful: a local backend pointed at the live DB **is production data**.
   test/tenant-guard.test.js  tenant guard coverage
   test/migration.test.js  migration dry-run/apply/idempotency/collision tests
   render.yaml (repo root) Render blueprint
-/landing                  marketing site (src/components/*, src/config.js reads VITE_APP_URL / VITE_DEMO_EMAIL)
+/landing                  marketing site (src/components/*, src/config.js reads VITE_APP_URL / VITE_DEMO_EMAIL; Book a demo is /demo)
 ```
 
 ### Models (MongoDB, database `library_management`)

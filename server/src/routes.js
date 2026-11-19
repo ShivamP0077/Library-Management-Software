@@ -36,6 +36,7 @@ import { normalizeEmail, normalizeMobile, EMAIL_RE } from './identity.js';
 import { createSubscriptionRouter } from './subscription.js';
 import { requireActiveSubscription, requireFeature, refreshSubscriptionStatus, accessFor, toClientAccess } from './subscriptionAccess.js';
 import { createPublicEnquiryRouter, createTenantEnquiryRouter } from './enquiry.js';
+import { createPublicDemoRequestRouter, createDemoRequestAdminRouter } from './demoRequests.js';
 import { createPlanAdminRouter, createPublicPlanRouter, SoftwarePlan, checkBranchLimit, checkStaffLimit, checkDeskLimit } from './plans.js';
 import { createPaymentsAdminRouter } from './paymentsAdmin.js';
 import { createSystemWhatsappRouter } from './systemWhatsapp.js';
@@ -272,6 +273,7 @@ router.post('/auth/google', wrap(async (req, res) => {
 router.use(createPublicAccountRouter({ issueSession }));
 router.use(createSignupRouter({ issueSession })); // Issue #15 (off unless OWNER_SIGNUP_ENABLED=true)
 router.use(createPublicEnquiryRouter()); // public QR form; still accepts enquiries when the plan is locked
+router.use(createPublicDemoRequestRouter()); // public "Book a demo" form; no login, no email or WhatsApp
 router.use(createPublicSupportRouter()); // logged-out tickets in the same SupportTicket collection
 router.use(createPublicPlanRouter()); // read-only software-plan catalogue for the marketing site
 
@@ -320,6 +322,7 @@ router.post('/auth/change-password', wrap(async (req, res) => {
 const admin = express.Router();
 admin.use(requireRole('superadmin'));
 
+admin.use(createDemoRequestAdminRouter());
 admin.use(createInsightsRouter());
 admin.use(createPartnerAdminRouter());
 admin.use(createSupportAdminRouter());

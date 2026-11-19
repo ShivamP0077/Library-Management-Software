@@ -14,6 +14,8 @@
     { "source": "/refund", "destination": "/index.html" },
     { "source": "/refund/", "destination": "/index.html" },
     { "source": "/contact", "destination": "/index.html" },
-    { "source": "/contact/", "destination": "/index.html" }
+    { "source": "/contact/", "destination": "/index.html" },
+    { "source": "/demo", "destination": "/index.html" },
+    { "source": "/demo/", "destination": "/index.html" }
   ]
 }

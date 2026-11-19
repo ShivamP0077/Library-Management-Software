@@ -19,7 +19,7 @@ const GoogleIcon = () => (
 const ROLE_LABELS = { staff: 'Staff', client_admin: 'Co-admin', superadmin: 'Super Admin' };
 const roleLabel = (role) => ROLE_LABELS[role] || role || 'Staff';
 
-export function LoginScreen({ onContinueOffline }) {
+export function LoginScreen() {
   const { loginWithPassword, completeLogin, oauthError, googleSignupPending, clearGoogleSignupPending, googleResetToken, clearGoogleResetToken } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -486,23 +486,6 @@ export function LoginScreen({ onContinueOffline }) {
                 </div>
               </>
             )}
-          </div>
-        )}
-
-        {mode === 'login' && onContinueOffline && (
-          <div style={{ marginTop: 14, textAlign: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '14px 0 10px', color: 'var(--text-tertiary)', fontSize: 12 }}>
-              <div style={{ flex: 1, height: 1, background: 'var(--border-light, #e5e7eb)' }} /> or <div style={{ flex: 1, height: 1, background: 'var(--border-light, #e5e7eb)' }} />
-            </div>
-            <button
-              id="continue-offline-btn"
-              type="button"
-              className="btn btn-secondary"
-              onClick={onContinueOffline}
-              style={{ width: '100%', justifyContent: 'center', fontSize: 13 }}
-            >
-              ⚡ Continue in Local / Offline Mode
-            </button>
           </div>
         )}
 

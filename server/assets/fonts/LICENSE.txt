@@ -1,0 +1,6 @@
+DejaVu fonts, copyright Bitstream Inc. and others.
+The Bitstream Vera license and the DejaVu changes (public domain) apply.
+https://dejavu-fonts.github.io/License.html
+
+These files are embedded so student fee receipts can draw the rupee sign
+on hosts that do not ship a Unicode font.

@@ -260,6 +260,22 @@ export function createPlanAdminRouter() {
     await audit(req, 'plan.updated', { target: p.planId, detail: set });
     res.json(pubPlan(p));
   }));
+  r.delete('/plans/:planId', wrap(async (req, res) => {
+    const existing = await SoftwarePlan.findOne({ planId: req.params.planId }).lean();
+    if (!existing) return res.status(404).json({ error: 'Plan not found' });
+    const libraries = await Library.countDocuments({ planId: existing.planId });
+    if (libraries > 0) {
+      const noun = libraries === 1 ? 'library uses' : 'libraries use';
+      return res.status(409).json({
+        error: `${libraries} ${noun} this plan. Archive it instead of deleting.`,
+        code: 'plan_in_use',
+        libraries,
+      });
+    }
+    await SoftwarePlan.deleteOne({ planId: existing.planId });
+    await audit(req, 'plan.deleted', { target: existing.planId });
+    res.json({ ok: true, planId: existing.planId });
+  }));
   return r;
 }
 

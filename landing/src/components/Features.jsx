@@ -14,10 +14,10 @@ function SeatMini() {
       {Array.from({ length: 50 }).map((_, i) => (
         <m.span
           key={i}
-          initial={{ opacity: 0, scale: 0.6 }}
+          initial={{ opacity: 1, scale: 1 }}
           whileInView={{ opacity: 1, scale: 1 }}
           viewport={{ once: true }}
-          transition={{ delay: 0.15 + (i % 10) * 0.03 + Math.floor(i / 10) * 0.05, duration: 0.4 }}
+          transition={{ duration: 0.15 }}
           className={`aspect-square rounded-[5px] ${pick(i)}`}
         />
       ))}
@@ -37,10 +37,10 @@ function SplitMini() {
         {parts.map(([l, w, bg], i) => (
           <m.span
             key={l}
-            initial={{ scaleX: 0 }}
+            initial={{ scaleX: 1 }}
             whileInView={{ scaleX: 1 }}
             viewport={{ once: true }}
-            transition={{ delay: 0.2 + i * 0.15, duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+            transition={{ duration: 0.15 }}
             style={{ transformOrigin: 'left' }}
             className={`${w} ${bg} h-full`}
           />
@@ -80,10 +80,9 @@ export default function Features() {
           sub="The tools a study room uses every day, from the seat map to the monthly numbers."
         />
         <div className="mt-12 grid auto-rows-auto gap-4 md:mt-16 md:grid-cols-2 xl:grid-cols-4">
-          {features.map((f, i) => (
+          {features.map((f) => (
             <Reveal
               key={f.title}
-              delay={(i % 4) * 0.06}
               className={`group relative overflow-hidden rounded-3xl border p-6 transition-all duration-300 hover:-translate-y-1 sm:p-7 ${
                 f.feature
                   ? 'border-ink bg-ink text-white shadow-card'

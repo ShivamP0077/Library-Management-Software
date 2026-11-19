@@ -15,6 +15,7 @@ export default defineConfig(({ mode }) => {
     build: {
       target: 'es2020',
       chunkSizeWarningLimit: 1100,
+      modulePreload: false, // do not fetch the three.js hero chunk on first paint
     },
   };
 });

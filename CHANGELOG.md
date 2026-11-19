@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-19 (IST)
+
+- **Phase 1 deployed to production** (commit `a7cca3a`, 08:02 IST). The API on `lms-api-upgraded` now serves `https://api.mylibraryos.in` from this commit. Vercel production is on the same commit: `https://app.mylibraryos.in` (`dpl_3efZjBDcKE4j91b1qwYDjimfxvff`) and `https://mylibraryos.in` (`dpl_2XjSshDzqyprVTLC7HGVWBKs2YKE`). The #83 seat-lifecycle job is running; its first run released 0 allocation rows and cancelled 0 students. The #89 period-snapshot fields were already on student records. The #77 document-compression apply was not run, `WHATSAPP_JOBS_IN_WORKER` stays off, and #75 was not merged.
+
 ## 2026-11-18 (IST)
 
 - **Compress student document images** (branch `feat/compress-existing-documents`, not deployed). Almost all of the database size is base64 data URLs on `studentdocuments` (10 image files, about 27 MiB). New uploads of photos and ID scans are resized in the browser before they are stored: longest side about 1600px, JPEG quality about 75, photographs toward 200 KB and Aadhaar / student-id / other images toward 500 KB. If the browser cannot compress (or the file is a PDF, or the result would be larger), the original file is kept. Existing files can be recompressed with `npm run docs:compress` from `server/` (dry-run, local MongoDB only). `APPLY=1 npm run docs:compress:apply` writes one document at a time after appending the original to a rollback JSONL under `/workspace/backups/` (or `ROLLBACK_PATH`). `npm run docs:compress:rollback` restores that file (also dry-run unless `APPLY=1`). Both scripts refuse any MongoDB host other than `127.0.0.1` or `localhost`. The script was not run against production. The other collections are small text (no string field over 50 KB) and were left unchanged. Production apply and deploy need separate approval.

@@ -4,8 +4,7 @@ import { Library, models } from './models.js';
 import crypto from 'crypto';
 import { createEvolutionClient, evolutionConfigured, instanceNameFor, normalizePhone, webhookTokenFor, SYSTEM_INSTANCE } from './evolution.js';
 import { receiptReferenceText } from '../../src/utils/paymentReference.js';
-import { receiptView } from '../../src/utils/receipt.js';
-import { feeReceiptPdfLines, textToPdf } from './pdf.js';
+import { receiptDocument } from './receiptPdf.js';
 
 /* ---------------------------------------------------------------- Models */
 export const MESSAGE_TYPES = ['otp', 'admission_receipt', 'renewal_receipt', 'fee_reminder', 'expiry_reminder', 'test', 'fee_receipt', 'renewal_reminder', 'seat_info', 'custom'];
@@ -335,23 +334,7 @@ export function buildReceiptText(payment, student) {
   return lines.join('\n');
 }
 
-/** PDF attachment for an admission or renewal receipt. Same facts as the print slip, as plain lines. */
-export function receiptDocument(payment, student) {
-  const view = receiptView(payment, { student });
-  const lines = [
-    view.libraryName,
-    view.studentName ? `Student: ${view.studentName}` : '',
-    view.paidOnLine,
-    (view.period?.start || view.period?.end) ? `Period: ${view.period.start || '—'} to ${view.period.end || '—'}` : '',
-    view.planName ? `Plan: ${view.planName}` : '',
-    view.seatNo ? `Seat: ${view.seatNo}` : '',
-    ...feeReceiptPdfLines(payment),
-  ].filter(Boolean);
-  const buffer = textToPdf(lines.join('\n'));
-  const rawName = String(payment?.receiptNo || payment?._key || payment?.id || 'receipt');
-  const fileName = `${rawName.replace(/[^\w.-]+/g, '_')}.pdf`;
-  return { buffer, base64: buffer.toString('base64'), fileName, mimetype: 'application/pdf' };
-}
+export { receiptDocument };
 
 /* ---------------------------------------------------------------- Routes */
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -539,7 +522,7 @@ export async function sendManualMessage({ tenantId, libraryId, studentId, type, 
     const payment = await Payments.findOne({ tenantId, _key: String(receiptNo) }).lean();
     if (!payment || String(payment.studentId) !== String(studentId)) return { httpStatus: 404, error: 'Payment not found for this student' };
     if (!finalText) finalText = buildReceiptText(payment, student);
-    document = receiptDocument(payment, student);
+    document = await receiptDocument(payment, student, { tenantId });
   }
   const dedupeKey = `manual:${type}:${studentId}:${Date.now()}:${crypto.randomBytes(3).toString('hex')}`;
   const out = await send({ libraryId, type, to: student.phone, text: finalText, dedupeKey, consent: student.whatsappOptOut !== true, studentId: String(studentId), studentName: student.name, manual: true, document }, { client });
@@ -567,7 +550,7 @@ export async function sendReceipt({ tenantId, libraryId, receiptNo, type = 'admi
   if (!payment) return { httpStatus: 404, error: 'Payment not found' };
   const student = payment.studentId ? await Students.findOne({ tenantId, _key: String(payment.studentId) }).lean() : null;
   if (!student?.phone) return { httpStatus: 400, error: 'Student has no phone number' };
-  const document = receiptDocument(payment, student);
+  const document = await receiptDocument(payment, student, { tenantId });
   return send({ libraryId, type, to: student.phone, text: buildReceiptText(payment, student), dedupeKey: `receipt:${payment._key}`, consent: student.whatsappOptOut !== true, studentId: payment.studentId, studentName: student.name, document }, { client, ...(deps.messageDeps || {}) });
 }
 

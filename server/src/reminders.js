@@ -242,7 +242,7 @@ export async function autoSendReceipts(tenantId, payments, { retry = true } = {}
       continue;
     }
     try {
-      out.push(await sendWhatsappMessage({ libraryId: tenantId, type, to: s.phone, text: buildReceiptText(p, s), dedupeKey: `receipt:${key}`, consent: s.whatsappOptOut !== true, studentId: p.studentId, studentName: s.name, document: receiptDocument(p, s) }, receiptDeps));
+      out.push(await sendWhatsappMessage({ libraryId: tenantId, type, to: s.phone, text: buildReceiptText(p, s), dedupeKey: `receipt:${key}`, consent: s.whatsappOptOut !== true, studentId: p.studentId, studentName: s.name, document: await receiptDocument(p, s, { tenantId }) }, receiptDeps));
     } catch (e) { console.error('[receipts] send failed:', e.message); }
   }
   return out;

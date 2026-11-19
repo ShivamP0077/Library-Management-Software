@@ -1,5 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useLibrary } from '../context/LibraryContext';
+import { useAuth } from '../auth/AuthContext';
+import { BrandImageField } from './BrandImageField';
+import { DEFAULT_LIBRARY_LOGO } from '../utils/libraryLogo';
 import { motion } from 'framer-motion';
 import { Building2, Plus, Trash2, CheckCircle, Clock, Copy, Eye, FileText, CheckCircle2, ShieldCheck, X } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -51,6 +54,7 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
     plans, setPlans,
     students
   } = useLibrary();
+  const library = useAuth()?.library;
 
   // Draft Management
   const getDraft = () => {
@@ -66,7 +70,21 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
   const totalSteps = 8;
 
   // Wizard State
-  const [tempLibraryName, setTempLibraryName] = useState(draft?.tempLibraryName ?? (settings.name || ''));
+  const suggestedLibraryName = settings.name || library?.name || '';
+  const autoLibraryNameRef = useRef(suggestedLibraryName);
+  const [tempLibraryName, setTempLibraryName] = useState(draft?.tempLibraryName ?? suggestedLibraryName);
+
+  useEffect(() => {
+    const next = settings.name || library?.name || '';
+    setTempLibraryName((current) => {
+      if (current === '' || current === autoLibraryNameRef.current) {
+        autoLibraryNameRef.current = next;
+        return next;
+      }
+      return current;
+    });
+  }, [settings.name, library?.name]);
+  const [tempLogo, setTempLogo] = useState(draft?.tempLogo ?? (settings.logo || DEFAULT_LIBRARY_LOGO));
   const [tempBranches, setTempBranches] = useState(draft?.tempBranches ?? (branches.length > 0 ? [...branches] : []));
   const [tempSections, setTempSections] = useState(draft?.tempSections ?? (sections.length > 0 ? [...sections] : []));
   const [tempSeatTypes, setTempSeatTypes] = useState(draft?.tempSeatTypes ?? (seatTypes.length > 0 ? [...seatTypes] : [
@@ -136,6 +154,7 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
     const draftData = {
       step: currentStep,
       tempLibraryName,
+      tempLogo,
       tempBranches,
       tempSections,
       tempSeatTypes,
@@ -326,6 +345,7 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
     setSettings({
       ...settings,
       name: tempLibraryName,
+      logo: tempLogo || settings.logo || DEFAULT_LIBRARY_LOGO,
       libraryId: libId,
       documentTypes: tempDocTypes,
       allowedDocuments: activeDocNames,
@@ -429,6 +449,16 @@ export const SetupWizard = ({ isOpen = true, onClose, isEditMode = false }) => {
           required 
         />
       </div>
+
+      <BrandImageField
+        label="Library logo (optional)"
+        value={tempLogo}
+        onChange={setTempLogo}
+        fallbackText={DEFAULT_LIBRARY_LOGO}
+        documentKey="library-logo"
+        testId="setup-library-logo"
+        help="Shown on receipts, the enquiry QR poster and the public enquiry form. You can skip this and add it later in Settings."
+      />
 
       <div style={{ padding: '16px', background: '#f8fafc', borderRadius: '8px', border: '1px solid var(--border-light)', marginTop: '16px' }}>
         <h4 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>

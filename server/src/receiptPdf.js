@@ -9,6 +9,7 @@ import fontkit from '@pdf-lib/fontkit';
 import sharp from 'sharp';
 import { Library, Settings, models } from './models.js';
 import { receiptView, money } from '../../src/utils/receipt.js';
+import { receiptInstructionLines } from '../../src/utils/receiptInstructions.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const publicDir = path.join(repoRoot, 'public');
@@ -77,6 +78,7 @@ function mergeBranding(settings, library, branch) {
     taxId: String(s.taxId || '').trim(),
     logo: s.logo,
     receiptFooter: s.receiptFooter,
+    receiptInstructions: s.receiptInstructions,
   };
 }
 
@@ -344,6 +346,18 @@ export async function renderFeeReceiptPdf(payment, student, { settings, library,
 
   page.drawLine({ start: { x: left, y }, end: { x: right, y }, thickness: 0.6, color: LINE });
   y -= 16;
+  const instructionLines = receiptInstructionLines(brand.receiptInstructions);
+  if (instructionLines.length) {
+    drawText(page, 'Instructions', left, y, bold, 11);
+    y -= 16;
+    for (const raw of instructionLines.slice(0, 8)) {
+      for (const line of wrapText(`• ${raw}`, regular, 10, width).slice(0, 3)) {
+        drawText(page, line, left, y, regular, 10, INK);
+        y -= 13;
+      }
+    }
+    y -= 8;
+  }
   for (const line of wrapText(terms, regular, 8.5, width).slice(0, 3)) {
     drawText(page, line, left, y, regular, 8.5, MUTED);
     y -= 11;

@@ -31,6 +31,8 @@ const INITIAL_SETTINGS = {
   upiId: "",
   upiQrUrl: "",
   receiptFooter: "Thank you for choosing our Library!",
+  // Unset (not "") so new and existing libraries get the shipped default until the owner saves.
+  // receiptInstructions is omitted here on purpose.
   idProofRequirement: "Required", // 'Required' | 'Can Be Submitted Later' | 'Not Required'
   paymentProofMode: "OPTIONAL", // OFF | OPTIONAL | REQUIRED
   allowedDocuments: ["Aadhaar Card", "Student ID", "Address Proof", "Photograph"],

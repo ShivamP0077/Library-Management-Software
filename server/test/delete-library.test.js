@@ -55,7 +55,7 @@ test('delete needs super admin and the exact name; then removes only that tenant
   await SoftwareInvoice.create({ invoiceId: 'inv-a-retained', tenantId: 'lib-a', amount: 499, currency: 'INR', status: 'paid', provider: 'razorpay', providerRef: 'pay_live_secret', raw: { card: '4111111111111111', email: 'admin-a@test.local' } });
   await PasswordResetOtp.create({ userId: String(adminA._id), codeHash: 'otp-hash', expiresAt: new Date(Date.now() + 600000) });
 
-  assert.equal((await call('DELETE', '/api/admin/libraries/lib-a', { token: ctx.tokens.a, body: { confirmName: 'Library A' } })).status, 403, 'owner cannot');
+  assert.equal((await call('DELETE', '/api/admin/libraries/lib-a', { token: ctx.tokens.a, body: { confirmName: 'Lib a' } })).status, 403, 'owner cannot');
   assert.equal((await call('DELETE', '/api/admin/libraries/lib-a', { token: ctx.tokens.sa, body: { confirmName: 'Library B' } })).status, 400, 'name must match');
   const mm = await call('DELETE', '/api/admin/libraries/lib-a', { token: ctx.tokens.sa, body: { confirmName: 'Library' } });
   assert.equal(mm.status, 400); assert.equal(mm.body.code, 'confirm_mismatch'); assert.match(mm.body.error, /Nothing was deleted/);
@@ -65,13 +65,13 @@ test('delete needs super admin and the exact name; then removes only that tenant
 
   const loose = await call('DELETE', '/api/admin/libraries/lib-a', { token: ctx.tokens.sa, body: { confirmName: '  library\u00a0 a ' } });
   assert.equal(loose.status, 400, 'case/NBSP/internal-space variations are rejected');
-  const r = await call('DELETE', '/api/admin/libraries/lib-a', { token: ctx.tokens.sa, body: { confirmName: '  Library A  ' } });
+  const r = await call('DELETE', '/api/admin/libraries/lib-a', { token: ctx.tokens.sa, body: { confirmName: '  Lib a  ' } });
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.ok(r.body.counts.User >= 1);
   assert.ok(r.body.retention?.subject?.startsWith('lib_'), 'pseudonymised retention summary');
   assert.equal(r.body.retention.retainedForLegalAuditOnly, true);
   assert.ok(r.body.retention.retained.some(x => x.collection === 'SoftwareInvoice'), 'retention policy lists invoices');
-  const retry = await call('DELETE', '/api/admin/libraries/lib-a', { token: ctx.tokens.sa, body: { confirmName: 'Library A' } });
+  const retry = await call('DELETE', '/api/admin/libraries/lib-a', { token: ctx.tokens.sa, body: { confirmName: 'Lib a' } });
   assert.equal(retry.status, 200, 'idempotent retry');
   assert.equal(retry.body.alreadyDeleted, true);
 
@@ -98,7 +98,7 @@ test('delete needs super admin and the exact name; then removes only that tenant
 
   const job = await DeletionJob.findOne({ libraryId: 'lib-a' }).lean();
   assert.equal(job.status, 'completed');
-  assert.equal(job.targetName, 'Library A');
+  assert.equal(job.targetName, 'Lib a');
   assert.equal(job.attempts, 1);
 
   const libs = (await call('GET', '/api/admin/libraries', { token: ctx.tokens.sa })).body.map(l => l.libraryId);
@@ -125,7 +125,10 @@ test('every registered tenant model is covered through both tenancy fields', asy
     const M = mongoose.model(name);
     if (!tenantFields(M).length) continue;
     const doc = sampleDocFor(M, 'lib-z');
-    await M.collection.insertOne(doc);
+    // createLibrary already inserts a Settings doc; skip if the model is already seeded.
+    if (await M.collection.countDocuments(tenantQuery(M, 'lib-z')) === 0) {
+      await M.collection.insertOne(doc);
+    }
   }
   const before = await countsFor('lib-z');
   for (const [name, n] of Object.entries(before)) assert.ok(n > 0, `seeded ${name}`);

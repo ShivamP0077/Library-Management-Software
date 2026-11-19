@@ -562,6 +562,13 @@ tenant.put('/settings', requireRole('client_admin', 'superadmin', 'staff'), wrap
   }
   const keep = before?.actionDismissals ? { actionDismissals: before.actionDismissals } : {};
   const s = await Settings.findOneAndReplace({ tenantId: req.tenantId }, { ...settingsBody, ...keep, tenantId: req.tenantId, libraryId: req.tenantId }, { upsert: true, new: true, lean: true });
+  const incomingName = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 100) : '';
+  if (incomingName) {
+    const lib = await Library.findOne({ libraryId: req.tenantId }).select('name').lean();
+    if (lib && lib.name !== incomingName) {
+      await Library.updateOne({ libraryId: req.tenantId }, { $set: { name: incomingName } });
+    }
+  }
   res.json(clean(s));
 }));
 

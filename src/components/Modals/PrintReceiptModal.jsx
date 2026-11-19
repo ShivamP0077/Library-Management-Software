@@ -3,7 +3,9 @@ import { createPortal } from 'react-dom';
 import { getDocumentBlob } from '../../utils/idbStorage';
 import { findPhotoDoc } from '../../utils/studentPhoto';
 import { receiptView, money } from '../../utils/receipt';
+import { receiptInstructionLines } from '../../utils/receiptInstructions';
 import { useLibrary } from '../../context/LibraryContext';
+import { useAuth } from '../../auth/AuthContext';
 import { Printer, X } from 'lucide-react';
 
 const APP_LOGO = '/logo-icon.png';
@@ -132,6 +134,7 @@ const ReceiptSlip = ({ receipt, settings, branch, photo, copyLabel, view }) => {
   const studentName = receipt.studentName || v.studentName || '—';
   const stamp = v.state.label || 'PAID';
   const terms = (settings.receiptFooter || '').trim() || DEFAULT_TERMS;
+  const instructionLines = receiptInstructionLines(settings.receiptInstructions);
   const contact = [phone ? `Phone: ${phone}` : '', gst ? `GST: ${gst}` : ''].filter(Boolean).join('  ·  ');
   const cells = [
     ['Receipt no', receipt.receiptNo || '—'],
@@ -243,6 +246,17 @@ const ReceiptSlip = ({ receipt, settings, branch, photo, copyLabel, view }) => {
         <p className="receipt-words" data-testid="receipt-received-by">{v.receivedByLine}</p>
       ) : null}
 
+      {instructionLines.length ? (
+        <section className="receipt-instructions" data-testid="receipt-instructions" aria-label="Instructions">
+          <h3 className="receipt-instructions-title">Instructions</h3>
+          <ul>
+            {instructionLines.map((line, index) => (
+              <li key={index}>{line}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       <footer className="receipt-slip-foot">
         <p className="receipt-terms">{terms}</p>
         <p className="receipt-powered">Powered by My Library OS</p>
@@ -271,6 +285,8 @@ function ReceiptStack({ slips, receipt, settings, branch, photo, view }) {
 
 export const PrintReceiptModal = ({ receipt, onClose }) => {
   const { settings, branches, students } = useLibrary();
+  const authLibrary = useAuth()?.library;
+  const receiptSettings = { ...settings, name: settings?.name || authLibrary?.name || '' };
   const [photo, setPhoto] = useState(null);
   const [photoLoading, setPhotoLoading] = useState(false);
   const photoPendingRef = useRef(false);
@@ -329,7 +345,7 @@ export const PrintReceiptModal = ({ receipt, onClose }) => {
   const receiptStudent = (students || []).find(s => s.id === receipt.studentId || s.studentId === receipt.studentId);
   const view = receiptView(receipt, { student: receiptStudent, branch, settings });
   const slips = slipsForChoice(copyChoice);
-  const slipProps = { slips, receipt, settings, branch, photo, view };
+  const slipProps = { slips, receipt, settings: receiptSettings, branch, photo, view };
 
   const handlePrint = async () => {
     const photoDeadline = Date.now() + 3000;

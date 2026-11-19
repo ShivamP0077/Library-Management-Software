@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import express from 'express';
 import mongoose from 'mongoose';
 import { Library, models, Settings } from './models.js';
+import { findPlanChoice, publicEnquiryFormPayload, resolveEnquiryForm } from '../../src/utils/enquiryFormConfig.js';
 import { requireRole } from './auth.js';
 import { rateLimited } from './accounts.js';
 import { EMAIL_RE } from './identity.js';
@@ -26,6 +27,7 @@ const enquirySchema = new mongoose.Schema({
   aadhaar: { type: String, default: '' },
   photo: { type: String, default: '' },
   message: { type: String, default: '' },
+  preferredPlan: { type: String, default: '' },
   status: { type: String, enum: STATUSES, default: 'waiting', index: true },
   source: { type: String, default: 'qr' },
 }, { timestamps: true });
@@ -72,6 +74,7 @@ function pub(doc) {
     branchId: doc.branchId || '',
     sectionId: doc.sectionId || '',
     message: doc.message || '',
+    preferredPlan: doc.preferredPlan || '',
     status: doc.status,
     source: doc.source || 'qr',
     createdAt: doc.createdAt,
@@ -128,6 +131,8 @@ async function catalogue(tenantId) {
     Settings.findOne({ tenantId }).lean(),
   ]);
   return {
+    settings,
+    settingsName: typeof settings?.name === 'string' ? settings.name.trim() : '',
     logo: settings?.logo || null,
     plans: plans.map(publicFeePlan).filter(Boolean),
     branches: branches.filter(b => b.id && b.name).map(b => ({ id: b.id, name: b.name })),
@@ -135,30 +140,29 @@ async function catalogue(tenantId) {
   };
 }
 
-async function resolvePlace(tenantId, body) {
-  const branches = await models.branches.find({ tenantId }).select('id name').lean();
-  const usable = branches.filter(b => b.id);
-  let branchId = String(body.branchId || '').trim();
-  if (usable.length === 1) {
-    if (branchId && branchId !== usable[0].id) return { error: 'Branch does not match this library' };
-    branchId = usable[0].id;
-  } else if (usable.length > 1) {
-    if (!usable.some(b => b.id === branchId)) return { error: 'Choose a branch' };
-  } else if (branchId) {
-    return { error: 'Branch does not match this library' };
+function pickChoice(field, options, raw, labels) {
+  const value = String(raw || '').trim();
+  if (!field.show) return { id: '' };
+  if (options.length === 1) {
+    if (value && value !== options[0].id) return { error: labels.mismatch };
+    return { id: options[0].id };
   }
-  const sections = await models.sections.find({ tenantId }).select('id name branchId').lean();
-  const forBranch = sections.filter(s => s.id && (!s.branchId || s.branchId === 'all' || s.branchId === branchId));
-  let sectionId = String(body.sectionId || '').trim();
-  if (forBranch.length === 1) {
-    if (sectionId && sectionId !== forBranch[0].id) return { error: 'Section does not match the branch' };
-    sectionId = forBranch[0].id;
-  } else if (forBranch.length > 1) {
-    if (!forBranch.some(s => s.id === sectionId)) return { error: 'Choose a section' };
-  } else if (sectionId) {
-    return { error: 'Section does not match the branch' };
+  if (options.length > 1) {
+    if (!value) return field.required ? { error: labels.required } : { id: '' };
+    if (!options.some((o) => o.id === value)) return { error: labels.required };
+    return { id: value };
   }
-  return { branchId, sectionId };
+  if (value) return { error: labels.mismatch };
+  return { id: '' };
+}
+
+function resolvePlace(form, body) {
+  const branch = pickChoice(form.fields.branch, form.branches, body.branchId, { required: 'Choose a branch', mismatch: 'Branch does not match this library' });
+  if (branch.error) return branch;
+  const forBranch = (form.sections || []).filter((s) => !s.branchId || s.branchId === 'all' || s.branchId === branch.id);
+  const section = pickChoice(form.fields.section, forBranch, body.sectionId, { required: 'Choose a section', mismatch: 'Section does not match the branch' });
+  if (section.error) return section;
+  return { branchId: branch.id, sectionId: section.id };
 }
 
 export function createPublicEnquiryRouter() {
@@ -168,7 +172,15 @@ export function createPublicEnquiryRouter() {
     const lib = await Library.findOne({ enquiryToken: req.params.token, status: 'Active' }).select('libraryId name').lean();
     if (!lib) return res.status(404).json({ error: 'Enquiry link not found' });
     const cat = await catalogue(lib.libraryId);
-    res.json({ libraryName: lib.name, logo: cat.logo, plans: cat.plans, branches: cat.branches, sections: cat.sections });
+    const form = resolveEnquiryForm(cat.settings, cat);
+    res.json({
+      libraryName: cat.settingsName || lib.name,
+      logo: cat.logo,
+      plans: form.plan.show ? cat.plans : [],
+      branches: form.fields.branch.show ? form.branches : [],
+      sections: form.fields.section.show ? form.sections : [],
+      enquiryForm: publicEnquiryFormPayload(form),
+    });
   }));
 
   r.post('/public/enquiry/:token', wrap(async (req, res) => {
@@ -181,22 +193,53 @@ export function createPublicEnquiryRouter() {
     const b = req.body || {};
     if (String(b.website || '').trim()) return res.json({ ok: true });
 
+    const cat = await catalogue(lib.libraryId);
+    const form = resolveEnquiryForm(cat.settings, cat);
+
     const name = String(b.name || '').trim();
     if (!name || name.length > 80) return res.status(400).json({ error: 'Name is required' });
     const mobile = indianMobile91(b.mobile);
     if (!mobile) return res.status(400).json({ error: 'Enter a valid Indian mobile number' });
-    const emailRaw = String(b.email || '').trim().toLowerCase();
+
+    const emailRaw = form.fields.email.show ? String(b.email || '').trim().toLowerCase() : '';
+    if (form.fields.email.show && form.fields.email.required && !emailRaw) return res.status(400).json({ error: 'Email is required' });
     if (emailRaw && !EMAIL_RE.test(emailRaw)) return res.status(400).json({ error: 'Enter a valid email address' });
-    const gender = String(b.gender || '').trim().toLowerCase();
-    if (!GENDERS.includes(gender)) return res.status(400).json({ error: 'Select male, female or other' });
-    const message = String(b.message || '').trim();
+
+    const gender = form.fields.gender.show ? String(b.gender || '').trim().toLowerCase() : '';
+    if (form.fields.gender.show && form.fields.gender.required && !GENDERS.includes(gender)) {
+      return res.status(400).json({ error: 'Select male, female or other' });
+    }
+    if (form.fields.gender.show && gender && !GENDERS.includes(gender)) {
+      return res.status(400).json({ error: 'Select male, female or other' });
+    }
+
+    const message = form.fields.message.show ? String(b.message || '').trim() : '';
+    if (form.fields.message.show && form.fields.message.required && !message) return res.status(400).json({ error: 'Message is required' });
     if (message.length > 500) return res.status(400).json({ error: 'Message must be 500 characters or less' });
-    const place = await resolvePlace(lib.libraryId, b);
+
+    const place = resolvePlace(form, b);
     if (place.error) return res.status(400).json({ error: place.error });
-    const aadhaar = parseEnquiryImage(b.aadhaar, 'Aadhaar');
-    if (aadhaar.error) return res.status(400).json({ error: aadhaar.error });
-    const photo = parseEnquiryImage(b.photo, 'Student photo');
-    if (photo.error) return res.status(400).json({ error: photo.error });
+
+    let aadhaar = { data: '' };
+    let photo = { data: '' };
+    if (form.documents.show) {
+      aadhaar = parseEnquiryImage(b.aadhaar, 'Aadhaar');
+      if (aadhaar.error) return res.status(400).json({ error: aadhaar.error });
+      photo = parseEnquiryImage(b.photo, 'Student photo');
+      if (photo.error) return res.status(400).json({ error: photo.error });
+      if (form.documents.required && (!aadhaar.data || !photo.data)) {
+        return res.status(400).json({ error: 'Please attach the required documents' });
+      }
+    }
+
+    let preferredPlan = '';
+    if (form.plan.show) {
+      const rawPlan = String(b.preferredPlan || b.planId || '').trim();
+      const chosen = findPlanChoice(cat.plans, rawPlan);
+      if (form.plan.required && !chosen) return res.status(400).json({ error: 'Choose a membership plan' });
+      if (rawPlan && !chosen) return res.status(400).json({ error: 'Choose a valid membership plan' });
+      preferredPlan = chosen ? chosen.id : '';
+    }
 
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const existing = await Enquiry.findOne({ tenantId: lib.libraryId, mobile, createdAt: { $gte: since } }).sort({ createdAt: -1 });
@@ -207,6 +250,7 @@ export function createPublicEnquiryRouter() {
       existing.branchId = place.branchId;
       existing.sectionId = place.sectionId;
       existing.message = message;
+      if (form.plan.show) existing.preferredPlan = preferredPlan;
       if (aadhaar.data) existing.aadhaar = aadhaar.data;
       if (photo.data) existing.photo = photo.data;
       await existing.save();
@@ -215,7 +259,7 @@ export function createPublicEnquiryRouter() {
     await Enquiry.create({
       tenantId: lib.libraryId, name, mobile, email: emailRaw || null, gender,
       branchId: place.branchId, sectionId: place.sectionId,
-      aadhaar: aadhaar.data, photo: photo.data,
+      aadhaar: aadhaar.data, photo: photo.data, preferredPlan,
       message, status: 'waiting', source: 'qr',
     });
     res.status(201).json({ ok: true });

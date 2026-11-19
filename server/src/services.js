@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import { Library, User, models, isPlatformRole } from './models.js';
+import { Library, User, Settings, models, isPlatformRole } from './models.js';
 import { AuditLog } from './audit.js';
 import { DeletionJob } from './deletionJob.js';
 
@@ -16,7 +16,8 @@ const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').re
 
 /** Creates a library (tenant) with its settings doc and optionally a client-admin account. */
 export async function createLibrary({ name, libraryId, contactEmail, phone, city, address, referralCode, referredByCode, admin, createdBy, isDefault }) {
-  if (!name || !String(name).trim()) throw Object.assign(new Error('Library name is required'), { status: 400 });
+  const trimmedName = String(name || '').trim();
+  if (!trimmedName) throw Object.assign(new Error('Library name is required'), { status: 400 });
   let id = libraryId ? slug(libraryId) : `lib-${slug(name)}`;
   // A deleted library's id is permanently retired: old backups, browser caches and
   // audit records must never attach to a different customer.
@@ -39,7 +40,8 @@ export async function createLibrary({ name, libraryId, contactEmail, phone, city
     if (admin.password && !validatePassword(admin.password)) throw Object.assign(new Error('Password must be at least 8 characters'), { status: 400 });
   }
   const code = referralCode || `LIB-${String(id).toUpperCase().replace(/[^A-Z0-9]/g, '')}`;
-  const library = await Library.create({ libraryId: id, name: String(name).trim(), contactEmail, phone: phone || null, city: city || null, address: address || null, referralCode: code, referredByCode: referredByCode || null, createdBy, ...(isDefault !== undefined ? { isDefault } : {}) });
+  const library = await Library.create({ libraryId: id, name: trimmedName, contactEmail, phone: phone || null, city: city || null, address: address || null, referralCode: code, referredByCode: referredByCode || null, createdBy, ...(isDefault !== undefined ? { isDefault } : {}) });
+  await Settings.create({ tenantId: id, libraryId: id, name: trimmedName });
   if (admin?.email || admin?.mobile) adminUser = await createUser({ ...admin, role: 'client_admin', tenantId: id, libraryId: id });
   if (adminUser) { generatedPassword = adminUser.generatedPassword; adminUser = adminUser.user; }
   return { library, adminUser, generatedPassword };

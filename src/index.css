@@ -704,6 +704,10 @@ body {
 .receipt-words { margin: 8px 2px 0; font-weight: 700; font-size: 13px; overflow-wrap: anywhere; }
 .receipt-words span { display: block; font-weight: 700; color: #404040; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 1px; }
 
+.receipt-instructions { margin: 10px 2px 8px; padding: 8px 10px; border: 1px solid #d4d4d4; border-radius: 6px; background: #fafafa; text-align: left; }
+.receipt-instructions-title { margin: 0 0 6px; font-size: 11px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: #111; }
+.receipt-instructions ul { margin: 0; padding: 0 0 0 1.15em; }
+.receipt-instructions li { margin: 0 0 3px; font-size: 12px; line-height: 1.45; color: #171717; }
 .receipt-slip-foot { margin-top: 8px; padding-top: 6px; border-top: 1px solid #e5e5e5; text-align: center; }
 .receipt-terms { margin: 0; color: #404040; font-size: 11px; line-height: 1.35; }
 .receipt-powered { margin: 3px 0 0; color: #111; font-weight: 800; font-size: 11px; letter-spacing: 0.02em; }
@@ -862,6 +866,9 @@ body {
   .receipt-net td { font-size: 13.5pt; font-weight: 800; }
   .receipt-words { font-size: 11pt; margin-top: 1.6mm; }
   .receipt-words span { font-size: 9pt; }
+  .receipt-instructions { margin: 1.6mm 0 1.2mm; padding: 1.6mm 2mm; }
+  .receipt-instructions-title { font-size: 9.5pt; }
+  .receipt-instructions li { font-size: 10.5pt; }
   .receipt-slip-foot { margin-top: auto; padding-top: 1.4mm; }
   .receipt-terms { font-size: 9.5pt; }
   .receipt-powered { font-size: 10pt; }

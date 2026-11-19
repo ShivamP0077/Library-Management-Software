@@ -8,6 +8,8 @@ import { createLibrary, createUser, computeMetrics, hashPassword, validatePasswo
 import { verifyGoogleIdToken, googleEnabled, googleConfig, buildAuthUrl, exchangeCode } from './google.js';
 import { createWhatsappRouter, createWhatsappWebhookRouter } from './whatsapp.js';
 import { createFinanceRouter, validatePaymentBatch, normalizeStudentPaymentDates, applyPaidOn, applyPaymentReference } from './finance.js';
+import { collectorStampFor, stampNewPayment, preservePaymentCollector, stampStudentPaymentHistory, proofPolicyFor, paymentProofsChanged } from './paymentCollector.js';
+import { paymentProofModeOf, paymentProofKeys } from '../../src/utils/paymentProof.js';
 import { createStudentRouter, recordStudentDiff, recordArchiveDiff, checkCapacity, countsTowardStudentLimit } from './students.js';
 import { audit, AuditLog } from './audit.js';
 import { enforceAmountEdits, amountSettingsChanged, isOwnerRole } from './amountPermission.js';
@@ -545,6 +547,19 @@ tenant.put('/settings', requireRole('client_admin', 'superadmin', 'staff'), wrap
   }
   // actionDismissals (dashboard Skip / Later) is owned by /dashboard/action-dismissals: a settings save never overwrites it.
   const { actionDismissals: _ignored, ...settingsBody } = stripMeta(req.body) || {};
+  const prevProofMode = paymentProofModeOf(before || {});
+  if (Object.prototype.hasOwnProperty.call(settingsBody, 'paymentProofMode')) {
+    const nextProofMode = paymentProofModeOf(settingsBody);
+    if (nextProofMode !== prevProofMode && !isOwnerRole(req.user)) {
+      return res.status(403).json({ error: 'Only the owner can change the payment proof setting.', code: 'owner_only' });
+    }
+    if (nextProofMode !== prevProofMode) {
+      await audit(req, 'settings.payment_proof_mode', { tenantId: req.tenantId, detail: { from: prevProofMode, to: nextProofMode } });
+    }
+    settingsBody.paymentProofMode = isOwnerRole(req.user) ? nextProofMode : prevProofMode;
+  } else {
+    settingsBody.paymentProofMode = before ? prevProofMode : 'OPTIONAL';
+  }
   const keep = before?.actionDismissals ? { actionDismissals: before.actionDismissals } : {};
   const s = await Settings.findOneAndReplace({ tenantId: req.tenantId }, { ...settingsBody, ...keep, tenantId: req.tenantId, libraryId: req.tenantId }, { upsert: true, new: true, lean: true });
   res.json(clean(s));
@@ -663,6 +678,7 @@ async function createOne(req, res) {
     const existing = await req.Model.find({ tenantId: req.tenantId }).lean();
     const prev = existing.filter(s => countsTowardStudentLimit(s, { settings: billing })).length;
     normalizeStudentPaymentDates(body, null);
+    stampStudentPaymentHistory(body, null, await collectorStampFor(req), await proofPolicyFor(req));
     stampPeriodSnapshots(body, null, billing);
     const next = prev + (countsTowardStudentLimit(body, { settings: billing }) ? 1 : 0);
     await checkCapacity(req.tenantId, next, prev);
@@ -672,7 +688,11 @@ async function createOne(req, res) {
     const n = await req.Model.countDocuments({ tenantId: req.tenantId });
     await checkDeskLimit(req.tenantId, n + 1, n);
   }
-  if (req.params.col === 'payments') { validatePaymentBatch([body]); await enforceAmountEdits(req, [body]); }
+  if (req.params.col === 'payments') {
+    stampNewPayment(body, await collectorStampFor(req), await proofPolicyFor(req));
+    validatePaymentBatch([body]);
+    await enforceAmountEdits(req, [body]);
+  }
   if (req.params.col === 'branches') { const n = await req.Model.countDocuments({ tenantId: req.tenantId }); await checkBranchLimit(req.tenantId, n + 1, n); }
   const d = await req.Model.create({ ...body, _key, tenantId: req.tenantId, libraryId: req.tenantId });
   if (req.params.col === 'students') await recordStudentDiff(req.tenantId, new Map(), [{ ...body, id: _key }], req.user.email);
@@ -686,6 +706,8 @@ tenant.put('/:col/:key', colParam, wrap(async (req, res) => {
     if (!prev) return res.status(404).json({ error: 'Not found' });
     const merged = { ...clean(prev), ...stripMeta(req.body), id: prev.id ?? req.params.key };
     normalizeStudentPaymentDates(merged, prev);
+    stampStudentPaymentHistory(merged, prev, await collectorStampFor(req), await proofPolicyFor(req));
+    if (Array.isArray(merged.paymentHistory)) req.body.paymentHistory = merged.paymentHistory;
     stampPeriodSnapshots(merged, prev, await billingSettings(req.tenantId));
     req.body.graceDaysSnapshot = merged.graceDaysSnapshot;
     req.body.expiredPeriodDaysSnapshot = merged.expiredPeriodDaysSnapshot;
@@ -706,8 +728,21 @@ tenant.put('/:col/:key', colParam, wrap(async (req, res) => {
     const prev = await req.Model.findOne({ tenantId: req.tenantId, _key: req.params.key }).lean();
     applyPaymentReference(patch, { required: !prev });
     const mergedPay = { ...(prev ? clean(prev) : {}), ...patch, receiptNo: prev?.receiptNo ?? req.params.key };
-    if (prev) validatePaymentBatch([mergedPay], new Map([[req.params.key, prev]]));
-    else validatePaymentBatch([mergedPay]);
+    const proofPolicy = await proofPolicyFor(req);
+    if (prev) {
+      preservePaymentCollector(patch, prev, proofPolicy);
+      if (paymentProofsChanged(prev, patch) && proofPolicy.canEditProofs) {
+        await audit(req, 'payment.proof_updated', {
+          target: prev.receiptNo ?? req.params.key,
+          detail: { before: paymentProofKeys(prev.paymentProofs), after: paymentProofKeys(patch.paymentProofs) },
+        });
+      }
+      validatePaymentBatch([mergedPay], new Map([[req.params.key, prev]]));
+    } else {
+      for (const key of ['collectedByUserId', 'collectedByName', 'collectedByRole']) delete patch[key];
+      stampNewPayment(patch, await collectorStampFor(req), proofPolicy);
+      validatePaymentBatch([mergedPay]);
+    }
     if (mergedPay.paidOn) { patch.paidOn = mergedPay.paidOn; patch.date = mergedPay.date; patch.enteredAt = mergedPay.enteredAt; }
     await enforceAmountEdits(req, [mergedPay], prev ? new Map([[String(prev.receiptNo ?? req.params.key), prev]]) : new Map());
     const moneyChanged = prev && ['amount', 'discount', 'fine', 'netTotal'].some(k => Number(prev[k] ?? 0) !== Number(mergedPay[k] ?? 0));
@@ -787,6 +822,9 @@ async function replaceCollection(req, res) {
     const had = new Set(prevDocs.map(d => String(d._key)));
     newPayments = req.body.map(stripMeta).map(b => ({ ...b, _key: keyOf(col, b) })).filter(b => b._key && !had.has(String(b._key)));
   }
+  const collectorStamp = (col === 'payments' || col === 'students') ? await collectorStampFor(req) : null;
+  const proofPolicy = (col === 'payments' || col === 'students') ? await proofPolicyFor(req) : null;
+  if (newPayments?.length && collectorStamp) newPayments = newPayments.map(row => stampNewPayment(row, collectorStamp, proofPolicy));
   if (col === 'branches') {
     const n = await req.Model.countDocuments({ tenantId: req.tenantId });
     await checkBranchLimit(req.tenantId, new Set(req.body.map(stripMeta).map(b => keyOf(col, b)).filter(Boolean)).size, n);
@@ -823,12 +861,33 @@ async function replaceCollection(req, res) {
       const prevPay = prevPayByKey.get(String(_key));
       applyPaymentReference(body, { required: !prevPay });
       if (!prevPay || prevPay.paidOn !== body.paidOn) applyPaidOn(body);
+      if (prevPay) {
+        const beforeProofs = prevPay.paymentProofs;
+        preservePaymentCollector(body, prevPay, proofPolicy);
+        if (paymentProofsChanged({ paymentProofs: beforeProofs }, body) && proofPolicy?.canEditProofs) {
+          req._proofAudits = req._proofAudits || [];
+          req._proofAudits.push({
+            target: prevPay.receiptNo || _key,
+            before: paymentProofKeys(beforeProofs),
+            after: paymentProofKeys(body.paymentProofs),
+          });
+        }
+      } else stampNewPayment(body, collectorStamp, proofPolicy);
     }
-    if (col === 'students') normalizeStudentPaymentDates(body, req.studentDiff?.previous?.get(String(_key)));
+    if (col === 'students') {
+      const prevStudent = req.studentDiff?.previous?.get(String(_key));
+      normalizeStudentPaymentDates(body, prevStudent);
+      stampStudentPaymentHistory(body, prevStudent, collectorStamp, proofPolicy);
+    }
     seen.add(_key);
     ops.push({ replaceOne: { filter: { tenantId: req.tenantId, _key }, replacement: { ...body, _key, _order: i, tenantId: req.tenantId, libraryId: req.tenantId }, upsert: true } });
   });
   if (ops.length) await req.Model.bulkWrite(ops, { ordered: false });
+  if (req._proofAudits?.length) {
+    for (const item of req._proofAudits) {
+      await audit(req, 'payment.proof_updated', { target: item.target, detail: { before: item.before, after: item.after } });
+    }
+  }
   const del = await req.Model.deleteMany({ tenantId: req.tenantId, _key: { $nin: [...seen] } });
   if (req.studentDiff) await recordStudentDiff(req.tenantId, req.studentDiff.previous, req.studentDiff.incoming, req.user.email);
   if (newPayments?.length) await sendReceiptsAfterSave(req.tenantId, newPayments);

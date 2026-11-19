@@ -133,3 +133,20 @@ test('discount and fine rows appear only when those amounts are above zero', asy
   assert.match(text, /Two thousand two hundred only/);
   assert.match(text, /PARTIAL PAYMENT/);
 });
+
+test('receipt names the person who collected the fee, and omits the line when nobody was stored', async () => {
+  const named = await receiptDocument({
+    ...paid,
+    collectedByName: 'Meera Shah',
+    collectedByRole: 'Owner',
+    staffName: 'Meera Shah',
+  }, student, { settings });
+  assert.match(textOf(named.buffer), /Received by: Meera Shah \(Owner\)/);
+
+  const legacy = await receiptDocument({ ...paid, staffName: 'Asha' }, student, { settings });
+  assert.match(textOf(legacy.buffer), /Received by: Asha/);
+
+  const blank = await receiptDocument(paid, student, { settings });
+  assert.doesNotMatch(textOf(blank.buffer), /Received by/);
+  assert.doesNotMatch(textOf(blank.buffer), /Admin/);
+});

@@ -46,10 +46,18 @@ test('receipt shows Paid on using paidOn, and falls back to date', () => {
 test('#12: view exposes operator label source and branch, never a fabricated operator', () => {
   const v = receiptView({ staffName: 'Asha', status: 'Paid' }, { student: { name: 'Ravi', id: 'S1' }, branch: { name: 'Central' } });
   assert.equal(v.operator, 'Asha');
+  assert.equal(v.receivedByLine, 'Received by: Asha');
   assert.equal(v.state.code, 'paid');
   assert.equal(v.studentName, 'Ravi');
   assert.equal(v.branchName, 'Central');
-  assert.equal(receiptView({}, {}).operator, 'Admin');
+  const blank = receiptView({}, {});
+  assert.equal(blank.operator, '');
+  assert.equal(blank.operatorRole, '');
+  assert.equal(blank.receivedByLine, '');
+  const stamped = receiptView({ collectedByName: 'Meera', collectedByRole: 'Owner', staffName: 'Forged' });
+  assert.equal(stamped.operator, 'Meera');
+  assert.equal(stamped.operatorRole, 'Owner');
+  assert.equal(stamped.receivedByLine, 'Received by: Meera (Owner)');
 });
 
 test('student payment row opens the paid receipt viewer and keeps voided or refund rows closed', () => {

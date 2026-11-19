@@ -239,6 +239,10 @@ const ReceiptSlip = ({ receipt, settings, branch, photo, copyLabel, view }) => {
         <p className="receipt-words"><span>Amount in words</span> {words}</p>
       ) : null}
 
+      {v.receivedByLine ? (
+        <p className="receipt-words" data-testid="receipt-received-by">{v.receivedByLine}</p>
+      ) : null}
+
       <footer className="receipt-slip-foot">
         <p className="receipt-terms">{terms}</p>
         <p className="receipt-powered">Powered by My Library OS</p>

@@ -66,8 +66,20 @@ export function receiptAmounts(receipt) {
   return { base, discount, fine, netTotal };
 }
 
+/** Collector recorded on the payment. Old rows may only have staffName. Blank when neither was stored. */
 export function receiptOperator(receipt) {
-  return str(receipt?.staffName || receipt?.operatorName || 'Admin');
+  return str(receipt?.collectedByName || receipt?.staffName || receipt?.operatorName);
+}
+
+export function receiptOperatorRole(receipt) {
+  return str(receipt?.collectedByRole || receipt?.operatorRole);
+}
+
+export function receiptReceivedByLine(receipt) {
+  const name = receiptOperator(receipt);
+  if (!name) return '';
+  const role = receiptOperatorRole(receipt);
+  return role ? `Received by: ${name} (${role})` : `Received by: ${name}`;
 }
 
 /** A student-profile payment row may open the paid receipt viewer only when the money was kept. */
@@ -90,6 +102,8 @@ export function receiptView(receipt, { student, renewal, payment, branch, settin
     paidOn,
     paidOnLine: paidOn ? `Paid on ${paidOn}` : '',
     operator: receiptOperator(receipt),
+    operatorRole: receiptOperatorRole(receipt),
+    receivedByLine: receiptReceivedByLine(receipt),
     studentName: str(receipt?.studentName || student?.name),
     studentId: str(receipt?.studentId || student?.id),
     phone: str(receipt?.phone || student?.phone),

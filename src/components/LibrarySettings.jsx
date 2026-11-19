@@ -131,7 +131,8 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
     managerCanEditAmount: settings.managerCanEditAmount !== false,
     staffCanEditAmount: settings.staffCanEditAmount === true,
     idProofRequirement: settings.idProofRequirement || 'Required',
-    idProofDeadlineDays: settings.idProofDeadlineDays ?? 7
+    idProofDeadlineDays: settings.idProofDeadlineDays ?? 7,
+    paymentProofMode: settings.paymentProofMode || 'OPTIONAL'
   });
 
   // Keep billingFormData in sync if settings changes externally
@@ -155,7 +156,8 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
       managerCanEditAmount: settings.managerCanEditAmount !== false,
       staffCanEditAmount: settings.staffCanEditAmount === true,
       idProofRequirement: settings.idProofRequirement || 'Required',
-      idProofDeadlineDays: settings.idProofDeadlineDays ?? 7
+      idProofDeadlineDays: settings.idProofDeadlineDays ?? 7,
+    paymentProofMode: settings.paymentProofMode || 'OPTIONAL'
     });
   }, [settings]);
 
@@ -281,7 +283,8 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
       // Issue #9: only the owner may change who can edit amounts (server enforces too).
       ...(isOwnerSession ? {
         managerCanEditAmount: !!billingFormData.managerCanEditAmount,
-        staffCanEditAmount: !!billingFormData.staffCanEditAmount
+        staffCanEditAmount: !!billingFormData.staffCanEditAmount,
+        paymentProofMode: (billingFormData.paymentProofMode || 'OPTIONAL').toUpperCase()
       } : {})
     }));
     toast.success('Library branding, contact & billing configuration saved!');
@@ -1674,6 +1677,26 @@ export const LibrarySettings = ({ settingsAction, onClearSettingsAction, onOpenS
                     <input type="checkbox" data-testid="perm-staff" disabled={!isOwnerSession} checked={!!billingFormData.staffCanEditAmount} onChange={e => setBillingFormData(p => ({ ...p, staffCanEditAmount: e.target.checked }))} /> Other staff
                   </label>
                   <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Every changed amount is recorded in the audit log.{isOwnerSession ? '' : ' Only the library owner can change this.'}</span>
+                </div>
+                <div className="form-group">
+                  <label className="form-label" style={{ fontSize: '12px', fontWeight: 600 }} htmlFor="payment-proof-mode">Payment proof photos</label>
+                  <select
+                    id="payment-proof-mode"
+                    data-testid="payment-proof-mode"
+                    className="form-select"
+                    value={billingFormData.paymentProofMode || 'OPTIONAL'}
+                    disabled={!isOwnerSession}
+                    onChange={e => setBillingFormData(p => ({ ...p, paymentProofMode: e.target.value }))}
+                  >
+                    <option value="OFF">Off — do not ask for proof</option>
+                    <option value="OPTIONAL">Optional — staff may attach photos</option>
+                    <option value="REQUIRED">Required — a payment cannot be saved without a photo</option>
+                  </select>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                    {isOwnerSession
+                      ? 'You can still add, replace, or remove proof photos on an existing payment from the ledger or student history.'
+                      : 'Only the library owner can change this setting or edit proof photos on a saved payment.'}
+                  </span>
                 </div>
               </div>
 

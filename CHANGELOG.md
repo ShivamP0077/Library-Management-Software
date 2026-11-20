@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-20 (IST)
+
+- **Print receipt no longer clips or overlaps** (branch `fix/print-receipt-overflow`, not deployed). The fee receipt print layout was a fixed-height A4 half-page, so Received by, Instructions, and the footer could overlap the amount table, and the Receipt No / Period row and copy badge could clip on a narrow phone print preview. The slip is now width-safe (box-sizing, max-width 100%, wrapping text), and each copy can grow instead of overflowing a locked 148mm box. Student and library copies stay on one A4 page when they fit, and otherwise break cleanly between copies. Nothing was merged or deployed.
+
 ## 2026-11-19 (IST)
 
 - **Book a demo form, and no local mode from login** (branch `feat/book-demo-remove-offline-login`, not deployed). Sign-in and the connecting screen no longer offer local/offline mode, and a saved offline preference is cleared so it cannot sign someone in that way. The rest of the offline code (workspace flag, session bar, local cache, WhatsApp no-token guards, and the API connectivity status) is still there. Book a demo and Contact sales on the landing site open `/demo` instead of a mailto. The public form asks for library name, mobile or email, seat capacity and city, and stores a new `demorequests` row. Super Admin can list, search, filter and update those requests. No email or WhatsApp is sent. No existing collection was migrated. Nothing was deployed.

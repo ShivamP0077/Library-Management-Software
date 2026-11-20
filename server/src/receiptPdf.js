@@ -7,9 +7,10 @@ import mongoose from 'mongoose';
 import { PDFDocument, rgb } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import sharp from 'sharp';
-import { Library, Settings, models } from './models.js';
+import { Library, Settings, StudentDocument, models } from './models.js';
 import { receiptView, money } from '../../src/utils/receipt.js';
 import { receiptInstructionLines } from '../../src/utils/receiptInstructions.js';
+import { findPhotoDoc } from '../../src/utils/studentPhoto.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const publicDir = path.join(repoRoot, 'public');
@@ -17,7 +18,10 @@ const fontDir = path.join(repoRoot, 'server', 'assets', 'fonts');
 const DEFAULT_LOGO = path.join(publicDir, 'logo-icon.png');
 const DEFAULT_TERMS = 'Fees once paid are non-refundable. Keep this receipt for your records.';
 const LOGO_MAX = 512 * 1024;
+const PHOTO_MAX = 2 * 1024 * 1024;
 const LOGO_TIMEOUT_MS = 2500;
+const LOGO_SIZE = 56;
+const PHOTO_SIZE = 56;
 
 const INK = rgb(0.067, 0.067, 0.067);
 const MUTED = rgb(0.322, 0.322, 0.322);
@@ -76,43 +80,113 @@ function mergeBranding(settings, library, branch) {
     address: String(branch?.address || s.address || library?.address || '').trim(),
     phone: String(s.phone || library?.phone || '').trim(),
     taxId: String(s.taxId || '').trim(),
-    logo: s.logo,
+    logo: s.logo || library?.logo,
     receiptFooter: s.receiptFooter,
     receiptInstructions: s.receiptInstructions,
   };
 }
 
-export async function loadLogoSource(spec) {
-  if (/^data:image\/(png|jpe?g|gif|webp);base64,/i.test(spec)) {
-    if (spec.length > LOGO_MAX * 2) return null;
-    const b64 = spec.slice(spec.indexOf(',') + 1).replace(/\s/g, '');
-    const buf = Buffer.from(b64, 'base64');
-    return buf.length && buf.length <= LOGO_MAX ? buf : null;
-  }
-  if (/^https?:\/\//i.test(spec)) {
-    const res = await fetch(spec, { signal: AbortSignal.timeout(LOGO_TIMEOUT_MS), redirect: 'manual' });
-    if (!res.ok) return null;
-    const type = String(res.headers.get('content-type') || '');
-    if (type && !/^image\/(png|jpe?g|gif|webp)/i.test(type)) return null;
-    const declared = Number(res.headers.get('content-length') || 0);
-    if (declared > LOGO_MAX) return null;
-    const chunks = [];
-    let total = 0;
-    for await (const chunk of res.body) {
-      total += chunk.length;
-      if (total > LOGO_MAX) return null;
-      chunks.push(chunk);
+export async function loadLogoSource(spec, maxBytes = LOGO_MAX) {
+  try {
+    if (typeof spec !== 'string' || !spec.trim()) return null;
+    const value = spec.trim();
+    if (/^data:image\/(png|jpe?g|gif|webp|heic);base64,/i.test(value)) {
+      if (value.length > maxBytes * 2) return null;
+      const b64 = value.slice(value.indexOf(',') + 1).replace(/\s/g, '');
+      const buf = Buffer.from(b64, 'base64');
+      return buf.length && buf.length <= maxBytes ? buf : null;
     }
-    return Buffer.concat(chunks);
+    if (/^https?:\/\//i.test(value)) {
+      const res = await fetch(value, { signal: AbortSignal.timeout(LOGO_TIMEOUT_MS), redirect: 'follow' });
+      if (!res.ok) return null;
+      const type = String(res.headers.get('content-type') || '');
+      if (type && !/^image\/(png|jpe?g|gif|webp|heic)/i.test(type) && !type.startsWith('application/octet-stream')) return null;
+      const declared = Number(res.headers.get('content-length') || 0);
+      if (declared > maxBytes) return null;
+      const chunks = [];
+      let total = 0;
+      for await (const chunk of res.body) {
+        total += chunk.length;
+        if (total > maxBytes) return null;
+        chunks.push(chunk);
+      }
+      return Buffer.concat(chunks);
+    }
+    if (value.startsWith('/')) {
+      const rel = decodeURIComponent(value.split(/[?#]/)[0]).replace(/^\/+/, '');
+      if (!rel || rel.includes('..')) return null;
+      const full = path.resolve(publicDir, rel);
+      if (full !== publicDir && !full.startsWith(publicDir + path.sep)) return null;
+      const st = await fs.stat(full);
+      if (!st.isFile() || st.size > maxBytes) return null;
+      return fs.readFile(full);
+    }
+    return null;
+  } catch {
+    return null;
   }
-  if (spec.startsWith('/')) {
-    const rel = decodeURIComponent(spec.split(/[?#]/)[0]).replace(/^\/+/, '');
-    if (!rel || rel.includes('..')) return null;
-    const full = path.resolve(publicDir, rel);
-    if (full !== publicDir && !full.startsWith(publicDir + path.sep)) return null;
-    const st = await fs.stat(full);
-    if (!st.isFile() || st.size > LOGO_MAX) return null;
-    return fs.readFile(full);
+}
+
+function studentInitials(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  return parts.slice(0, 2).map(part => part[0]).join('').toUpperCase();
+}
+
+
+function photoDataFromStudent(student, doc) {
+  if (!doc) return '';
+  if (typeof doc.data === 'string' && doc.data.trim()) return doc.data;
+  const key = String(doc.storageKey || doc.id || '');
+  const docs = Array.isArray(student?.documents) ? student.documents : [];
+  for (const raw of docs) {
+    if (!raw || typeof raw !== 'object') continue;
+    if (typeof raw.data === 'string' && raw.data.trim() && (!key || raw.storageKey === key || raw.id === key)) {
+      if (!key || raw.storageKey === key || raw.id === key || /photo/i.test(raw.name || '')) return raw.data;
+    }
+    for (const f of Array.isArray(raw.files) ? raw.files : []) {
+      if (f && typeof f.data === 'string' && f.data.trim() && (!key || f.storageKey === key || f.id === key)) return f.data;
+    }
+  }
+  return '';
+}
+
+async function loadStudentPhotoBytes(student, tenantId) {
+  let doc = findPhotoDoc(student);
+  if (!doc && tenantId && mongoose.connection.readyState === 1) {
+    const sid = student?.id || student?._key || student?.studentId;
+    if (sid) {
+      try {
+        const rows = await StudentDocument.find({ tenantId, studentId: String(sid), retiredAt: null }).lean();
+        doc = findPhotoDoc({ documents: rows.map(r => ({
+          ...r,
+          name: r.fileName || r.docTypeId || r.name || 'Photo',
+        })) });
+      } catch {
+        doc = null;
+      }
+    }
+  }
+  if (!doc) return null;
+  const inline = [doc.data, doc.url, doc.src, photoDataFromStudent(student, doc)].filter(v => typeof v === 'string' && v.trim());
+  for (const spec of [...new Set(inline)]) {
+    const bytes = await loadLogoSource(spec, PHOTO_MAX);
+    if (bytes) return bytes;
+  }
+  if (doc.storageKey && tenantId && mongoose.connection.readyState === 1) {
+    try {
+      const stored = await StudentDocument.findOne({
+        tenantId,
+        storageKey: String(doc.storageKey),
+        retiredAt: null,
+      }).lean();
+      if (stored?.data) {
+        const bytes = await loadLogoSource(stored.data, PHOTO_MAX);
+        if (bytes) return bytes;
+      }
+    } catch {
+      return null;
+    }
   }
   return null;
 }
@@ -155,7 +229,7 @@ function drawText(page, text, x, y, font, size, color = INK) {
 /**
  * @returns {Promise<Buffer>}
  */
-export async function renderFeeReceiptPdf(payment, student, { settings, library, branch } = {}) {
+export async function renderFeeReceiptPdf(payment, student, { settings, library, branch, tenantId } = {}) {
   const brand = mergeBranding(settings, library, branch);
   const view = receiptView(payment, { student, branch, settings: brand });
   const words = storedWords(payment);
@@ -170,7 +244,7 @@ export async function renderFeeReceiptPdf(payment, student, { settings, library,
 
   const pdf = await PDFDocument.create();
   pdf.registerFontkit(fontkit);
-  const pageH = 640;
+  const pageH = 700;
   const page = pdf.addPage([595.28, pageH]);
   const fonts = await fontBytes();
   const regular = await pdf.embedFont(fonts.regular, { subset: true });
@@ -179,19 +253,30 @@ export async function renderFeeReceiptPdf(payment, student, { settings, library,
   let logoImage = null;
   try {
     const custom = libraryLogoUrl(brand.logo);
-    const bytes = custom ? await loadLogoSource(custom) : null;
-    logoImage = await embedImage(pdf, bytes || await defaultLogoBytes());
+    let bytes = null;
+    if (custom) bytes = await loadLogoSource(custom);
+    logoImage = (bytes ? await embedImage(pdf, bytes) : null) || await embedImage(pdf, await defaultLogoBytes());
   } catch {
-    logoImage = null;
+    try { logoImage = await embedImage(pdf, await defaultLogoBytes()); }
+    catch { logoImage = null; }
+  }
+
+  let photoImage = null;
+  try {
+    const photoTenantId = tenantId || payment?.tenantId || payment?.libraryId || student?.tenantId || null;
+    const photoBytes = await loadStudentPhotoBytes(student, photoTenantId);
+    photoImage = await embedImage(pdf, photoBytes);
+  } catch {
+    photoImage = null;
   }
 
   const left = 40;
   const right = 555;
   const width = right - left;
-  let y = pageH - 42;
+  let y = pageH - 36;
 
   const headerTop = y;
-  const logoSize = 42;
+  const logoSize = LOGO_SIZE;
   if (logoImage) {
     const scale = Math.min(logoSize / logoImage.width, logoSize / logoImage.height);
     const w = logoImage.width * scale;
@@ -256,23 +341,55 @@ export async function renderFeeReceiptPdf(payment, student, { settings, library,
   });
   y -= cellH * 2 + 12;
 
-  page.drawRectangle({ x: left, y: y - 48, width, height: 48, borderColor: LINE, borderWidth: 0.8 });
-  drawText(page, studentName, left + 10, y - 18, bold, 13);
+  const photoSize = PHOTO_SIZE;
+  const photoPad = 6;
+  const studentRowH = photoSize + photoPad * 2;
+  page.drawRectangle({ x: left, y: y - studentRowH, width, height: studentRowH, borderColor: LINE, borderWidth: 0.8 });
+  const photoX = left + photoPad;
+  const photoY = y - photoPad - photoSize;
+  if (photoImage) {
+    const scale = Math.min(photoSize / photoImage.width, photoSize / photoImage.height);
+    const w = photoImage.width * scale;
+    const h = photoImage.height * scale;
+    page.drawImage(photoImage, {
+      x: photoX + (photoSize - w) / 2,
+      y: photoY + (photoSize - h) / 2,
+      width: w,
+      height: h,
+    });
+  } else {
+    const cx = photoX + photoSize / 2;
+    const cy = photoY + photoSize / 2;
+    page.drawCircle({
+      x: cx,
+      y: cy,
+      size: photoSize / 2,
+      color: rgb(0.953, 0.953, 0.957),
+      borderColor: rgb(0.831, 0.831, 0.831),
+      borderWidth: 0.8,
+    });
+    const initials = studentInitials(studentName);
+    const iSize = 16;
+    const iW = bold.widthOfTextAtSize(initials, iSize);
+    drawText(page, initials, cx - iW / 2, cy - iSize / 3, bold, iSize);
+  }
+  const textLeft = left + photoPad + photoSize + 10;
+  drawText(page, studentName, textLeft, y - 22, bold, 13);
   const metaBits = [
     `ID  ${view.studentId || '—'}`,
     `Seat  ${seat}`,
     `Plan  ${plan}`,
     ...(view.shift ? [`Shift  ${view.shift}`] : []),
   ];
-  let metaX = left + 10;
-  const metaBase = y - 36;
+  let metaX = textLeft;
+  const metaBase = y - 40;
   for (const bit of metaBits) {
     const w = regular.widthOfTextAtSize(bit, 9);
     if (metaX + w > right - 8) break;
     drawText(page, bit, metaX, metaBase, regular, 9);
     metaX += w + 14;
   }
-  y -= 60;
+  y -= studentRowH + 12;
 
   drawText(page, 'PAYMENT MODE', left, y, bold, 7.5, MUTED);
   y -= 14;
@@ -411,7 +528,7 @@ export async function receiptDocument(payment, student, context = {}) {
       settings = {};
     }
   }
-  const buffer = await renderFeeReceiptPdf(payment, student, { settings, library, branch });
+  const buffer = await renderFeeReceiptPdf(payment, student, { settings, library, branch, tenantId });
   const rawName = String(payment?.receiptNo || payment?._key || payment?.id || 'receipt');
   const fileName = `${rawName.replace(/[^\w.-]+/g, '_')}.pdf`;
   return { buffer, base64: buffer.toString('base64'), fileName, mimetype: 'application/pdf' };

@@ -2,7 +2,7 @@
 
 ## 2026-11-20 (IST)
 
-- **Print receipt no longer clips or overlaps** (branch `fix/print-receipt-overflow`, not deployed). The fee receipt print layout was a fixed-height A4 half-page, so Received by, Instructions, and the footer could overlap the amount table, and the Receipt No / Period row and copy badge could clip on a narrow phone print preview. The slip is now width-safe (box-sizing, max-width 100%, wrapping text), and each copy can grow instead of overflowing a locked 148mm box. Student and library copies stay on one A4 page when they fit, and otherwise break cleanly between copies. Nothing was merged or deployed.
+- **Print receipt no longer clips or overlaps** (branch `fix/print-receipt-overflow`, not deployed). The fee receipt print layout was a fixed-height A4 half-page, so Received by, Instructions, and the footer could overlap the amount table, and the Receipt No / Period row and copy badge could clip on a narrow phone print preview. The slip is now width-safe (box-sizing, max-width 100%, wrapping text), and each copy can grow instead of overflowing a locked 148mm box. Student and library copies stay on one A4 page when they fit, and otherwise break cleanly between copies. The library logo and the student photo (or initials if there is no photo) are larger: 56px on screen, 15mm / 18mm on the printed slip, and 56pt on the WhatsApp PDF. That PDF now includes the library logo and the student photo (or initials), waiting on and embedding the image bytes before the file is built. Nothing was merged or deployed.
 
 ## 2026-11-19 (IST)
 

@@ -553,8 +553,8 @@ body {
 .receipt-slip-brand { display: flex; gap: 8px; min-width: 0; flex: 1; align-items: flex-start; }
 .receipt-slip-id { min-width: 0; }
 .receipt-logo {
-  width: 40px;
-  height: 40px;
+  width: 56px;
+  height: 56px;
   object-fit: contain;
   flex-shrink: 0;
   display: block;
@@ -653,8 +653,8 @@ body {
 }
 .receipt-photo,
 .receipt-initials {
-  width: 42px;
-  height: 42px;
+  width: 56px;
+  height: 56px;
   flex-shrink: 0;
 }
 .receipt-photo {
@@ -670,7 +670,7 @@ body {
   border: 1px solid #d4d4d4;
   background: #f3f4f6;
   color: #111;
-  font-size: 13px;
+  font-size: 18px;
   font-weight: 800;
   letter-spacing: 0.04em;
 }
@@ -917,7 +917,7 @@ body {
     text-transform: uppercase;
     white-space: nowrap;
   }
-  .receipt-logo { width: 10mm; height: 10mm; }
+  .receipt-logo { width: 15mm; height: 15mm; }
   .receipt-lib-name { font-size: 14pt; }
   .receipt-lib-meta { font-size: 9pt; color: #222; }
   .receipt-stamp { font-size: 9.5pt; padding: 0.5mm 2.2mm; }
@@ -936,9 +936,9 @@ body {
   .receipt-info-grid strong { font-size: 10pt; overflow-wrap: anywhere; }
   .receipt-info-period strong { white-space: normal; overflow-wrap: anywhere; }
   .receipt-student { margin-top: 1.3mm; padding: 1.1mm 1.8mm; }
-  .receipt-photo { width: 16mm; height: 16mm; object-fit: cover; border-radius: 2mm; }
-  .receipt-initials { width: 11mm; height: 11mm; }
-  .receipt-initials { font-size: 9.5pt; }
+  .receipt-photo { width: 18mm; height: 18mm; object-fit: cover; border-radius: 2mm; }
+  .receipt-initials { width: 18mm; height: 18mm; }
+  .receipt-initials { font-size: 13pt; }
   .receipt-student-name { font-size: 11.5pt; }
   .receipt-student-meta span { font-size: 9.5pt; }
   .receipt-pay { margin-top: 1.3mm; padding: 1mm 1.8mm; }

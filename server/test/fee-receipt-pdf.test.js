@@ -187,3 +187,42 @@ test('receipt names the person who collected the fee, and omits the line when no
   assert.doesNotMatch(textOf(blank.buffer), /Received by/);
   assert.doesNotMatch(textOf(blank.buffer), /Admin/);
 });
+
+const TINY_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAE0lEQVQoU2NkYGD4z0AEYBxVSFMBAABcAQf9E5nHAAAAAElFTkSuQmCC';
+
+function imageCount(buffer) {
+  return (buffer.toString('latin1').match(/\/Subtype\s*\/Image/g) || []).length;
+}
+
+test('receipt PDF always embeds a library logo, and falls back when a custom logo is invalid', async () => {
+  const def = await receiptDocument(paid, student, { settings });
+  assert.ok(imageCount(def.buffer) >= 1, 'default logo missing');
+
+  const custom = await receiptDocument(paid, student, { settings: { ...settings, logo: TINY_PNG } });
+  assert.ok(imageCount(custom.buffer) >= 1, 'custom logo missing');
+
+  const bad = await receiptDocument(paid, student, { settings: { ...settings, logo: 'data:image/png;base64,not-an-image' } });
+  assert.ok(imageCount(bad.buffer) >= 1, 'default logo should still appear after a bad custom logo');
+});
+
+test('receipt PDF draws student initials when no photo is stored', async () => {
+  const doc = await receiptDocument(paid, student, { settings });
+  assert.match(textOf(doc.buffer), /\bOS\b/);
+});
+
+test('receipt PDF embeds the student photo when one is present on the student record', async () => {
+  const withPhoto = {
+    ...student,
+    documents: [{
+      name: 'Photo',
+      storageKey: 'photo-omdev',
+      fileName: 'omdev.png',
+      fileType: 'image/png',
+      data: TINY_PNG,
+    }],
+  };
+  const noPhoto = await receiptDocument(paid, student, { settings: { ...settings, logo: TINY_PNG } });
+  const yesPhoto = await receiptDocument(paid, withPhoto, { settings: { ...settings, logo: TINY_PNG } });
+  assert.ok(imageCount(yesPhoto.buffer) >= imageCount(noPhoto.buffer) + 1, `expected an extra embedded image for the student photo (had ${imageCount(yesPhoto.buffer)} vs ${imageCount(noPhoto.buffer)})`);
+  assert.equal(yesPhoto.buffer.subarray(0, 5).toString('ascii'), '%PDF-');
+});
